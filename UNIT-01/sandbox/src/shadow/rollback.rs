@@ -345,7 +345,6 @@ pub fn compute_path_hash(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn test_compute_path_hash() {

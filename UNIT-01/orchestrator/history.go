@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -69,6 +70,16 @@ func (h *History) Compact(summary string, count int) {
 	h.messages = append([]Message{summaryMsg}, h.messages[count:]...)
 }
 
+// TokenEstimate returns a rough token count (4 chars per token) for all messages.
+// No tokenizer dependency needed for open-core — estimates are conservative.
+func (h *History) TokenEstimate() int {
+	var total int
+	for _, m := range h.messages {
+		total += len(m.Content) / 4
+	}
+	return total
+}
+
 // All returns a read-only view of all messages.
 func (h *History) All() []Message { return h.messages }
 
@@ -127,6 +138,43 @@ func (h *History) PurgeSystemMessages() {
 		}
 	}
 	h.messages = newMsgs
+}
+
+// MinifyOldToolOutputs replaces verbose tool outputs older than the last
+// assistant turn with a short summary to reduce context bloat.
+func (h *History) MinifyOldToolOutputs() {
+	// Find the index of the most recent assistant message
+	lastAssistantIdx := -1
+	for i := len(h.messages) - 1; i >= 0; i-- {
+		if h.messages[i].Role == "assistant" {
+			lastAssistantIdx = i
+			break
+		}
+	}
+
+	for i := 0; i < len(h.messages); i++ {
+		m := &h.messages[i]
+		if m.Role != "system" {
+			continue
+		}
+		// If this system message is before the last assistant turn AND is large
+		if lastAssistantIdx > 0 && i < lastAssistantIdx && len(m.Content) > 300 {
+			m.Content = fmt.Sprintf("[Tool output minified: %d bytes]", len(m.Content))
+		}
+	}
+}
+
+// BuildOllamaMessages returns a compacted message list suitable for the LLM.
+// It keeps the most recent messages and minifies old tool outputs.
+func (h *History) BuildOllamaMessages(maxMessages int) []ollamaMessage {
+	h.MinifyOldToolOutputs()
+
+	all := h.OllamaMessages()
+	if len(all) <= maxMessages {
+		return all
+	}
+	// Keep the most recent messages
+	return all[len(all)-maxMessages:]
 }
 
 // OllamaMessages converts the history into the wire format expected by

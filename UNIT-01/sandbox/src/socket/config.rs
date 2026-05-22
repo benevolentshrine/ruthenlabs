@@ -109,9 +109,13 @@ mod tests {
 
     #[test]
     fn test_socket_paths() {
-        assert_eq!(sandbox_socket_path(), std::env::temp_dir().join("ruthen/sandbox.sock"));
-        assert_eq!(orchestrator_socket_path(), std::env::temp_dir().join("ruthen/orchestrator.sock"));
-        assert_eq!(indexer_socket_path(), std::env::temp_dir().join("ruthen/indexer.sock"));
+        #[cfg(unix)]
+        let base = PathBuf::from("/tmp/ruthen");
+        #[cfg(not(unix))]
+        let base = std::env::temp_dir().join("ruthen");
+        assert_eq!(sandbox_socket_path(), base.join("sandbox.sock"));
+        assert_eq!(orchestrator_socket_path(), base.join("orchestrator.sock"));
+        assert_eq!(indexer_socket_path(), base.join("indexer.sock"));
         assert_eq!(MAX_REQUEST_SIZE, 10 * 1024 * 1024);
     }
 

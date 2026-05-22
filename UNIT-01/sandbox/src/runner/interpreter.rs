@@ -10,6 +10,7 @@
 //! - Python → rustpython.wasm
 //! - JS/TS → quickjs.wasm
 //! - Ruby → ruby.wasm
+//!
 //! This removes host dependency entirely.
 
 use crate::classifier::magic::FileClass;
@@ -294,14 +295,8 @@ impl Runner for InterpreterRunner {
                 .canonicalize()
                 .unwrap_or_else(|_| std::path::PathBuf::from(_path));
 
-            // Execute inside v2.0 Zero-Trust Sandbox
-            // All four enforcement layers are applied:
-            // Landlock v2 → Seccomp-BPF v2 → Cgroups v2 → Pre-Exec Gate
-            //
-            // Load sandbox options from the Pre-Execution Gate policy.
-            let sandbox_opts = crate::cage::gate::PreExecutionGate::load()
-                .map(|gate| SandboxOptions::from_policy(gate.resource_limits()))
-                .unwrap_or_default();
+            // Execute inside kernel sandbox (Landlock → Seccomp → Cgroups)
+            let sandbox_opts = SandboxOptions::default();
 
             let mut sandbox_cmd = Command::new(&path_str);
             sandbox_cmd

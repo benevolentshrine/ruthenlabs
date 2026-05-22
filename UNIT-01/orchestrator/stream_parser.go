@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 )
@@ -16,11 +17,12 @@ type ollamaChunk struct {
 	PromptEvalCount int   `json:"prompt_eval_count"`
 }
 
-func ParseStreamCLI(body io.ReadCloser, w io.Writer, stopSpinner func(), tier HardwareTier) (string, []Directive, int, int, error) {
+func ParseStreamCLI(body io.ReadCloser, w io.Writer, stopSpinner func()) (string, []Directive, int, int, error) {
 	var fullResponse strings.Builder
 	var currentStr string
 
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer for large outputs
 	inThink := false
 
 	for scanner.Scan() {
@@ -58,6 +60,9 @@ func ParseStreamCLI(body io.ReadCloser, w io.Writer, stopSpinner func(), tier Ha
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return fullResponse.String(), nil, 0, 0, fmt.Errorf("scanner error: %w", err)
+	}
 	return fullResponse.String(), nil, 0, 0, nil
 }
 

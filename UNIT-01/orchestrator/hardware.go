@@ -7,27 +7,9 @@ import (
 	"strings"
 )
 
-// HardwareTier represents the detected system RAM capability
-type HardwareTier string
-
-const (
-	Tier8GB  HardwareTier = "8GB"
-	Tier16GB HardwareTier = "16GB"
-	Tier32GB HardwareTier = "32GB+"
-)
-
-func GetHardwareTier() (HardwareTier, int) {
-	ramGB := getSystemRAMGB()
-	
-	if ramGB >= 32 {
-		return Tier32GB, ramGB
-	} else if ramGB >= 16 {
-		return Tier16GB, ramGB
-	}
-	return Tier8GB, ramGB
-}
-
-func getSystemRAMGB() int {
+// SystemRAMGB detects total system RAM in GB. Used for informational display
+// and coarse capacity hints (e.g., can a 70B model even load).
+func SystemRAMGB() int {
 	switch runtime.GOOS {
 	case "darwin":
 		out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
@@ -38,10 +20,8 @@ func getSystemRAMGB() int {
 			}
 		}
 	case "linux":
-		// Read /proc/meminfo
 		out, err := exec.Command("grep", "MemTotal", "/proc/meminfo").Output()
 		if err == nil {
-			// output looks like: MemTotal:       16393452 kB
 			fields := strings.Fields(string(out))
 			if len(fields) >= 2 {
 				kb, err := strconv.ParseUint(fields[1], 10, 64)
@@ -51,7 +31,6 @@ func getSystemRAMGB() int {
 			}
 		}
 	}
-	
-	// Fallback if detection fails
-	return 16 
+
+	return 16 // safe fallback
 }

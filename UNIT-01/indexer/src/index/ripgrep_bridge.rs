@@ -52,7 +52,7 @@ impl RipgrepBridge {
             if output.status.code() == Some(1) {
                 return Ok(Vec::new());
             }
-            return Err(io::Error::new(io::ErrorKind::Other, format!("ripgrep failed with status {}", output.status)));
+            return Err(io::Error::other( format!("ripgrep failed with status {}", output.status)));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

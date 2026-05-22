@@ -1,95 +1,32 @@
-﻿package main
+package main
 
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
-
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/term"
 )
 
-var (
-	BrandColor  = lipgloss.Color("#00E5FF")
-	Grey        = lipgloss.Color("#767676")
-	LightGrey   = lipgloss.Color("#cccccc")
-	PromptStyle = lipgloss.NewStyle().Foreground(BrandColor).Bold(true)
-	ToolStyle   = lipgloss.NewStyle().Foreground(Grey).Italic(true)
-)
-
-func renderWelcomeBanner(cwd, activeModel, indexerIcon, sandboxIcon string, tier HardwareTier, ramGB int) string {
-	width := getTerminalWidth()
-	if width > 120 {
-		width = 120
-	}
-
-	title := lipgloss.NewStyle().Width(width - 4).Align(lipgloss.Center).Bold(true).Foreground(BrandColor).Padding(0, 1).Render("UNIT-01 v1.5.0")
-	leftStyle := lipgloss.NewStyle().Width((width - 10) / 2).Align(lipgloss.Left).PaddingLeft(2)
-	rightStyle := lipgloss.NewStyle().Width((width - 10) / 2).Align(lipgloss.Left).PaddingLeft(4).BorderStyle(lipgloss.NormalBorder()).BorderLeft(true).BorderForeground(BrandColor)
-
-	leftContent := fmt.Sprintf("\n%s\n\n%s\n%s\n%s", 
-		lipgloss.NewStyle().Italic(true).Foreground(LightGrey).Render(getRandomQuote()), 
-		PromptStyle.Render("● ACTIVE ENGINE"), 
-		lipgloss.NewStyle().Foreground(Grey).Render(activeModel), 
-		lipgloss.NewStyle().Foreground(Grey).Render(cwd))
-	
-	rightContent := fmt.Sprintf("\n%s\n%s\n\n%s\n%s\n\n%s\n%s %s\n%s %s", 
-		PromptStyle.Render("SYSTEM STATUS"), 
-		lipgloss.NewStyle().Foreground(LightGrey).Render("Sovereign Build Mode Active"), 
-		PromptStyle.Render("HARDWARE PROFILE"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#F1FA8C")).Render(fmt.Sprintf("Detected %dGB RAM", ramGB)),
-		PromptStyle.Render("DAEMON HEARTBEAT"), 
-		indexerIcon, lipgloss.NewStyle().Foreground(LightGrey).Render("Indexer"), 
-		sandboxIcon, lipgloss.NewStyle().Foreground(LightGrey).Render("Sandbox"))
-
-	// Model recommendations block based on RAM
-	var recs string
-	switch tier {
-	case Tier8GB:
-		recs = lipgloss.NewStyle().Foreground(Grey).Render(" Recommended Models: 0.5B to 8B (Parser Mode)")
-	case Tier16GB:
-		recs = lipgloss.NewStyle().Foreground(Grey).Render(" Recommended Models: 0.5B to 14B (Mechanic Mode)")
-	case Tier32GB:
-		recs = lipgloss.NewStyle().Foreground(Grey).Render(" Recommended Models: 0.5B to 32B+ (Architect Mode)")
-	}
-
-	grid := lipgloss.JoinHorizontal(lipgloss.Top, leftStyle.Render(leftContent), rightStyle.Render(rightContent))
-	
-	banner := lipgloss.NewStyle().Width(width - 2).BorderStyle(lipgloss.RoundedBorder()).BorderForeground(BrandColor).Padding(1, 1).Render(title + "\n" + grid)
-	return "\n" + lipgloss.NewStyle().Width(getTerminalWidth()).Align(lipgloss.Center).Render(banner) + "\n" + lipgloss.NewStyle().Width(getTerminalWidth()).Align(lipgloss.Center).Render(recs) + "\n"
-}
-
-func getRandomQuote() string {
-	quotes := []string{
-		"Simplicity is the soul of efficiency.",
-		"Talk is cheap. Show me the code.",
-		"The best error message is the one that never shows up.",
-		"First, solve the problem. Then, write the code.",
-		"Clean code always looks like it was written by someone who cares.",
-		"Complexity is the enemy of reliability.",
-		"One man's constant is another man's variable.",
-		"Computers are good at following instructions, but not at reading your mind.",
-		"Sovereign AI: Local, private, and yours.",
-		"Refactoring is the process of cleaning up the past.",
-	}
-	return quotes[rand.Intn(len(quotes))]
-}
-
-func getExecutorPrompt(ws *Workspace, llm *LLMClient, tier HardwareTier) string {
+func getExecutorPrompt(ws *Workspace, p *ModelProfile) string {
 	home, _ := os.UserHomeDir()
-	
+
+	mcpDesc := ""
+	if mcpMgr != nil {
+		mcpDesc = mcpMgr.ToolDescriptions()
+	}
+
 	base := fmt.Sprintf(`### UNIT-01 DIRECTIVE PROTOCOL (NON-NEGOTIABLE) ###
 - OPERATING_SYSTEM: %s
 - USER_HOME: %s
 - CURRENT_WORKSPACE: %s
+- ACTIVE_MODEL: %s (%s)
 - IDENTITY: You are the UNIT-01 SOVEREIGN ENGINE. You are a native coding orchestrator by Ruthen Labs.
 
 ### GROUND TRUTH (PROJECT_MAP & CONTEXT):
@@ -101,103 +38,142 @@ func getExecutorPrompt(ws *Workspace, llm *LLMClient, tier HardwareTier) string 
 3. Be concise. Talk is cheap. Show me the code.
 
 ### DIRECTIVE TAGS (USE THESE FOR ALL ACTIONS):
-- To write a file: <sandbox_write path="path/to/file">CONTENT</sandbox_write>
-- To execute a command: <sandbox_exec command="CMD" />
+- To write a file: <write path="path/to/file">CONTENT</write>
+- To execute a command: <execute command="CMD" />
 - To list a directory: <indexer_ls path="PATH" />
 - To read a file: <indexer_read path="PATH" />
-- To delete a file: <sandbox_delete path="PATH" />
-- To rollback changes: <sandbox_rollback />
+- To search file contents: <search query="pattern" />
+- To delete a file: <delete path="PATH" />
+- To patch a file: <patch path="PATH" target="OLD" replacement="NEW" />
+- To rollback changes: <rollback />
 
-4. If writing code, use the <sandbox_write> tag.`, runtime.GOOS, home, ws.Path, ws.ProjectMap)
+4. If writing code, use the <write> tag.%s`, runtime.GOOS, home, ws.Path, p.Name, p.ParameterSize, ws.ProjectMap, mcpDesc)
 
-	switch tier {
-	case Tier8GB:
-		base += "\n\n### TIER 8GB RULES:\n- YOU MUST NOT use <thinking> tags.\n- YOU MUST ACT AS A PURE MECHANICAL TRANSLATOR.\n- NO CONVERSATION. NO EXPLANATIONS."
-	case Tier16GB:
-		base += "\n\n### TIER 16GB RULES:\n- YOU MAY use short <thinking> tags to plan logic.\n- NO CONVERSATION. OUTPUT ONLY CODE."
-	case Tier32GB:
-		base += "\n\n### TIER 32GB RULES:\n- YOU ARE THE ARCHITECT. Use extensive <thinking> tags to plan multi-file refactors.\n- NO CONVERSATION OUTSIDE OF THINKING TAGS."
+	if p.AllowThinking {
+		base += "\n\n### THINKING RULES:\n- You MAY use <thinking> tags to plan complex multi-file refactors.\n- Keep thinking concise and focused on code logic."
+	} else {
+		base += "\n\n### THINKING RULES:\n- YOU MUST NOT use <thinking> tags.\n- YOU MUST ACT AS A PURE MECHANICAL TRANSLATOR.\n- NO CONVERSATION. NO EXPLANATIONS. OUTPUT ONLY CODE."
 	}
 
 	return base
 }
 
-func getNarratorPrompt() string {
-	return `You are the UNIT-01 NARRATOR. Summarize the tool results in premium English. Focus on completion status.`
+// ChatLogger persists conversations to .ruthen/chat_history.md
+type ChatLogger struct {
+	ws *Workspace
+	mu sync.Mutex
 }
 
-func getTerminalWidth() int {
-	width, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || width <= 0 {
-		return 80 // Fallback
-	}
-	return width
+func NewChatLogger(ws *Workspace) *ChatLogger {
+	return &ChatLogger{ws: ws}
 }
 
-func renderResponse(text string) {
-	if text == "" {
+func (cl *ChatLogger) Append(userInput, assistantResponse string) {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+
+	if !cl.ws.Active {
 		return
 	}
-	width := getTerminalWidth()
-	// Apply some padding for readability
-	contentWidth := width - 10
-	if contentWidth < 40 {
-		contentWidth = 40
+
+	dir := filepath.Join(cl.ws.Path, ".ruthen")
+	os.MkdirAll(dir, 0755)
+
+	path := filepath.Join(dir, "chat_history.md")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	entry := fmt.Sprintf("## [%s]\n\n**User:** %s\n\n**Assistant:** %s\n\n---\n\n", timestamp, userInput, assistantResponse)
+	f.WriteString(entry)
+}
+
+// compactHistory replaces the oldest half of history with a model-generated summary
+// to keep context usage within the model's window.
+func compactHistory(h *History, llm *LLMClient) {
+	all := h.All()
+	mid := len(all) / 2
+	if mid < 2 {
+		return
 	}
 
-	r, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(contentWidth),
-	)
-	out, _ := r.Render(text)
-	
-	// Center the output slightly with left padding
-	padding := lipgloss.NewStyle().PaddingLeft(4).Render(out)
-	fmt.Print(padding)
+	msgs := make([]ollamaMessage, 0, mid+1)
+	msgs = append(msgs, ollamaMessage{
+		Role:    "system",
+		Content: "Summarize the following conversation history in 2-3 sentences, preserving key technical context and decisions made.",
+	})
+	for _, m := range all[:mid] {
+		msgs = append(msgs, ollamaMessage{Role: m.Role, Content: m.Content})
+	}
+
+	summary, err := llm.Chat(msgs)
+	if err != nil {
+		return
+	}
+
+	h.Compact(summary, mid)
 }
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	history := &History{}
-	llm := NewLLMClient("", "qwen2.5-coder:3b")
+
+	// Read model from env or flag — default to qwen2.5-coder:3b
+	modelName := os.Getenv("UNIT01_MODEL")
+	if modelName == "" {
+		modelName = "qwen2.5-coder:3b"
+	}
+	// Override via --model flag if present
+	for i, arg := range os.Args {
+		if arg == "--model" && i+1 < len(os.Args) {
+			modelName = os.Args[i+1]
+			break
+		}
+	}
+
+	llm := NewLLMClient("", modelName)
+	profile := LoadModelProfile(llm)
 
 	daemonMgr := NewDaemonManager()
 	ws := NewWorkspace()
 
-	// --- BOOTSTRAP DAEMONS ---
-	// We spawn them first so they are ready for the Trust Gate
-	indexerStatus := daemonMgr.SpawnIfMissing("indexer", "/tmp/ruthen/indexer.sock")
-	sandboxStatus := daemonMgr.SpawnIfMissing("sandbox", "/tmp/ruthen/sandbox.sock")
+	daemonMgr.SpawnIfMissing("indexer", "/tmp/ruthen/indexer.sock")
+	daemonMgr.SpawnIfMissing("sandbox", "/tmp/ruthen/sandbox.sock")
 
-	cwd, _ := os.Getwd()
-
-	// --- STARTUP TRUST GATE ---
-	fmt.Printf("\n"+lipgloss.NewStyle().Foreground(BrandColor).Bold(true).Render("◆ UNIT-01 TRUST GATE")+"\n")
-	var trusted bool
-	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewConfirm().
-				Title(fmt.Sprintf("Authorize UNIT-01 to manage this directory?\n[%s]", cwd)).
-				Value(&trusted).
-				Affirmative("Trust & Index").
-				Negative("Stay Restricted"),
-		),
-	)
-	if err := form.Run(); err == nil && trusted {
-		fmt.Printf("◆ Activating workspace — syncing Indexer...\n")
-		ws.Set(cwd)
+	// Initialize MCP servers from ~/.config/unit01/mcp.json
+	mcpMgr = LoadMCPConfig()
+	if mcpMgr.ToolCount() > 0 {
+		fmt.Printf("◆ MCP: %d extensible tool(s) available\n", mcpMgr.ToolCount())
 	}
 
-	tier, ramGB := GetHardwareTier()
+	// SIGTERM/SIGINT handler — clean shutdown of daemons and MCP servers
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		fmt.Println("\n◆ Shutting down...")
+		mcpMgr.Shutdown()
+		daemonMgr.Shutdown()
+		os.Exit(0)
+	}()
 
-	fmt.Println(renderWelcomeBanner(cwd, llm.model, indexerStatus.Icon(), sandboxStatus.Icon(), tier, ramGB))
+	cwd, _ := os.Getwd()
+	ram := SystemRAMGB()
+	fmt.Printf("◆ UNIT-01 SOVEREIGN ENGINE [BOOTED]\n")
+	fmt.Printf("◆ Model: %s (%s) | Context: %d | RAM: %dGB\n", profile.Name, profile.ParameterSize, profile.ContextWindow, ram)
+	fmt.Printf("◆ Workspace: %s\n", cwd)
+	ws.Set(cwd)
+
+	chatLog := NewChatLogger(ws)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
-		// --- RESET: Clear raw technical memory before new user input ---
 		history.PurgeSystemMessages()
-		
-		fmt.Printf("\n %s  ", PromptStyle.Render(">"))
+
+		fmt.Printf("\n> ")
 		if !scanner.Scan() {
 			break
 		}
@@ -206,79 +182,150 @@ func main() {
 			continue
 		}
 
-		if strings.HasPrefix(input, "/") {
-			HandleCommandCLI(input, &Config{DefaultStyle: "sovereign"}, history, llm, ws)
-			continue
+		if input == "/exit" || input == "/quit" {
+			fmt.Println("Shutting down...")
+			mcpMgr.Shutdown()
+			daemonMgr.Shutdown()
+			os.Exit(0)
 		}
 
 		history.Append(Message{Role: "user", Content: input, Timestamp: time.Now()})
 
-		// --- SOVEREIGN PIPELINE ---
-		doneThinking := make(chan struct{})
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-			idx := 0
-			quote := getRandomQuote()
-			quoteTick := time.NewTicker(3 * time.Second)
-			defer quoteTick.Stop()
-
-			for {
-				select {
-				case <-doneThinking:
-					fmt.Print("\r\033[K")
-					return
-				case <-quoteTick.C:
-					quote = getRandomQuote()
-				default:
-					fmt.Printf("\r %s %s %s  ", 
-						lipgloss.NewStyle().Foreground(BrandColor).Render(frames[idx%len(frames)]),
-						lipgloss.NewStyle().Foreground(Grey).Render("Thinking..."),
-						lipgloss.NewStyle().Foreground(Grey).Italic(true).Render("“"+quote+"”"),
-					)
-					idx++
-					time.Sleep(80 * time.Millisecond)
-				}
-			}
-		}()
-
-		stopSpinner := func() {
-			select {
-			case <-doneThinking:
-			default:
-				close(doneThinking)
-				wg.Wait()
-			}
-		}
-
-		// 1. GATHER CONTEXT (INDEXER)
-		ws.Refresh() // Ensure ProjectMap is fresh
+		// ─── PHASE 1: Grammar-constrained directive generation ──────────────
+		ws.Refresh()
 		autoCtx := getAutoContext(input, ws)
-		
-		// 2. QUERY ENGINE
-		execPrompt := ollamaMessage{Role: "system", Content: getExecutorPrompt(ws, llm, tier) + autoCtx}
-		activeMessages := append([]ollamaMessage{execPrompt}, history.OllamaMessages()...)
-		
-		fullResponse, directives, _, _, err := llm.StreamCLI(activeMessages, io.Discard, stopSpinner, tier)
-		stopSpinner()
-
-		if err != nil {
-			fmt.Printf("\n[Error: %v]\n", err)
-			continue
+		estimate := history.TokenEstimate()
+		threshold := int(float64(profile.ContextWindow) * profile.CompactionPct)
+		if estimate > threshold {
+			fmt.Printf("◆ Context at ~%d tokens (threshold: %d). Compacting...\n", estimate, threshold)
+			compactHistory(history, llm)
 		}
 
-		history.Append(Message{Role: "assistant", Content: fullResponse, Timestamp: time.Now()})
-		renderResponse(fullResponse)
+		maxRetries := profile.MaxRetries
 
-		// 3. EXECUTE DIRECTIVES (SANDBOX)
-		if len(directives) > 0 {
-			for _, dir := range directives {
-				result := ExecuteTool(dir.Name, dir.Args, &Config{}, ws)
-				fmt.Printf("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB000")).Render("◆ DIRECTIVE RESULT: ") + "%s\n", result)
-				history.Append(Message{Role: "system", Content: fmt.Sprintf("Tool [%s] result: %s", dir.Name, result), Timestamp: time.Now()})
+	directivePhase:
+		for retry := 0; retry <= maxRetries; retry++ {
+			messages := history.BuildOllamaMessages(profile.MaxMessagesPerTurn)
+			prompt := getExecutorPrompt(ws, profile) + autoCtx +
+				"\n\n### DIRECTIVE PHASE (JSON STRUCTURED OUTPUT):\n" +
+				"Map user requests to directives. NEVER use shell commands (ls, cat, grep, find, mv, cp, mkdir).\n" +
+				"- To LIST a directory → indexer_ls with {\"path\":\"...\"}\n" +
+				"- To READ a file → indexer_read with {\"path\":\"...\"}\n" +
+				"- To READ multiple files at once → read_multiple with {\"paths\":[\"...\",\"...\"]}\n" +
+				"- To SEARCH file contents → search with {\"query\":\"...\"}\n" +
+				"- To GLOB for files by pattern → glob with {\"pattern\":\"**/*.go\",\"base\":\"...\"}\n" +
+				"- To FIND files by name → find with {\"name\":\"...\",\"root\":\"...\"}\n" +
+				"- To EXECUTE a command → execute with {\"command\":\"...\"}\n" +
+				"- To WRITE a file → write with {\"path\":\"...\",\"content\":\"...\"}\n" +
+				"- To APPEND to a file → append with {\"path\":\"...\",\"content\":\"...\"}\n" +
+				"- To DELETE a file → delete with {\"path\":\"...\"}\n" +
+				"- To PATCH a file → patch with {\"path\":\"...\",\"target\":\"...\",\"replacement\":\"...\"}\n" +
+				"- To MOVE/RENAME a file → mv with {\"from\":\"...\",\"to\":\"...\"}\n" +
+				"- To COPY a file → cp with {\"from\":\"...\",\"to\":\"...\"}\n" +
+				"- To CREATE a directory → mkdir with {\"path\":\"...\"}\n" +
+				"- To REMOVE a directory → rmdir with {\"path\":\"...\"}\n" +
+				"- To GET file info → file_info with {\"path\":\"...\"}\n" +
+				"- To DIFF two files → diff with {\"files\":[\"...\",\"...\"]}\n" +
+				"- To VIEW project tree → ls_tree with {\"root\":\"...\"}\n" +
+				"- To ROLLBACK changes → rollback with {}\n" +
+				"Output ONLY a JSON object with a \"directives\" array. " +
+				"Do NOT include any explanation, conversation, or markdown. Only output the JSON object."
+			messages = append([]ollamaMessage{{Role: "system", Content: prompt}}, messages...)
+
+			fmt.Print("◆ Planning...")
+			directives, _, _, err := llm.StreamDirectives(messages, profile.Temperature)
+			if err != nil {
+				fmt.Printf(" [Error: %v]\n", err)
+				break directivePhase
 			}
+
+			if len(directives) == 0 {
+				fmt.Println(" [no directives needed]")
+				break directivePhase
+			}
+
+			fmt.Printf(" [%d directive(s)]\n", len(directives))
+
+			if retry > 0 {
+				fmt.Printf("◆ Re-trying directives (attempt %d/%d):\n", retry, maxRetries)
+			}
+
+			allOk := true
+			for _, dir := range directives {
+				result := ExecuteTool(dir.Name, dir.Args, ws)
+
+				display := result
+				if len(display) > profile.MaxToolOutputChars {
+					display = fmt.Sprintf("[Tool '%s' output truncated: %d bytes]", dir.Name, len(display))
+				}
+
+				fmt.Printf("  %s → %s\n", dir.Name, truncateOneLine(display, 80))
+
+		if isToolError(result) {
+				allOk = false
+				history.Append(Message{
+					Role:      "system",
+					Content:   fmt.Sprintf("Tool [%s] error (needs correction): %s", dir.Name, result),
+					Timestamp: time.Now(),
+				})
+			} else {
+				history.Append(Message{
+					Role:      "system",
+					Content:   fmt.Sprintf("Tool [%s] completed successfully: %s", dir.Name, result),
+					Timestamp: time.Now(),
+				})
+			}
+			}
+
+			if allOk || retry >= maxRetries {
+				break directivePhase
+			}
+
+			fmt.Printf("◆ Self-correcting (%d/%d)...\n", retry+1, maxRetries)
+		}
+
+		// ─── PHASE 2: Free-form response ────────────────────────────────────
+		phase2Messages := history.BuildOllamaMessages(profile.MaxMessagesPerTurn)
+		prompt := getExecutorPrompt(ws, profile) + autoCtx +
+			"\n\n### RESPONSE PHASE:\n" +
+			"The directives have been executed. Results are in the conversation history above. " +
+			"Now provide your natural language response to the user. Keep it concise."
+		phase2Messages = append([]ollamaMessage{{Role: "system", Content: prompt}}, phase2Messages...)
+
+		finalResponse, _, _, _, err := llm.StreamCLI(phase2Messages, os.Stdout, nil, profile.Temperature)
+		if err != nil {
+			fmt.Printf("\n[Phase 2 Error: %v]\n", err)
+			finalResponse = "(error generating response)"
+		}
+
+		history.Append(Message{Role: "assistant", Content: finalResponse, Timestamp: time.Now()})
+
+		if finalResponse != "" {
+			chatLog.Append(input, finalResponse)
 		}
 	}
+}
+
+func truncateOneLine(s string, maxLen int) string {
+	firstLine := s
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		firstLine = s[:idx]
+	}
+	if len(firstLine) > maxLen {
+		firstLine = firstLine[:maxLen] + "..."
+	}
+	return firstLine
+}
+
+// isToolError returns true if the tool result indicates a failure.
+// Only checks the FIRST LINE of the result to avoid false positives
+// from file content that happens to contain "error:" in source code.
+func isToolError(result string) bool {
+	firstLine := result
+	if idx := strings.IndexByte(result, '\n'); idx >= 0 {
+		firstLine = result[:idx]
+	}
+	lower := strings.ToLower(firstLine)
+	return strings.HasPrefix(lower, "error") ||
+		strings.HasPrefix(lower, "❌")
 }

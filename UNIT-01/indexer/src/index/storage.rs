@@ -24,76 +24,50 @@ impl Storage {
         })
     }
 
-    /// Store a file record and update the language index
-    #[allow(dead_code)]
-    pub fn insert_record(&self, record: &FileRecord) -> io::Result<()> {
-        let path_bytes = record.path.as_bytes();
-        let encoded_record = bincode::serialize(record)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-        // metadata: path -> record
-        self.metadata.insert(path_bytes, encoded_record.as_slice())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-        // doc_index: language | path -> ()
-        let mut lang_key = record.language.as_bytes().to_vec();
-        lang_key.extend_from_slice(b"|");
-        lang_key.extend_from_slice(path_bytes);
-
-        self.doc_index.insert(&lang_key, &[])
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
-        Ok(())
+    pub fn list_records(&self) -> io::Result<Vec<FileRecord>> {
+        let mut records = Vec::new();
+        for result in self.metadata.iter() {
+            let (_, value) = result.map_err(io::Error::other)?;
+            let record = bincode::deserialize::<FileRecord>(&value)
+                .map_err(io::Error::other)?;
+            records.push(record);
+        }
+        Ok(records)
     }
 
     pub fn get_record(&self, path: &str) -> io::Result<Option<FileRecord>> {
         let res = self.metadata.get(path.as_bytes())
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            .map_err(io::Error::other)?;
 
         match res {
             Some(bytes) => {
                 let record = bincode::deserialize::<FileRecord>(&bytes)
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                    .map_err(io::Error::other)?;
                 Ok(Some(record))
             }
             None => Ok(None),
         }
     }
 
-    pub fn get_by_language(&self, lang: &str) -> io::Result<Vec<String>> {
-        let mut prefix = lang.as_bytes().to_vec();
-        prefix.push(b'|');
-
-        let mut paths = Vec::new();
-        for item in self.doc_index.scan_prefix(&prefix) {
-            let (key, _) = item.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-            if let Some(pos) = key.iter().position(|&b| b == b'|') {
-                let path = String::from_utf8_lossy(&key[pos + 1..]).into_owned();
-                paths.push(path);
-            }
-        }
-        Ok(paths)
-    }
-
     pub fn batch_insert(&self, records: Vec<FileRecord>) -> io::Result<()> {
         for record in records {
             let path_bytes = record.path.as_bytes();
             let encoded_record = bincode::serialize(&record)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
 
             self.metadata
                 .insert(path_bytes, encoded_record.as_slice())
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
 
             let mut lang_key = record.language.as_bytes().to_vec();
             lang_key.extend_from_slice(b"|");
             lang_key.extend_from_slice(path_bytes);
             self.doc_index
                 .insert(&lang_key, &[] as &[u8])
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
         }
 
-        self.db.flush().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        self.db.flush().map_err(io::Error::other)?;
 
         Ok(())
     }

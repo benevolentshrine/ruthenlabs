@@ -102,20 +102,20 @@ impl Default for FileClassifier {
 
 /// Check if this is a potentially dangerous file type
 pub fn is_dangerous_file(class: &magic::FileClass) -> bool {
-    match class {
+    matches!(
+        class,
         magic::FileClass::Binary
-        | magic::FileClass::JavaClass
-        | magic::FileClass::Shell
-        | magic::FileClass::Python
-        | magic::FileClass::JavaScript
-        | magic::FileClass::TypeScript
-        | magic::FileClass::Ruby
-        | magic::FileClass::Php
-        | magic::FileClass::Perl
-        | magic::FileClass::Lua
-        | magic::FileClass::PowerShell => true,
-        _ => false,
-    }
+            | magic::FileClass::JavaClass
+            | magic::FileClass::Shell
+            | magic::FileClass::Python
+            | magic::FileClass::JavaScript
+            | magic::FileClass::TypeScript
+            | magic::FileClass::Ruby
+            | magic::FileClass::Php
+            | magic::FileClass::Perl
+            | magic::FileClass::Lua
+            | magic::FileClass::PowerShell
+    )
 }
 
 /// Check if this file type can be executed

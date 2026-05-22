@@ -1,5 +1,0 @@
-[indexer]
-threads = 4
-
-[ignore]
-custom_ignore = ".yomiignore"

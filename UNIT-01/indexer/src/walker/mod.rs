@@ -1,5 +1,4 @@
 ﻿use crate::models::FileRecord;
-use crate::hasher::hash_file;
 use ignore::{WalkBuilder, WalkState};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -121,26 +120,9 @@ pub fn process_file(path: &Path, root_path: &Path) -> Result<Option<FileRecord>,
                 }
             }
         }
-        
-        if is_binary {
-            String::from("binary_skipped")
-        } else {
-            match hash_file(path) {
-                Ok(h) => h,
-                Err(e) => {
-                    warn!("Could not hash {:?}: {}", path, e);
-                    String::from("unreadable")
-                }
-            }
-        }
+        String::from("open_core_skipped")
     } else {
-        match hash_file(path) {
-            Ok(h) => h,
-            Err(e) => {
-                warn!("Could not hash empty file {:?}: {}", path, e);
-                String::from("unreadable")
-            }
-        }
+        String::from("open_core_skipped")
     };
     
     let language = extension_to_language(&extension);
@@ -206,23 +188,21 @@ impl ProjectWalker {
             .max_depth(Some(4)) // Don't go too deep for the map
             .build();
 
-        for result in walker {
-            if let Ok(entry) = result {
-                let path = entry.path();
-                if let Ok(rel_path) = path.strip_prefix(&self.root_path) {
-                    let depth = rel_path.components().count();
-                    if depth == 0 { continue; }
-                    
-                    let indent = "  ".repeat(depth - 1);
-                    let name = rel_path.file_name().unwrap_or_default().to_string_lossy();
-                    let prefix = if path.is_dir() { "📁" } else { "📄" };
-                    
-                    map.push_str(&format!("{} {} {}\n", indent, prefix, name));
-                    
-                    if map.len() > 10000 {
-                        map.push_str("... (truncated)\n");
-                        break;
-                    }
+        for entry in walker.flatten() {
+            let path = entry.path();
+            if let Ok(rel_path) = path.strip_prefix(&self.root_path) {
+                let depth = rel_path.components().count();
+                if depth == 0 { continue; }
+                
+                let indent = "  ".repeat(depth - 1);
+                let name = rel_path.file_name().unwrap_or_default().to_string_lossy();
+                let prefix = if path.is_dir() { "📁" } else { "📄" };
+                
+                map.push_str(&format!("{} {} {}\n", indent, prefix, name));
+                
+                if map.len() > 10000 {
+                    map.push_str("... (truncated)\n");
+                    break;
                 }
             }
         }

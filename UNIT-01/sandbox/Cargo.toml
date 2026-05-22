@@ -4,60 +4,46 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# WASM sandbox - minimal features + WASI
-wasmtime = { version = "25", default-features = false, features = ["cranelift", "runtime", "parallel-compilation"] }
-wasmtime-wasi = { version = "25", default-features = false, features = ["preview1"] }
-
-# TUI (Phase 1 only) - ratatui with minimal features
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
-
-# CLI args - derive feature only
+# CLI args
 clap = { version = "4.5", features = ["derive"] }
 
 # Error handling
 anyhow = { version = "1.0", default-features = false, features = ["std"] }
 
-# Async runtime - rt-multi-thread + macros only
-tokio = { version = "1.40", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process"] }
+# Async runtime
+tokio = { version = "1.40", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process", "io-util", "net"] }
 
-# Serialization - derive feature only
+# Serialization
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
+toml = "0.8"
 
-# Structured logging - minimal
+# Structured logging
 tracing = { version = "0.1", default-features = false }
 
-# UUID generation - v4 + serde only
+# UUID generation
 uuid = { version = "1.11", default-features = false, features = ["v4", "serde", "std", "rng"] }
 
-# Date/time for audit logs (minimal features)
+# Date/time
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "alloc"] }
 
-# Non-blocking terminal input
-crossterm = { version = "0.28", default-features = false, features = ["event-stream"] }
-
-# TOML parsing for config files
-toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
-
-# Tracing subscriber for logging
+# Tracing subscriber
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 
-# Directory paths for audit logs
+# Directory paths for shadow
 dirs = { version = "5.0", default-features = false }
 
-# SHA-256 for audit tamper chain and IAM token hashing
+# SHA-256 for path hashing in shadow
 sha2 = { version = "0.10", default-features = false }
 
-# File system events for watchdog (cross-platform, minimal features)
-notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
-
+# POSIX resource limits (used on both macOS and Linux)
 libc = "0.2"
-# YAML parsing for v2.0 Pre-Execution Policy Gate
-serde_yaml = "0.9"
 
-# Linux Kernel Security Primitives (Linux Only)
+# TUI dashboard
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Linux Kernel Security Primitives
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
 libseccomp = "0.3"
-
-

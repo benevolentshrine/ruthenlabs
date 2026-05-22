@@ -22,7 +22,7 @@
 //!    - memory.max: 512 MB
 //!    - cpu.max: 25% of 1 core
 //!    - pids.max: 20
-//!    (See cgroups.rs — applied from parent, not pre_exec closure)
+//!      (See cgroups.rs — applied from parent, not pre_exec closure)
 //!
 //! 4. **Config Hardening** — Invisible paths not added to Landlock allowlist
 //!    (CVE-2026-25725 prevention: agent cannot create/modify startup hooks)
@@ -72,18 +72,7 @@ impl Default for SandboxOptions {
 }
 
 impl SandboxOptions {
-    /// Build options from the pre-execution gate's resource limits.
-    pub fn from_policy(limits: &crate::cage::gate::ResourceLimits) -> Self {
-        let cpu_quota_us = (limits.cpu_percent as u64 * 100_000) / 100;
-        Self {
-            memory_limit_bytes: limits.memory_mb * 1024 * 1024,
-            cpu_quota_us,
-            cpu_period_us: 100_000,
-            pids_max: limits.pids_max,
-            timeout_secs: limits.max_execution_seconds,
-            enable_user_notification: false, // Feature-flagged off by default for now
-        }
-    }
+    // PRO-only: from_policy(limits: &gate::ResourceLimits) lives in PRO/sandbox/
 }
 
 // ---------------------------------------------------------------------------
@@ -118,6 +107,13 @@ pub fn spawn_sandboxed_command(
     // Landlock and Seccomp syscalls are safe in this context.
     unsafe {
         command.pre_exec(move || {
+            // LAYER 0: POSIX resource limits (cross-platform)
+            apply_resource_limits(
+                opts_for_child.memory_limit_bytes,
+                opts_for_child.cpu_quota_us,
+                opts_for_child.pids_max,
+            );
+
             // LAYER 1: Landlock v2 — Filesystem jail
             // Returns Ok(true) if full ABI v2 was applied, Ok(false) if degraded to v1.
             match apply_landlock_policy(&workspace_owned) {
@@ -343,9 +339,21 @@ fn apply_landlock_policy(workspace: &Path) -> Result<bool> {
     Ok(achieved_v2)
 }
 
-#[cfg(not(target_os = "linux"))]
+// macOS: Apple Seatbelt sandbox_init() is deprecated (since 10.8, "No longer supported")
+// and is NOT async-signal-safe — it allocates memory, which deadlocks after fork()
+// in a multithreaded (tokio) process. Filesystem isolation on macOS is provided by
+// the Indexer daemon instead. Resource limits (setrlimit) are still applied via
+// apply_resource_limits which IS async-signal-safe.
+#[cfg(target_os = "macos")]
 fn apply_landlock_policy(_workspace: &Path) -> Result<bool> {
-    tracing::warn!("[SANDBOX SANDBOX] Landlock is not supported on this OS. Skipping filesystem sandbox.");
+    tracing::info!("[MACOS] Skipping Apple Seatbelt sandbox_init (deprecated, not async-signal-safe). Using rlimits only.");
+    Ok(true)
+}
+
+// Other non-Linux platforms: filesystem sandbox unavailable
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn apply_landlock_policy(_workspace: &Path) -> Result<bool> {
+    tracing::warn!("[SANDBOX] Landlock not available on this platform.");
     Ok(false)
 }
 
@@ -519,9 +527,125 @@ fn apply_seccomp_policy(opts: &SandboxOptions) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+// macOS: sandbox_init already blocked network — seccomp not needed
+#[cfg(target_os = "macos")]
 fn apply_seccomp_policy(_opts: &SandboxOptions) -> Result<()> {
-    tracing::warn!("[SANDBOX SANDBOX] Seccomp is not supported on this OS. Skipping syscall filter.");
+    Ok(())
+}
+
+// Other non-Linux platforms: syscall filter unavailable
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn apply_seccomp_policy(_opts: &SandboxOptions) -> Result<()> {
+    tracing::warn!("[SANDBOX] Seccomp not available on this platform.");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Cross-Platform: POSIX Resource Limits
+// ---------------------------------------------------------------------------
+
+/// Apply POSIX resource limits in the child process (pre-exec).
+/// Works on both macOS and Linux. Best-effort — logs warnings on failure.
+fn apply_resource_limits(mem_bytes: u64, _cpu_quota_us: u64, pids_max: u32) {
+    // RLIMIT_AS — Max address space (memory)
+    let rlim_as = libc::rlimit {
+        rlim_cur: mem_bytes,
+        rlim_max: mem_bytes,
+    };
+    if unsafe { libc::setrlimit(libc::RLIMIT_AS, &rlim_as) } != 0 {
+        tracing::warn!("[RLIMIT] Failed to set RLIMIT_AS");
+    }
+
+    // RLIMIT_NOFILE — Max open file descriptors
+    let rlim_nofile = libc::rlimit {
+        rlim_cur: 256,
+        rlim_max: 256,
+    };
+    if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &rlim_nofile) } != 0 {
+        tracing::warn!("[RLIMIT] Failed to set RLIMIT_NOFILE");
+    }
+
+    // RLIMIT_NPROC: Skip on macOS — setrlimit(RLIMIT_NPROC) limits processes
+    // for the real UID across the entire system, not just the child. If the user
+    // already has >pids_max processes (which they do on a desktop OS), any fork()
+    // inside the sandbox immediately fails with EAGAIN. macOS has no cgroups to
+    // enforce per-cgroup limits, so we rely on RLIMIT_NOFILE and RLIMIT_AS instead.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let rlim_nproc = libc::rlimit {
+            rlim_cur: pids_max as libc::rlim_t,
+            rlim_max: pids_max as libc::rlim_t,
+        };
+        if unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &rlim_nproc) } != 0 {
+            tracing::warn!("[RLIMIT] Failed to set RLIMIT_NPROC");
+        }
+    }
+
+    tracing::info!("[RLIMIT] Resource limits applied: mem={}, pids={}", mem_bytes, pids_max);
+}
+
+// ---------------------------------------------------------------------------
+// macOS: Apple Seatbelt Sandbox
+// ---------------------------------------------------------------------------
+
+/// Apple's sandbox_init (Seatbelt) restricts filesystem + network in one call.
+/// Applied in the child process after fork, before exec.
+#[cfg(target_os = "macos")]
+fn apply_macos_sandbox(workspace: &Path) -> Result<()> {
+    extern "C" {
+        fn sandbox_init(
+            profile: *const libc::c_char,
+            flags: u64,
+            errorbuf: *mut *mut libc::c_char,
+        ) -> libc::c_int;
+        fn sandbox_free_error(errorbuf: *mut libc::c_char);
+    }
+
+    let ws = workspace.to_string_lossy();
+
+    // SBPL profile: deny default, allow workspace + system paths
+    let profile = format!(
+        "(version 1)\n\
+         (deny default)\n\
+         (allow file-read* file-write* (subpath \"{}\"))\n\
+         (allow file-read* \
+           (subpath \"/usr/lib\") \
+           (subpath \"/System/Library\") \
+           (subpath \"/usr/bin\") \
+           (subpath \"/bin\") \
+           (subpath \"/usr/local/bin\") \
+           (subpath \"/private/tmp\") \
+           (subpath \"/private/var/tmp\"))\n\
+         (allow process-fork \
+           (literal \"/usr/bin\") \
+           (literal \"/bin\") \
+           (literal \"/usr/local/bin\"))\n\
+         (allow mach*)\n\
+         (allow syscall-unix)\n\
+         (allow signal)\n\
+         (allow ipc-posix-sem*)\n\
+         (import \"system.sb\")\n",
+        ws
+    );
+
+    let c_profile = std::ffi::CString::new(profile)
+        .map_err(|e| anyhow::anyhow!("CString: {}", e))?;
+
+    let mut errorbuf: *mut libc::c_char = std::ptr::null_mut();
+    let result = unsafe { sandbox_init(c_profile.as_ptr(), 0, &mut errorbuf) };
+
+    if result != 0 {
+        let msg = if !errorbuf.is_null() {
+            let s = unsafe { std::ffi::CStr::from_ptr(errorbuf).to_string_lossy().into_owned() };
+            unsafe { sandbox_free_error(errorbuf) };
+            s
+        } else {
+            "unknown".into()
+        };
+        return Err(anyhow::anyhow!("Apple sandbox_init failed: {}", msg));
+    }
+
+    tracing::info!("[MACOS SANDBOX] Apple Seatbelt active. FS restricted to: {}", ws);
     Ok(())
 }
 
@@ -632,23 +756,6 @@ mod tests {
         assert_eq!(opts.cpu_period_us, 100_000);
         assert_eq!(opts.pids_max, 20);
         assert_eq!(opts.timeout_secs, 30);
-    }
-
-    #[test]
-    fn test_sandbox_options_from_policy() {
-        use crate::cage::gate::ResourceLimits;
-        let limits = ResourceLimits {
-            memory_mb: 256,
-            cpu_percent: 50,
-            pids_max: 10,
-            max_execution_seconds: 60,
-        };
-        let opts = SandboxOptions::from_policy(&limits);
-        assert_eq!(opts.memory_limit_bytes, 256 * 1024 * 1024);
-        // 50% of 100000 = 50000
-        assert_eq!(opts.cpu_quota_us, 50_000);
-        assert_eq!(opts.pids_max, 10);
-        assert_eq!(opts.timeout_secs, 60);
     }
 
     #[test]

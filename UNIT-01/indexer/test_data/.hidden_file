@@ -1,1 +1,0 @@
-This file is hidden, but since our walker has `.hidden(false)`, it SHOULD be indexed!

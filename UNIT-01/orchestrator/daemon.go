@@ -19,17 +19,6 @@ const (
 	StatusReady                      // socket available
 )
 
-func (s DaemonStatus) Icon() string {
-	switch s {
-	case StatusReady:
-		return "🟢"
-	case StatusOffline:
-		return "🔴"
-	default:
-		return "⚪"
-	}
-}
-
 type DaemonManager struct {
 	processes map[string]*os.Process
 }

@@ -22,7 +22,7 @@ type ollamaRequest struct {
 	Model    string                 `json:"model"`
 	Messages []ollamaMessage        `json:"messages"`
 	Stream   bool                   `json:"stream"`
-	Format   string                 `json:"format,omitempty"` // e.g. "json"
+	Format   interface{}            `json:"format,omitempty"` // "json" or JSON schema
 	Options  map[string]interface{} `json:"options,omitempty"`
 }
 
