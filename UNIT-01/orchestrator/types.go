@@ -8,6 +8,7 @@ import "time"
 type Message struct {
 	Role      string
 	Content   string
+	Thinking  string // content extracted from <thinking> tags
 	Timestamp time.Time
 }
 

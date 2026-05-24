@@ -5,7 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"time"
+)
+
+const (
+	dialTimeout        = 10 * time.Second
+	responseHeaderTimeout = 120 * time.Second
 )
 
 type LLMClient struct {
@@ -37,9 +44,17 @@ func NewLLMClient(endpoint, defaultModel string) *LLMClient {
 		endpoint = "http://127.0.0.1:11434"
 	}
 	return &LLMClient{
-		endpoint:   endpoint,
-		model:      defaultModel,
-		httpClient: &http.Client{},
+		endpoint: endpoint,
+		model:    defaultModel,
+		httpClient: &http.Client{
+			Transport: &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout: dialTimeout,
+				}).DialContext,
+				TLSHandshakeTimeout:   dialTimeout,
+				ResponseHeaderTimeout: responseHeaderTimeout,
+			},
+		},
 	}
 }
 
@@ -171,7 +186,7 @@ func (c *LLMClient) Chat(messages []ollamaMessage) (string, error) {
 		return "", err
 	}
 
-	resp, err := http.Post(c.endpoint+"/api/chat", "application/json", bytes.NewReader(b))
+	resp, err := c.httpClient.Post(c.endpoint+"/api/chat", "application/json", bytes.NewReader(b))
 	if err != nil {
 		return "", err
 	}

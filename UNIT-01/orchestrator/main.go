@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"math/rand"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func getExecutorPrompt(ws *Workspace, p *ModelProfile) string {
@@ -118,7 +118,6 @@ func compactHistory(h *History, llm *LLMClient) {
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
 	history := &History{}
 
 	// Read model from env or flag — default to qwen2.5-coder:3b
@@ -149,161 +148,40 @@ func main() {
 		fmt.Printf("◆ MCP: %d extensible tool(s) available\n", mcpMgr.ToolCount())
 	}
 
-	// SIGTERM/SIGINT handler — clean shutdown of daemons and MCP servers
+	// SIGTERM handler — clean shutdown of daemons and MCP servers
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigCh, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		fmt.Println("\n◆ Shutting down...")
 		mcpMgr.Shutdown()
 		daemonMgr.Shutdown()
 		os.Exit(0)
 	}()
 
 	cwd, _ := os.Getwd()
+	ws.Set(cwd)
+	chatLog := NewChatLogger(ws)
+
 	ram := SystemRAMGB()
 	fmt.Printf("◆ UNIT-01 SOVEREIGN ENGINE [BOOTED]\n")
 	fmt.Printf("◆ Model: %s (%s) | Context: %d | RAM: %dGB\n", profile.Name, profile.ParameterSize, profile.ContextWindow, ram)
 	fmt.Printf("◆ Workspace: %s\n", cwd)
-	ws.Set(cwd)
 
-	chatLog := NewChatLogger(ws)
+	// ─── LAUNCH BUBBLE TEA TUI ──────────────────────────────────────────
+	p := tea.NewProgram(
+		newUIModel(llm, ws, daemonMgr, profile, history, chatLog),
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 
-	scanner := bufio.NewScanner(os.Stdin)
-	for {
-		history.PurgeSystemMessages()
-
-		fmt.Printf("\n> ")
-		if !scanner.Scan() {
-			break
-		}
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
-
-		if input == "/exit" || input == "/quit" {
-			fmt.Println("Shutting down...")
-			mcpMgr.Shutdown()
-			daemonMgr.Shutdown()
-			os.Exit(0)
-		}
-
-		history.Append(Message{Role: "user", Content: input, Timestamp: time.Now()})
-
-		// ─── PHASE 1: Grammar-constrained directive generation ──────────────
-		ws.Refresh()
-		autoCtx := getAutoContext(input, ws)
-		estimate := history.TokenEstimate()
-		threshold := int(float64(profile.ContextWindow) * profile.CompactionPct)
-		if estimate > threshold {
-			fmt.Printf("◆ Context at ~%d tokens (threshold: %d). Compacting...\n", estimate, threshold)
-			compactHistory(history, llm)
-		}
-
-		maxRetries := profile.MaxRetries
-
-	directivePhase:
-		for retry := 0; retry <= maxRetries; retry++ {
-			messages := history.BuildOllamaMessages(profile.MaxMessagesPerTurn)
-			prompt := getExecutorPrompt(ws, profile) + autoCtx +
-				"\n\n### DIRECTIVE PHASE (JSON STRUCTURED OUTPUT):\n" +
-				"Map user requests to directives. NEVER use shell commands (ls, cat, grep, find, mv, cp, mkdir).\n" +
-				"- To LIST a directory → indexer_ls with {\"path\":\"...\"}\n" +
-				"- To READ a file → indexer_read with {\"path\":\"...\"}\n" +
-				"- To READ multiple files at once → read_multiple with {\"paths\":[\"...\",\"...\"]}\n" +
-				"- To SEARCH file contents → search with {\"query\":\"...\"}\n" +
-				"- To GLOB for files by pattern → glob with {\"pattern\":\"**/*.go\",\"base\":\"...\"}\n" +
-				"- To FIND files by name → find with {\"name\":\"...\",\"root\":\"...\"}\n" +
-				"- To EXECUTE a command → execute with {\"command\":\"...\"}\n" +
-				"- To WRITE a file → write with {\"path\":\"...\",\"content\":\"...\"}\n" +
-				"- To APPEND to a file → append with {\"path\":\"...\",\"content\":\"...\"}\n" +
-				"- To DELETE a file → delete with {\"path\":\"...\"}\n" +
-				"- To PATCH a file → patch with {\"path\":\"...\",\"target\":\"...\",\"replacement\":\"...\"}\n" +
-				"- To MOVE/RENAME a file → mv with {\"from\":\"...\",\"to\":\"...\"}\n" +
-				"- To COPY a file → cp with {\"from\":\"...\",\"to\":\"...\"}\n" +
-				"- To CREATE a directory → mkdir with {\"path\":\"...\"}\n" +
-				"- To REMOVE a directory → rmdir with {\"path\":\"...\"}\n" +
-				"- To GET file info → file_info with {\"path\":\"...\"}\n" +
-				"- To DIFF two files → diff with {\"files\":[\"...\",\"...\"]}\n" +
-				"- To VIEW project tree → ls_tree with {\"root\":\"...\"}\n" +
-				"- To ROLLBACK changes → rollback with {}\n" +
-				"Output ONLY a JSON object with a \"directives\" array. " +
-				"Do NOT include any explanation, conversation, or markdown. Only output the JSON object."
-			messages = append([]ollamaMessage{{Role: "system", Content: prompt}}, messages...)
-
-			fmt.Print("◆ Planning...")
-			directives, _, _, err := llm.StreamDirectives(messages, profile.Temperature)
-			if err != nil {
-				fmt.Printf(" [Error: %v]\n", err)
-				break directivePhase
-			}
-
-			if len(directives) == 0 {
-				fmt.Println(" [no directives needed]")
-				break directivePhase
-			}
-
-			fmt.Printf(" [%d directive(s)]\n", len(directives))
-
-			if retry > 0 {
-				fmt.Printf("◆ Re-trying directives (attempt %d/%d):\n", retry, maxRetries)
-			}
-
-			allOk := true
-			for _, dir := range directives {
-				result := ExecuteTool(dir.Name, dir.Args, ws)
-
-				display := result
-				if len(display) > profile.MaxToolOutputChars {
-					display = fmt.Sprintf("[Tool '%s' output truncated: %d bytes]", dir.Name, len(display))
-				}
-
-				fmt.Printf("  %s → %s\n", dir.Name, truncateOneLine(display, 80))
-
-		if isToolError(result) {
-				allOk = false
-				history.Append(Message{
-					Role:      "system",
-					Content:   fmt.Sprintf("Tool [%s] error (needs correction): %s", dir.Name, result),
-					Timestamp: time.Now(),
-				})
-			} else {
-				history.Append(Message{
-					Role:      "system",
-					Content:   fmt.Sprintf("Tool [%s] completed successfully: %s", dir.Name, result),
-					Timestamp: time.Now(),
-				})
-			}
-			}
-
-			if allOk || retry >= maxRetries {
-				break directivePhase
-			}
-
-			fmt.Printf("◆ Self-correcting (%d/%d)...\n", retry+1, maxRetries)
-		}
-
-		// ─── PHASE 2: Free-form response ────────────────────────────────────
-		phase2Messages := history.BuildOllamaMessages(profile.MaxMessagesPerTurn)
-		prompt := getExecutorPrompt(ws, profile) + autoCtx +
-			"\n\n### RESPONSE PHASE:\n" +
-			"The directives have been executed. Results are in the conversation history above. " +
-			"Now provide your natural language response to the user. Keep it concise."
-		phase2Messages = append([]ollamaMessage{{Role: "system", Content: prompt}}, phase2Messages...)
-
-		finalResponse, _, _, _, err := llm.StreamCLI(phase2Messages, os.Stdout, nil, profile.Temperature)
-		if err != nil {
-			fmt.Printf("\n[Phase 2 Error: %v]\n", err)
-			finalResponse = "(error generating response)"
-		}
-
-		history.Append(Message{Role: "assistant", Content: finalResponse, Timestamp: time.Now()})
-
-		if finalResponse != "" {
-			chatLog.Append(input, finalResponse)
-		}
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
+
+	// ─── SHUTDOWN ───────────────────────────────────────────────────────
+	mcpMgr.Shutdown()
+	daemonMgr.Shutdown()
 }
 
 func truncateOneLine(s string, maxLen int) string {

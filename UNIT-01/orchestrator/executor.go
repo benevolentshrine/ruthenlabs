@@ -74,6 +74,9 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		client := clients.NewIndexerClient()
 		stdout, err := client.Read(path)
 		if err != nil {
+			if data, osErr := os.ReadFile(path); osErr == nil {
+				return string(data)
+			}
 			return fmt.Sprintf("❌ ERROR: %v", err)
 		}
 		return stdout
@@ -108,8 +111,6 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		path, _ := args["path"].(string)
 		content, _ := args["content"].(string)
 		if content == "" {
-			// Model-specific fallbacks: some models (DeepSeek, etc.) use
-			// "target" or other keys instead of "content" for file content.
 			for _, key := range []string{"target", "content_data", "data", "text", "body", "html", "code"} {
 				if c, ok := args[key].(string); ok && c != "" {
 					content = c
@@ -121,6 +122,12 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		client := clients.NewIndexerClient()
 		err := client.Write(path, content)
 		if err != nil {
+			if osErr := os.MkdirAll(filepath.Dir(path), 0755); osErr != nil {
+				return fmt.Sprintf("❌ ERROR: Write failed: %v", err)
+			}
+			if osErr := os.WriteFile(path, []byte(content), 0644); osErr == nil {
+				return fmt.Sprintf("✅ SUCCESS: File written at %s", path)
+			}
 			return fmt.Sprintf("❌ ERROR: Write failed: %v", err)
 		}
 		return fmt.Sprintf("✅ SUCCESS: File written at %s", path)
@@ -143,6 +150,9 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		client := clients.NewIndexerClient()
 		stdout, err := client.Delete(path)
 		if err != nil {
+			if osErr := os.RemoveAll(path); osErr == nil {
+				return fmt.Sprintf("✅ SUCCESS: Deleted %s", path)
+			}
 			return fmt.Sprintf("❌ ERROR: Delete failed: %v", err)
 		}
 		return fmt.Sprintf("✅ SUCCESS: %s", stdout)
@@ -220,6 +230,9 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		client := clients.NewIndexerClient()
 		status, err := client.Mkdir(path)
 		if err != nil {
+			if osErr := os.MkdirAll(path, 0755); osErr == nil {
+				return "✅ SUCCESS: Directory created"
+			}
 			return fmt.Sprintf("❌ ERROR: Mkdir failed: %v", err)
 		}
 		return fmt.Sprintf("✅ %s", status)
@@ -229,6 +242,9 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		client := clients.NewIndexerClient()
 		status, err := client.Rmdir(path)
 		if err != nil {
+			if osErr := os.RemoveAll(path); osErr == nil {
+				return fmt.Sprintf("✅ SUCCESS: Removed %s", path)
+			}
 			return fmt.Sprintf("❌ ERROR: Rmdir failed: %v", err)
 		}
 		return fmt.Sprintf("✅ %s", status)
@@ -246,6 +262,12 @@ func ExecuteTool(name string, args map[string]any, ws *Workspace) string {
 		client := clients.NewIndexerClient()
 		status, err := client.Append(path, content)
 		if err != nil {
+			if f, osErr := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); osErr == nil {
+				defer f.Close()
+				if _, writeErr := f.WriteString(content); writeErr == nil {
+					return fmt.Sprintf("✅ SUCCESS: Appended to %s", path)
+				}
+			}
 			return fmt.Sprintf("❌ ERROR: Append failed: %v", err)
 		}
 		return fmt.Sprintf("✅ %s", status)
