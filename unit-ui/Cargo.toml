@@ -1,0 +1,78 @@
+[package]
+name = "unit-ui"
+version = "0.1.0"
+edition = "2021"
+description = "AI terminal widgets for Ratatui — streaming text, spinners, chat bubbles, input, status bar"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+crossterm = "0.28"
+
+[[example]]
+name = "streaming_text"
+path = "examples/streaming_text.rs"
+
+[[example]]
+name = "spinner"
+path = "examples/spinner.rs"
+
+[[example]]
+name = "all_widgets"
+path = "examples/all_widgets.rs"
+
+[[example]]
+name = "chat"
+path = "examples/chat.rs"
+
+[[example]]
+name = "coder"
+path = "examples/coder.rs"
+
+[[example]]
+name = "puller"
+path = "examples/puller.rs"
+
+[[example]]
+name = "search"
+path = "examples/search.rs"
+
+[[example]]
+name = "monitor"
+path = "examples/monitor.rs"
+
+[[example]]
+name = "assistant"
+path = "examples/assistant.rs"
+
+[[example]]
+name = "showcase"
+path = "examples/showcase.rs"
+
+[[example]]
+name = "gemini_cli"
+path = "examples/gemini_cli.rs"
+
+[[example]]
+name = "claude_code"
+path = "examples/claude_code.rs"
+
+[[example]]
+name = "antigravity_cli"
+path = "examples/antigravity_cli.rs"
+
+[[example]]
+name = "qwen_code"
+path = "examples/qwen_code.rs"
+
+[[example]]
+name = "cli"
+path = "examples/cli.rs"
+
+[[example]]
+name = "free_tier"
+path = "examples/free_tier.rs"
