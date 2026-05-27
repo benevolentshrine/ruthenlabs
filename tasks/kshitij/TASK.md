@@ -13,7 +13,7 @@ You own the **orchestrator backend** — the brains of UNIT-01. Three areas:
 ### Code Structure
 
 ```
-orchestrator/src/
+UNIT-01/orchestrator/src/
 ├── main.rs            → Entrypoint: boots model, spawns daemons, launches UI
 ├── socket.rs          → UDS listener (orchestrator.sock), NDJSON-based sibling IPC
 ├── types.rs           → Message, OllamaMessage, OllamaRequest, Directive
@@ -54,7 +54,7 @@ The orchestrator currently hardcodes a single model at startup (`UNIT01_MODEL` e
 
 ### What to Build
 
-Create `orchestrator/benches/` with a benchmark harness:
+Create `UNIT-01/orchestrator/benches/` with a benchmark harness:
 
 #### `benches/model_bench.rs`
 
@@ -353,7 +353,7 @@ The orchestrator currently panics on many errors. Add fallbacks:
 
 The `model_profile.rs` currently hardcodes capabilities per parameter count. Instead, build a **model database** that knows about every model:
 
-Create `orchestrator/src/models/`:
+Create `UNIT-01/UNIT-01/orchestrator/src/models/`:
 
 ```rust
 // models/registry.rs
@@ -636,14 +636,14 @@ Create `orchestrator/tests/`:
 
 | File | Purpose |
 |---|---|
-| `orchestrator/src/main.rs` | Entrypoint — boot sequence |
-| `orchestrator/src/socket.rs` | Current UDS listener |
-| `orchestrator/src/llm_client.rs` | Ollama HTTP client |
-| `orchestrator/src/stream_parser.rs` | Streaming JSON parser |
-| `orchestrator/src/model_profile.rs` | Model capability detection |
-| `orchestrator/src/mcp.rs` | MCP tool registry |
-| `orchestrator/src/daemon.rs` | Subprocess lifecycle |
-| `orchestrator/src/session.rs` | Session management |
-| `orchestrator/src/clients/uds.rs` | UDS client library |
-| `orchestrator/src/clients/sandbox.rs` | Sandbox IPC |
-| `orchestrator/src/clients/indexer.rs` | Indexer IPC |
+| `UNIT-01/orchestrator/src/main.rs` | Entrypoint — boot sequence |
+| `UNIT-01/orchestrator/src/socket.rs` | Current UDS listener |
+| `UNIT-01/orchestrator/src/llm_client.rs` | Ollama HTTP client |
+| `UNIT-01/orchestrator/src/stream_parser.rs` | Streaming JSON parser |
+| `UNIT-01/orchestrator/src/model_profile.rs` | Model capability detection |
+| `UNIT-01/orchestrator/src/mcp.rs` | MCP tool registry |
+| `UNIT-01/orchestrator/src/daemon.rs` | Subprocess lifecycle |
+| `UNIT-01/orchestrator/src/session.rs` | Session management |
+| `UNIT-01/orchestrator/src/clients/uds.rs` | UDS client library |
+| `UNIT-01/orchestrator/src/clients/sandbox.rs` | Sandbox IPC |
+| `UNIT-01/orchestrator/src/clients/indexer.rs` | Indexer IPC |

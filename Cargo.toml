@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "UNIT-01/sandbox",
-    "UNIT-01/indexer", "orchestrator",
+    "UNIT-01/indexer",
+    "UNIT-01/orchestrator",
 ]
 
 [profile.release]
