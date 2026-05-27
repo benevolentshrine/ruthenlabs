@@ -4,7 +4,13 @@
 
 ### Added
 
-- `ThinkingBlock` — collapsible reasoning block with expand/collapse, state indicator (thinking/completed/error), elapsed timer, and wrapped content area (Pro tier)
+- `ThinkingBlock` — collapsible reasoning block with expand/collapse, state indicator, elapsed timer (Pro tier)
+- `ToolCallCard` — tool/function call card with arguments, execution status, duration, and result display (Pro tier)
+- `DiffView` — unified diff viewer with green additions, red removals, hunk headers, and optional file header (Pro tier)
+- `ApprovalPrompt` — permission dialog for tool execution with pending/approved/rejected states (Pro tier)
+- `MultiLineInput` — multi-line text area with configurable line number gutter and cursor line highlight (Pro tier)
+- `SessionTimeline` — chronological event log with timestamps, icons, and detail lines (Pro tier)
+- `MarkdownBlock` — basic markdown renderer supporting headings, bold, inline code, fenced code blocks, and lists (Pro tier)
 
 ## 0.1.0 — 2026-05-28
 

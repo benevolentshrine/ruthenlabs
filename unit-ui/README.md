@@ -45,6 +45,12 @@ Unit-UI gives you the UI primitives that every AI coding agent, CLI assistant, a
 | Free | [`ThinkingDots`] | Animated "..." thinking indicator |
 | Free | [`SlashMenu`] | Slash-command completion menu |
 | Pro  | [`ThinkingBlock`] | Collapsible reasoning block with state indicator |
+| Pro  | [`ToolCallCard`] | Tool call card with args, status, duration, result |
+| Pro  | [`DiffView`] | Unified diff viewer with +/- syntax coloring |
+| Pro  | [`ApprovalPrompt`] | Permission dialog for tool execution approval |
+| Pro  | [`MultiLineInput`] | Multi-line text area with line numbers |
+| Pro  | [`SessionTimeline`] | Chronological event log with timestamps |
+| Pro  | [`MarkdownBlock`] | Basic markdown renderer for assistant messages |
 | —   | [`StyleToken`] | Builder-based multi-color theme token |
 
 [`StreamingText`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/streaming_text/struct.StreamingText.html
@@ -55,6 +61,12 @@ Unit-UI gives you the UI primitives that every AI coding agent, CLI assistant, a
 [`ThinkingDots`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/thinking_dots/struct.ThinkingDots.html
 [`SlashMenu`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/slash_menu/struct.SlashMenu.html
 [`ThinkingBlock`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/thinking_block/struct.ThinkingBlock.html
+[`ToolCallCard`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/tool_call_card/struct.ToolCallCard.html
+[`DiffView`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/diff_view/struct.DiffView.html
+[`ApprovalPrompt`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/approval_prompt/struct.ApprovalPrompt.html
+[`MultiLineInput`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/multi_line_input/struct.MultiLineInput.html
+[`SessionTimeline`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/session_timeline/struct.SessionTimeline.html
+[`MarkdownBlock`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/markdown_block/struct.MarkdownBlock.html
 [`StyleToken`]: https://docs.rs/unit-ui/latest/unit_ui/style/token/struct.StyleToken.html
 
 ## Examples
