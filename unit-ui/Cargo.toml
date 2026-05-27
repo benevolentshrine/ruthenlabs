@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/benevolentshrine/Ruthen-Labs"
 homepage = "https://github.com/benevolentshrine/Ruthen-Labs"
 readme = "README.md"
+rust-version = "1.75"
 keywords = ["ratatui", "terminal", "tui", "ai", "chat"]
 categories = ["command-line-interface", "gui"]
 
