@@ -8,6 +8,10 @@ use crate::style::StyleToken;
 
 /// \[Free\] Displays text with a per-character typewriter animation.
 ///
+/// # Doc aliases
+///
+/// `typewriter`, `streaming`, `text animation`
+///
 /// Renders a given string character by character, optionally preceded by a
 /// thinking block. Designed for streaming LLM responses in terminal UIs.
 ///

@@ -8,6 +8,10 @@ use crate::style::StyleToken;
 
 /// \[Free\] An animated "thinking" dots indicator (`. .. ... .. .`).
 ///
+/// # Doc aliases
+///
+/// `ellipsis`, `waiting`, `processing indicator`
+///
 /// Cycles through a 6-frame animation: `.  ` → `.. ` → `...` → ` ..` → `  .` → `   `.
 /// Optionally prefixed with a label.
 ///

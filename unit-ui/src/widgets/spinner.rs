@@ -9,6 +9,10 @@ use crate::style::StyleToken;
 
 /// \[Free\] An animated spinner for indicating progress.
 ///
+/// # Doc aliases
+///
+/// `loading indicator`, `progress`, `throbber`, `activity`
+///
 /// Cycles through a set of frame strings (default: braille dots). An optional
 /// label is rendered alongside the spinner.
 ///

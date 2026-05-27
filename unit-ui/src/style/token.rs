@@ -2,6 +2,10 @@ use ratatui::style::Color;
 
 /// \[Free\] A complete set of semantic colours for widget theming.
 ///
+/// # Doc aliases
+///
+/// `theme token`, `color scheme`, `palette`
+///
 /// Passed into widgets via the `.style()` builder method. Every widget
 /// subscribes to a subset of these fields.
 ///

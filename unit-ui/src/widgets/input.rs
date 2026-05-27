@@ -8,6 +8,10 @@ use crate::style::StyleToken;
 
 /// \[Free\] A single-line text input with optional placeholder.
 ///
+/// # Doc aliases
+///
+/// `text field`, `prompt`, `command input`
+///
 /// Renders a `>` prompt prefix followed by the current value. When focused,
 /// the prefix uses the accent color; when unfocused it uses the dim color.
 ///

@@ -2,6 +2,10 @@ use ratatui::style::Color;
 
 /// Enumeration of supported AI model providers and platforms.
 ///
+/// # Doc aliases
+///
+/// `AI provider`, `model provider`, `LLM provider`
+///
 /// Each variant has an associated brand colour ([`Provider::color`]) and
 /// display name ([`Provider::name`]).
 ///

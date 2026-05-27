@@ -4,6 +4,10 @@ use crate::style::StyleToken;
 
 /// A named theme with an associated [`StyleToken`] palette.
 ///
+/// # Doc aliases
+///
+/// `color theme`, `palette`, `color scheme`
+///
 /// # Example
 ///
 /// ```rust

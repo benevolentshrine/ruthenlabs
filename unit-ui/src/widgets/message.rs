@@ -8,6 +8,10 @@ use crate::style::StyleToken;
 
 /// \[Free\] A chat message rendered as a paragraph colored by sender role.
 ///
+/// # Doc aliases
+///
+/// `chat message`, `bubble`, `conversation`
+///
 /// Uses `Role::User` → accent color, `Role::Assistant` → success color,
 /// `Role::System` → dim color.
 ///
@@ -25,6 +29,10 @@ pub struct MessageBubble<'a> {
 }
 
 /// Identifies the sender of a message.
+///
+/// # Doc aliases
+///
+/// `sender`, `participant`
 ///
 /// Maps to different colours in the active `StyleToken`:
 /// - `User` → `.accent`

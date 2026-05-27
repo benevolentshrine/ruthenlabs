@@ -9,6 +9,10 @@ use crate::theme::themes;
 
 /// \[Free\] Top-level configuration loaded from `Unit.toml`.
 ///
+/// # Doc aliases
+///
+/// `configuration`, `settings`
+///
 /// # Example TOML
 ///
 /// ```toml

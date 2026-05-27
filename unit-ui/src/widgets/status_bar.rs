@@ -9,6 +9,10 @@ use ratatui::widgets::Widget;
 use crate::style::StyleToken;
 
 /// Describes the current network state for the status bar indicator.
+///
+/// # Doc aliases
+///
+/// `network state`, `connectivity`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionStatus {
     /// Backend is reachable.
@@ -20,6 +24,10 @@ pub enum ConnectionStatus {
 }
 
 /// \[Free\] A compact status bar for the top of an AI terminal UI.
+///
+/// # Doc aliases
+///
+/// `header bar`, `toolbar`, `status line`
 ///
 /// Shows provider name, connection state (with a coloured dot), model name,
 /// session elapsed time, and optional token count — all on a single line.

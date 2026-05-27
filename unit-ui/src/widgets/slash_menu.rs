@@ -54,6 +54,10 @@ impl SlashCommand {
 
 /// \[Pro\] A popup menu that lists slash commands with optional sub-menus.
 ///
+/// # Doc aliases
+///
+/// `command palette`, `quick menu`, `slash command menu`
+///
 /// Supports filtering by typed prefix, keyboard navigation, and a "Back"
 /// item when showing sub-menu options.
 ///
