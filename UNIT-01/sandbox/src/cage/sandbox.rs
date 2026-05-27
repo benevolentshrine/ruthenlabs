@@ -79,6 +79,107 @@ impl SandboxOptions {
 // Public API: spawn a process inside the full v2.0 Hard Linux Cage
 // ---------------------------------------------------------------------------
 
+/// A sandboxed child process with automatic timeout and cgroup cleanup.
+///
+/// Wraps `std::process::Child` and ensures:
+/// - Timeout is enforced (child killed after `timeout_secs`)
+/// - Cgroup jail is cleaned up on drop
+/// - Child process is killed on drop if still alive
+pub struct SandboxedChild {
+    child: Option<std::process::Child>,
+    jail: Option<crate::cage::cgroups::CgroupJail>,
+    timeout_secs: u64,
+}
+
+impl SandboxedChild {
+    /// Wait for the child to exit, enforcing the timeout.
+    pub fn wait_with_output(mut self) -> Result<std::process::Output> {
+        let timeout = self.timeout_secs;
+        let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        if timeout > 0 {
+            if let Some(ref child) = self.child {
+                let pid = child.id();
+                let killed_clone = killed.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(timeout));
+                    killed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let _ = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                });
+            }
+        }
+
+        let child = self.child.take()
+            .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
+        let output = child.wait_with_output()
+            .context("Failed to wait for sandboxed child")?;
+
+        if killed.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::warn!("[SANDBOX] Child process timed out after {}s and was killed.", timeout);
+        }
+
+        Ok(output)
+    }
+
+    pub fn wait(mut self) -> Result<std::process::ExitStatus> {
+        let timeout = self.timeout_secs;
+        let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        if timeout > 0 {
+            if let Some(ref child) = self.child {
+                let pid = child.id();
+                let killed_clone = killed.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(timeout));
+                    killed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let _ = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                });
+            }
+        }
+
+        let mut child = self.child.take()
+            .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
+        let status = child.wait()
+            .context("Failed to wait for sandboxed child")?;
+
+        if killed.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::warn!("[SANDBOX] Child process timed out after {}s and was killed.", timeout);
+        }
+
+        Ok(status)
+    }
+
+    /// Get the child's PID (for monitoring/logging).
+    pub fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|c| c.id())
+    }
+
+    /// Kill the child process immediately.
+    pub fn kill(&mut self) -> Result<()> {
+        if let Some(ref mut child) = self.child {
+            child.kill()?;
+            child.wait()?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SandboxedChild {
+    fn drop(&mut self) {
+        if let Some(ref mut child) = self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        // CgroupJail is dropped here, which removes the cgroup.
+        // This is correct because by this point the child has exited
+        // and the cgroup is empty.
+    }
+}
+
 /// Spawn a command inside the Zero-Trust Determinism sandbox.
 ///
 /// This is the primary entrypoint for all sandboxed execution in SANDBOX v2.0.
@@ -89,13 +190,13 @@ impl SandboxOptions {
 /// 2. Child (pre-exec): Landlock v2 applied → Seccomp-BPF v2 applied
 /// 3. Parent (post-fork): Cgroup v2 jail created → child PID added
 /// 4. Child: execvp() → Untrusted payload runs inside all four layers
-/// 5. Parent: waits for exit, cleans up cgroup
+/// 5. Parent: waits for exit via `SandboxedChild::wait_with_output()`, cleans up cgroup
 pub fn spawn_sandboxed_command(
     mut command: Command,
     workspace: &Path,
     opts: SandboxOptions,
     mode: SecurityMode,
-) -> Result<std::process::Child> {
+) -> Result<SandboxedChild> {
     let workspace_owned = workspace.to_path_buf();
     let mode_for_child = mode;
 
@@ -185,14 +286,13 @@ pub fn spawn_sandboxed_command(
         }
     }
 
-    // The cgroup jail will auto-destroy via Drop when this function returns,
-    // but since we're returning the child, we leak the jail intentionally.
-    // The caller must handle cleanup. For now we use std::mem::forget since
-    // cgroup cleanup happens when the child process exits and the cgroup empties.
-    // Production implementation would tie cgroup lifetime to child wait().
-    std::mem::forget(jail);
+    let timeout = opts.timeout_secs;
 
-    Ok(child)
+    Ok(SandboxedChild {
+        child: Some(child),
+        jail: Some(jail),
+        timeout_secs: timeout,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -760,8 +860,6 @@ mod tests {
 
     #[test]
     fn test_network_blocking_via_sandbox() {
-        // Spawn a process that tries to open a network socket inside the sandbox.
-        // Uses 'nc' or falls back gracefully.
         let workspace = std::env::temp_dir().join("sandbox_v2_test_net");
         let _ = std::fs::remove_dir_all(&workspace);
         std::fs::create_dir_all(&workspace).unwrap();
@@ -770,12 +868,10 @@ mod tests {
         cmd.args(["-z", "8.8.8.8", "53"]);
 
         let opts = SandboxOptions::default();
-        if let Ok(mut child) = spawn_sandboxed_command(cmd, &workspace, opts, SecurityMode::Mid) {
+        if let Ok(child) = spawn_sandboxed_command(cmd, &workspace, opts, SecurityMode::Mid) {
             let status = child.wait().expect("Failed to wait for child");
-            // nc should fail because Seccomp blocks socket() syscall
             assert!(!status.success(), "Process should fail in sandbox: socket blocked");
         } else {
-            // nc not installed — skip
             println!("Skipping network test: 'nc' not found.");
         }
 
@@ -784,8 +880,6 @@ mod tests {
 
     #[test]
     fn test_filesystem_isolation_via_sandbox() {
-        // A sandboxed 'cat /etc/passwd' should fail because /etc/passwd
-        // is not in the Landlock allowlist.
         let workspace = std::env::temp_dir().join("sandbox_v2_test_fs");
         let _ = std::fs::remove_dir_all(&workspace);
         std::fs::create_dir_all(&workspace).unwrap();
@@ -794,7 +888,7 @@ mod tests {
         cmd.arg("/etc/passwd");
 
         let opts = SandboxOptions::default();
-        if let Ok(mut child) = spawn_sandboxed_command(cmd, &workspace, opts, SecurityMode::Mid) {
+        if let Ok(child) = spawn_sandboxed_command(cmd, &workspace, opts, SecurityMode::Mid) {
             let status = child.wait().expect("Failed to wait for child");
             assert!(!status.success(), "cat /etc/passwd should fail: path invisible to Landlock");
         }

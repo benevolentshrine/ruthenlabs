@@ -11,7 +11,6 @@ mod config;
 mod runner;
 mod shadow;
 mod socket;
-mod tui;
 
 /// SANDBOX — Security Cage Engine for Project RUTHENLABS (Open-Core)
 #[derive(Parser)]
@@ -40,13 +39,6 @@ enum Commands {
         mode: String,
         #[arg(long, value_name = "N")]
         fuel: Option<u64>,
-    },
-
-    /// Launch TUI dashboard
-    Tui {
-        /// Socket path (default: /tmp/ruthen/sandbox.sock)
-        #[arg(long)]
-        socket: Option<PathBuf>,
     },
 
     /// Filesystem rollback
@@ -81,9 +73,6 @@ fn run() -> Result<()> {
         Commands::Daemon { socket } => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(socket::run_daemon(socket))?;
-        }
-        Commands::Tui { socket } => {
-            tui::run(socket)?;
         }
         Commands::Cage { input, mode, fuel } => {
             use cage::policy::SecurityMode;

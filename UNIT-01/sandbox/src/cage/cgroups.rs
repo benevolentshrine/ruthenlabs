@@ -30,8 +30,44 @@ pub const DEFAULT_CPU_PERIOD_US: u64 = 100_000;
 /// Default max PIDs (prevents fork bombs)
 pub const DEFAULT_PIDS_MAX: u32 = 20;
 
-/// Root path for cgroup v2 filesystem — user@1000 service slice (no sudo required)
-const CGROUP_ROOT: &str = "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice";
+/// Resolve the cgroupv2 root path for the current process.
+///
+/// Reads `/proc/self/cgroup` to find the cgroup the process is already in,
+/// then returns the canonical path below `/sys/fs/cgroup`. This works
+/// regardless of UID, systemd slice naming, or distro.
+///
+/// Fallback chain:
+///   1. `/sys/fs/cgroup/<cgroup>` from `/proc/self/cgroup` (preferred)
+///   2. `/sys/fs/cgroup` (flat v2 — no systemd)
+///   3. Degradation: empty path (caller must check `is_active()`)
+fn cgroup_root_path() -> PathBuf {
+    // Try reading /proc/self/cgroup to find our current cgroup
+    if let Ok(content) = std::fs::read_to_string("/proc/self/cgroup") {
+        for line in content.lines() {
+            // Format: "0::/user.slice/user-1000.slice/user@1000.service/app.slice"
+            let parts: Vec<&str> = line.splitn(3, ':').collect();
+            if parts.len() == 3 && parts.last().map_or(false, |p| !p.is_empty()) {
+                let cgroup = parts.last().unwrap();
+                // Skip the root cgroup "/" — use sysfs root
+                if *cgroup != "/" {
+                    let path = PathBuf::from("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'));
+                    if path.exists() && path.join("cgroup.controllers").exists() {
+                        return path;
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: flat cgroupv2 (likely in a container without systemd)
+    let flat_path = PathBuf::from("/sys/fs/cgroup");
+    if flat_path.join("cgroup.controllers").exists() {
+        return flat_path;
+    }
+
+    // No cgroupv2 available — caller will detect via is_active()
+    PathBuf::new()
+}
 
 /// A scoped Cgroup v2 jail for a single sandboxed execution.
 ///
@@ -48,10 +84,26 @@ pub struct CgroupJail {
 impl CgroupJail {
     /// Create a new cgroup jail with a unique name.
     ///
+    /// Detects the correct cgroupv2 root path at runtime via `/proc/self/cgroup`,
+    /// so it works for any UID, any distro, any systemd slice layout.
+    ///
     /// Returns Ok(jail) even if cgroup creation fails (graceful degradation).
     /// Check `jail.is_active()` to determine if limits are enforced.
     pub fn new(name: &str) -> Self {
-        let cgroup_path = PathBuf::from(CGROUP_ROOT).join(name);
+        let root = cgroup_root_path();
+        if root.as_os_str().is_empty() {
+            tracing::warn!(
+                "[CGROUP] Cgroup v2 not available on this system. \
+                 Running without resource limits. Landlock+Seccomp still active."
+            );
+            return CgroupJail {
+                name: name.to_string(),
+                cgroup_path: PathBuf::new(),
+                active: false,
+            };
+        }
+
+        let cgroup_path = root.join(name);
 
         // Attempt to create the cgroup directory
         match fs::create_dir(&cgroup_path) {
@@ -212,10 +264,8 @@ impl Drop for CgroupJail {
 
 /// Check if cgroup v2 is available and writable on this system.
 pub fn cgroup_v2_available() -> bool {
-    let root = Path::new(CGROUP_ROOT);
-
-    // Check that cgroup root exists
-    if !root.exists() {
+    let root = cgroup_root_path();
+    if root.as_os_str().is_empty() {
         return false;
     }
 

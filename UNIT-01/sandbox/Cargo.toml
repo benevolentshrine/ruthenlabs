@@ -39,10 +39,6 @@ sha2 = { version = "0.10", default-features = false }
 # POSIX resource limits (used on both macOS and Linux)
 libc = "0.2"
 
-# TUI dashboard
-ratatui = "0.29"
-crossterm = "0.28"
-
 # Linux Kernel Security Primitives
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
