@@ -35,16 +35,17 @@ Unit-UI gives you the UI primitives that every AI coding agent, CLI assistant, a
 
 ## Widgets
 
-| Widget | Purpose |
-|---|---|
-| [`StreamingText`] | Character-by-character token rendering with word-wrap |
-| [`Spinner`] | Indeterminate progress indicator (multiple frame styles) |
-| [`BasicInput`] | Single-line text input with editing and clipboard |
-| [`MessageBubble`] | Chat message with role coloring (user/assistant/system) |
-| [`StatusBar`] | Provider name, model, connection status, elapsed time |
-| [`ThinkingDots`] | Animated "..." thinking indicator |
-| [`SlashOption`] | Slash-command completion menu item |
-| [`StyleToken`] | Builder-based multi-color theme token |
+| Tier | Widget | Purpose |
+|---|---|---|
+| Free | [`StreamingText`] | Character-by-character token rendering with word-wrap |
+| Free | [`Spinner`] | Indeterminate progress indicator (multiple frame styles) |
+| Free | [`BasicInput`] | Single-line text input with editing and clipboard |
+| Free | [`MessageBubble`] | Chat message with role coloring (user/assistant/system) |
+| Free | [`StatusBar`] | Provider name, model, connection status, elapsed time |
+| Free | [`ThinkingDots`] | Animated "..." thinking indicator |
+| Free | [`SlashMenu`] | Slash-command completion menu |
+| Pro  | [`ThinkingBlock`] | Collapsible reasoning block with state indicator |
+| —   | [`StyleToken`] | Builder-based multi-color theme token |
 
 [`StreamingText`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/streaming_text/struct.StreamingText.html
 [`Spinner`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/spinner/struct.Spinner.html
@@ -52,7 +53,8 @@ Unit-UI gives you the UI primitives that every AI coding agent, CLI assistant, a
 [`MessageBubble`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/message/struct.MessageBubble.html
 [`StatusBar`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/status_bar/struct.StatusBar.html
 [`ThinkingDots`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/thinking_dots/struct.ThinkingDots.html
-[`SlashOption`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/slash_menu/struct.SlashOption.html
+[`SlashMenu`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/slash_menu/struct.SlashMenu.html
+[`ThinkingBlock`]: https://docs.rs/unit-ui/latest/unit_ui/widgets/thinking_block/struct.ThinkingBlock.html
 [`StyleToken`]: https://docs.rs/unit-ui/latest/unit_ui/style/token/struct.StyleToken.html
 
 ## Examples

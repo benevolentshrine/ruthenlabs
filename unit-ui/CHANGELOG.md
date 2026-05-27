@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `ThinkingBlock` — collapsible reasoning block with expand/collapse, state indicator (thinking/completed/error), elapsed timer, and wrapped content area (Pro tier)
+
 ## 0.1.0 — 2026-05-28
 
 ### Added
