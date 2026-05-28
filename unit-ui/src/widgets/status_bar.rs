@@ -113,6 +113,10 @@ fn connection_dot(status: ConnectionStatus) -> (char, Color) {
 
 use ratatui::style::Color;
 
+impl Widget for StatusBar {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &StatusBar {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let mut parts: Vec<Span> = Vec::new();

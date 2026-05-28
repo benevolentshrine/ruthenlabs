@@ -132,6 +132,10 @@ fn format_duration(d: Duration) -> String {
     }
 }
 
+impl Widget for ThinkingBlock<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &ThinkingBlock<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {

@@ -103,6 +103,10 @@ fn parse_inline(text: &str, base: Style, dimmed: Style) -> Line<'_> {
     Line::from(spans)
 }
 
+impl Widget for MarkdownBlock<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &MarkdownBlock<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 { return; }

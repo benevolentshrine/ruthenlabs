@@ -65,6 +65,10 @@ impl<'a> MessageBubble<'a> {
     }
 }
 
+impl Widget for MessageBubble<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &MessageBubble<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let color = match self.role {

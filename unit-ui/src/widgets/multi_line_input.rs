@@ -63,6 +63,10 @@ impl Default for MultiLineInput<'_> {
     fn default() -> Self { Self::new() }
 }
 
+impl Widget for MultiLineInput<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &MultiLineInput<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 { return; }

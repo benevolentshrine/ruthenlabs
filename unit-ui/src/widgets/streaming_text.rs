@@ -83,6 +83,10 @@ impl<'a> StreamingText<'a> {
     }
 }
 
+impl Widget for StreamingText<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &StreamingText<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {

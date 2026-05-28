@@ -270,6 +270,10 @@ enum MenuItem<'a> {
     Option(&'a SlashOption),
 }
 
+impl Widget for SlashMenu<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &SlashMenu<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if !self.visible || area.width < 20 || area.height < 3 {

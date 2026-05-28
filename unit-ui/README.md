@@ -85,6 +85,16 @@ Run any example with `cargo run -p unit-ui --example <name>`:
 | `08_minimal` | Zen / lightweight | MessageBubble, BasicInput |
 | `09_ide` | Warp / VSCode terminal | StatusBar, MessageBubble, BasicInput |
 | `10_retro` | Hack The Box | StatusBar, ThinkingDots, BasicInput |
+| `01_assistant` | AI Assistant with tools | StatusBar, MessageBubble, BasicInput, ThinkingBlock, ToolCallCard |
+| `02_review` | Code Review | StatusBar, DiffView, ApprovalPrompt, SessionTimeline |
+| `03_panel` | Multi-agent Conductor | StatusBar, Spinner, SessionTimeline, ToolCallCard |
+| `04_setup` | Setup Wizard | StatusBar, ThinkingBlock, ApprovalPrompt, BasicInput |
+| `05_debug` | Debug Console | StatusBar, ToolCallCard, SessionTimeline, BasicInput |
+| `06_render` | Markdown Renderer | StatusBar, MarkdownBlock, StreamingText, BasicInput |
+| `07_explore` | Session Explorer | StatusBar, SessionTimeline, MarkdownBlock, ThinkingBlock |
+| `08_editor` | Code Editor | StatusBar, MultiLineInput, ThinkingBlock, DiffView |
+| `09_monitor` | Service Monitor | StatusBar, ThinkingDots, ToolCallCard, SessionTimeline |
+| `10_retro_pro` | Network Scanner | StatusBar, MessageBubble, BasicInput, ThinkingDots, ThinkingBlock, ToolCallCard |
 
 Exit any example by pressing `q`.
 

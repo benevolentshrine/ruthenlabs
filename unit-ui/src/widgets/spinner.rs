@@ -73,6 +73,10 @@ impl Spinner {
     }
 }
 
+impl Widget for Spinner {
+    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+}
+
 impl Widget for &Spinner {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 {
