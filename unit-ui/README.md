@@ -85,16 +85,16 @@ Run any example with `cargo run -p unit-ui --example <name>`:
 | `08_minimal` | Zen / lightweight | MessageBubble, BasicInput |
 | `09_ide` | Warp / VSCode terminal | StatusBar, MessageBubble, BasicInput |
 | `10_retro` | Hack The Box | StatusBar, ThinkingDots, BasicInput |
-| `01_assistant` | AI Assistant with tools | StatusBar, MessageBubble, BasicInput, ThinkingBlock, ToolCallCard |
-| `02_review` | Code Review | StatusBar, DiffView, ApprovalPrompt, SessionTimeline |
-| `03_panel` | Multi-agent Conductor | StatusBar, Spinner, SessionTimeline, ToolCallCard |
-| `04_setup` | Setup Wizard | StatusBar, ThinkingBlock, ApprovalPrompt, BasicInput |
-| `05_debug` | Debug Console | StatusBar, ToolCallCard, SessionTimeline, BasicInput |
-| `06_render` | Markdown Renderer | StatusBar, MarkdownBlock, StreamingText, BasicInput |
-| `07_explore` | Session Explorer | StatusBar, SessionTimeline, MarkdownBlock, ThinkingBlock |
-| `08_editor` | Code Editor | StatusBar, MultiLineInput, ThinkingBlock, DiffView |
-| `09_monitor` | Service Monitor | StatusBar, ThinkingDots, ToolCallCard, SessionTimeline |
-| `10_retro_pro` | Network Scanner | StatusBar, MessageBubble, BasicInput, ThinkingDots, ThinkingBlock, ToolCallCard |
+| `01_claude_code` | Claude Code (Anthropic) | StatusBar, ThinkingBlock, MessageBubble, DiffView, ApprovalPrompt, BasicInput |
+| `02_codex` | Codex CLI (OpenAI) | StatusBar, SessionTimeline, DiffView, MessageBubble, ToolCallCard, BasicInput |
+| `03_gemini` | Gemini CLI (Google) | StatusBar, StreamingText, SessionTimeline, MarkdownBlock, ThinkingDots, BasicInput |
+| `04_aider` | Aider (open source) | StatusBar, MessageBubble, ThinkingBlock, DiffView, SlashMenu, BasicInput |
+| `05_opencode` | OpenCode (anomalyco) | StatusBar, MultiLineInput, SessionTimeline, ThinkingBlock, ToolCallCard, StreamingText |
+| `06_goose` | Goose (Block) | StatusBar, MessageBubble, ThinkingBlock, ToolCallCard, ApprovalPrompt, BasicInput |
+| `07_warp` | Warp | StatusBar, MessageBubble, ThinkingDots, MarkdownBlock, ThinkingBlock, BasicInput |
+| `08_amp` | Amp (Sourcegraph) | StatusBar, DiffView, SessionTimeline, ThinkingBlock, ToolCallCard, BasicInput |
+| `09_crush` | Crush (Charmbracelet) | StatusBar, MessageBubble, Spinner, ThinkingDots, MarkdownBlock, ThinkingBlock |
+| `10_cline` | Cline | StatusBar, MultiLineInput, DiffView, StreamingText, ApprovalPrompt, BasicInput |
 
 Exit any example by pressing `q`.
 

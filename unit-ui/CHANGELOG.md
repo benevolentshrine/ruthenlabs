@@ -11,17 +11,17 @@
 - `MultiLineInput` — multi-line text area with configurable line number gutter and cursor line highlight (Pro tier)
 - `SessionTimeline` — chronological event log with timestamps, icons, and detail lines (Pro tier)
 - `MarkdownBlock` — basic markdown renderer supporting headings, bold, inline code, fenced code blocks, and lists (Pro tier)
-- 10 new CLI examples showcasing all Free + Pro widgets together:
-  - `01_assistant` — AI assistant with tool calling and thinking block
-  - `02_review` — Code review with diff viewer and approval prompt
-  - `03_panel` — Multi-agent conductor with parallel spinners and timeline
-  - `04_setup` — Setup wizard with thinking block and approval flow
-  - `05_debug` — Debug console with tool call cards and session timeline
-  - `06_render` — Markdown renderer with streaming text and markdown block
-  - `07_explore` — Session explorer with timeline, markdown details, and thinking block
-  - `08_editor` — Code editor with multi-line input, thinking block, and diff view
-  - `09_monitor` — Service monitor with tool call cards and session timeline
-  - `10_retro_pro` — Network scanner with thinking block and tool call cards
+- 10 complete CLI examples showcasing ALL Free + Pro widgets together, each inspired by a real-world AI coding CLI:
+  - `01_claude_code` — Anthropic's autonomous multi-file editor with thinking + approval flow
+  - `02_codex` — OpenAI's sandboxed agent with suggest/auto-edit/full-auto modes
+  - `03_gemini` — Google's free-tier CLI with 1M context and Search grounding
+  - `04_aider` — Git-native pair programmer with architect mode and slash commands
+  - `05_opencode` — Provider-agnostic agent with LSP integration and parallel agents
+  - `06_goose` — Block's MCP-extendable agent with subagents and recipes
+  - `07_warp` — Modern block-based terminal with agent mode
+  - `08_amp` — Sourcegraph's repo-wide code intelligence agent
+  - `09_crush` — Charmbracelet's minimal, beautiful terminal AI
+  - `10_cline` — VS Code-native agent with browser integration
 
 ## 0.1.0 — 2026-05-28
 
