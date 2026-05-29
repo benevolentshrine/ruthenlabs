@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "UNIT-01/sandbox",
+    "UNIT-01/sandbox-mcp",
     "UNIT-01/indexer",
     "UNIT-01/orchestrator",
     "unit-ui",

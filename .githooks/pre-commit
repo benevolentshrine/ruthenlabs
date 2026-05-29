@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "=== cargo fmt ==="
+cargo fmt --all --check
+
+echo "=== cargo clippy ==="
+cargo clippy --workspace -- -D warnings
+
+echo "=== cargo test ==="
+if [[ "$(uname)" == "Darwin" ]]; then
+  cargo test --workspace --exclude sandbox
+else
+  cargo test --workspace
+fi
+
+echo "✅ All checks passed"
