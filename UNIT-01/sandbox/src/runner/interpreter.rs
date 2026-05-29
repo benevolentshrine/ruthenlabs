@@ -1,4 +1,4 @@
-﻿//! Interpreter Runner — v2.0 Zero-Trust Determinism
+//! Interpreter Runner — v2.0 Zero-Trust Determinism
 //!
 //! PHASE 2.0 STRATEGY: Host interpreter wrapped in the full SANDBOX sandbox:
 //! - Landlock v2 filesystem jail (workspace-only, symlink-safe)
@@ -13,11 +13,11 @@
 //!
 //! This removes host dependency entirely.
 
+use crate::cage::policy::{SecurityMode, SecurityPolicy};
+use crate::cage::sandbox::{spawn_sandboxed_command, SandboxOptions};
 use crate::classifier::magic::FileClass;
 use crate::classifier::ClassificationResult;
 use crate::runner::{DependencyStatus, Runner, RunnerVerdict};
-use crate::cage::sandbox::{spawn_sandboxed_command, SandboxOptions};
-use crate::cage::policy::{SecurityMode, SecurityPolicy};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Command;
@@ -117,9 +117,7 @@ impl InterpreterRunner {
     }
 
     /// Get interpreter config for a file class
-    fn get_config_for_class(&self,
-        class: &FileClass,
-    ) -> Option<&InterpreterConfig> {
+    fn get_config_for_class(&self, class: &FileClass) -> Option<&InterpreterConfig> {
         let ext = match class {
             FileClass::Python => "py",
             FileClass::JavaScript => "js",
@@ -146,7 +144,9 @@ impl InterpreterRunner {
         let output = Command::new("which").arg(command).output().ok()?;
 
         if output.status.success() {
-            String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+            String::from_utf8(output.stdout)
+                .ok()
+                .map(|s| s.trim().to_string())
         } else {
             None
         }
@@ -154,10 +154,7 @@ impl InterpreterRunner {
 
     /// Get interpreter version
     fn get_version(&self, command: &str, version_flag: &str) -> Option<String> {
-        let output = Command::new(command)
-            .arg(version_flag)
-            .output()
-            .ok()?;
+        let output = Command::new(command).arg(version_flag).output().ok()?;
 
         String::from_utf8(output.stdout)
             .ok()
@@ -166,11 +163,7 @@ impl InterpreterRunner {
     }
 
     /// Run with bubblewrap if available, otherwise return Unsupported
-    fn run_with_bwrap(
-        &self,
-        interpreter: &str,
-        _script_path: &Path,
-    ) -> Result<RunnerVerdict> {
+    fn run_with_bwrap(&self, interpreter: &str, _script_path: &Path) -> Result<RunnerVerdict> {
         // Check if bubblewrap is available
         let bwrap_available = Command::new("which")
             .arg("bwrap")
@@ -302,10 +295,10 @@ impl Runner for InterpreterRunner {
             sandbox_cmd
                 .arg(&abs_path)
                 .current_dir(workspace)
-                .env_clear()                    // strip all env vars
-                .env("HOME", workspace)         // fake home = workspace only
+                .env_clear() // strip all env vars
+                .env("HOME", workspace) // fake home = workspace only
                 .env("TMPDIR", workspace)
-                .env("RUST_LOG", "off")         // silence child tracing logs
+                .env("RUST_LOG", "off") // silence child tracing logs
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
 
@@ -331,13 +324,19 @@ impl Runner for InterpreterRunner {
             let stdout_raw = String::from_utf8_lossy(&output.stdout).to_string();
             let stdout = stdout_raw
                 .lines()
-                .filter(|line| !line.contains("sandbox::cage::sandbox")
-                    && !line.contains("INFO sandbox::")
-                    && !line.contains("WARN sandbox::")
-                    && !line.contains("ERROR sandbox::"))
+                .filter(|line| {
+                    !line.contains("sandbox::cage::sandbox")
+                        && !line.contains("INFO sandbox::")
+                        && !line.contains("WARN sandbox::")
+                        && !line.contains("ERROR sandbox::")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
-            let stdout = if stdout.is_empty() { stdout_raw } else { stdout + "\n" };
+            let stdout = if stdout.is_empty() {
+                stdout_raw
+            } else {
+                stdout + "\n"
+            };
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let exit_code = output.status.code().unwrap_or(-1);
 
@@ -367,7 +366,10 @@ impl Runner for InterpreterRunner {
                 Ok(RunnerVerdict::Success { output: stdout })
             } else {
                 Ok(RunnerVerdict::Blocked {
-                    reason: format!("Script failed with code {}:\n{}", exit_code, combined_output),
+                    reason: format!(
+                        "Script failed with code {}:\n{}",
+                        exit_code, combined_output
+                    ),
                 })
             }
         } else {

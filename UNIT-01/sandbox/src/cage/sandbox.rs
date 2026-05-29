@@ -1,4 +1,4 @@
-﻿//! SANDBOX Sandbox — v2.0 Zero-Trust Determinism
+//! SANDBOX Sandbox — v2.0 Zero-Trust Determinism
 //!
 //! This module implements the multi-layered kernel enforcement boundary.
 //! All four security layers are applied in the "fork-gap":
@@ -27,6 +27,7 @@
 //! 4. **Config Hardening** — Invisible paths not added to Landlock allowlist
 //!    (CVE-2026-25725 prevention: agent cannot create/modify startup hooks)
 
+use crate::cage::policy::SecurityMode;
 use anyhow::{Context, Result};
 #[cfg(target_os = "linux")]
 use landlock::{
@@ -37,7 +38,6 @@ use libseccomp::*;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use crate::cage::policy::SecurityMode;
 
 /// Configuration for the v2.0 sandbox.
 ///
@@ -111,13 +111,19 @@ impl SandboxedChild {
             }
         }
 
-        let child = self.child.take()
+        let child = self
+            .child
+            .take()
             .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
-        let output = child.wait_with_output()
+        let output = child
+            .wait_with_output()
             .context("Failed to wait for sandboxed child")?;
 
         if killed.load(std::sync::atomic::Ordering::SeqCst) {
-            tracing::warn!("[SANDBOX] Child process timed out after {}s and was killed.", timeout);
+            tracing::warn!(
+                "[SANDBOX] Child process timed out after {}s and was killed.",
+                timeout
+            );
         }
 
         Ok(output)
@@ -141,13 +147,17 @@ impl SandboxedChild {
             }
         }
 
-        let mut child = self.child.take()
+        let mut child = self
+            .child
+            .take()
             .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
-        let status = child.wait()
-            .context("Failed to wait for sandboxed child")?;
+        let status = child.wait().context("Failed to wait for sandboxed child")?;
 
         if killed.load(std::sync::atomic::Ordering::SeqCst) {
-            tracing::warn!("[SANDBOX] Child process timed out after {}s and was killed.", timeout);
+            tracing::warn!(
+                "[SANDBOX] Child process timed out after {}s and was killed.",
+                timeout
+            );
         }
 
         Ok(status)
@@ -278,7 +288,10 @@ pub fn spawn_sandboxed_command(
             opts.cpu_period_us,
             opts.pids_max,
         ) {
-            tracing::warn!("[CGROUP] Failed to apply limits: {}. Continuing without cgroup limits.", e);
+            tracing::warn!(
+                "[CGROUP] Failed to apply limits: {}. Continuing without cgroup limits.",
+                e
+            );
         }
 
         if let Err(e) = jail.add_process(child_pid) {
@@ -362,15 +375,15 @@ fn apply_landlock_policy(workspace: &Path) -> Result<bool> {
         "/lib64",
         "/usr/lib",
         "/usr/lib64",
-        "/usr/bin",             // Python interpreter binary lives here
-        "/usr/share",           // Python stdlib, zoneinfo, locale data
-        "/usr/local/lib",       // Third-party site-packages
-        "/etc/ld.so.cache",     // Dynamic linker cache
+        "/usr/bin",         // Python interpreter binary lives here
+        "/usr/share",       // Python stdlib, zoneinfo, locale data
+        "/usr/local/lib",   // Third-party site-packages
+        "/etc/ld.so.cache", // Dynamic linker cache
         "/etc/ld.so.conf",
         "/etc/ld.so.conf.d",
-        "/etc/localtime",       // Timezone (required by some scripts)
-        "/proc/self",           // Required by Python runtime for self-inspection
-        "/tmp",                 // Script source files are read from here
+        "/etc/localtime", // Timezone (required by some scripts)
+        "/proc/self",     // Required by Python runtime for self-inspection
+        "/tmp",           // Script source files are read from here
     ];
 
     let ruleset = system_ro_paths
@@ -379,15 +392,17 @@ fn apply_landlock_policy(workspace: &Path) -> Result<bool> {
         .try_fold(ruleset, |acc, path_str| {
             let path = Path::new(path_str);
             match PathFd::new(path) {
-                Ok(fd) => {
-                    match acc.add_rule(PathBeneath::new(fd, ro_access)) {
-                        Ok(r) => Ok(r),
-                        Err(e) => {
-                            tracing::warn!("[LANDLOCK] Failed to add RO rule for {}: {}", path_str, e);
-                            Err(anyhow::anyhow!("Landlock add_rule failed for {}: {}", path_str, e))
-                        }
+                Ok(fd) => match acc.add_rule(PathBeneath::new(fd, ro_access)) {
+                    Ok(r) => Ok(r),
+                    Err(e) => {
+                        tracing::warn!("[LANDLOCK] Failed to add RO rule for {}: {}", path_str, e);
+                        Err(anyhow::anyhow!(
+                            "Landlock add_rule failed for {}: {}",
+                            path_str,
+                            e
+                        ))
                     }
-                }
+                },
                 Err(e) => {
                     tracing::debug!("[LANDLOCK] Skipping {} (not accessible): {}", path_str, e);
                     Ok(acc)
@@ -395,7 +410,10 @@ fn apply_landlock_policy(workspace: &Path) -> Result<bool> {
             }
         })
         .unwrap_or_else(|e| {
-            tracing::warn!("[LANDLOCK] Some RO rules failed to apply: {}. Continuing with partial allowlist.", e);
+            tracing::warn!(
+                "[LANDLOCK] Some RO rules failed to apply: {}. Continuing with partial allowlist.",
+                e
+            );
             // Build a fresh ruleset with workspace-only access as fallback.
             Ruleset::default()
                 .handle_access(AccessFs::from_all(abi))
@@ -427,7 +445,10 @@ fn apply_landlock_policy(workspace: &Path) -> Result<bool> {
     // Log the actual ABI level that was applied
     let achieved_v2 = full_v2 && restriction_status.no_new_privs;
     if achieved_v2 {
-        tracing::info!("[LANDLOCK v2] Full ABI v2 filesystem jail active. Workspace: {}", workspace.display());
+        tracing::info!(
+            "[LANDLOCK v2] Full ABI v2 filesystem jail active. Workspace: {}",
+            workspace.display()
+        );
     } else {
         tracing::warn!(
             "[LANDLOCK] ABI v1 degraded enforcement. Symlink-follow control unavailable. \
@@ -482,61 +503,123 @@ fn apply_seccomp_policy(opts: &SandboxOptions) -> Result<()> {
     // Everything else hits the Trap → SIGSYS default.
     let allowed_syscalls = [
         // File I/O
-        "read", "write", "readv", "writev", "pread64", "pwrite64",
-        "open", "openat", "openat2", "close", "creat",
-        "fstat", "stat", "lstat", "fstatat", "statx",
-        "lseek", "dup", "dup2", "dup3",
+        "read",
+        "write",
+        "readv",
+        "writev",
+        "pread64",
+        "pwrite64",
+        "open",
+        "openat",
+        "openat2",
+        "close",
+        "creat",
+        "fstat",
+        "stat",
+        "lstat",
+        "fstatat",
+        "statx",
+        "lseek",
+        "dup",
+        "dup2",
+        "dup3",
         // Memory
-        "mmap", "mmap2", "mprotect", "munmap", "brk", "mremap",
-        "madvise", "mincore",
+        "mmap",
+        "mmap2",
+        "mprotect",
+        "munmap",
+        "brk",
+        "mremap",
+        "madvise",
+        "mincore",
         // Process lifecycle
-        "exit", "exit_group", "getpid", "getppid", "getuid", "getgid",
-        "geteuid", "getegid", "getgroups",
-        "gettid",           // Thread ID query (Python GIL threading)
-        "execve",           // Launch interpreter (called in pre_exec → execvp)
+        "exit",
+        "exit_group",
+        "getpid",
+        "getppid",
+        "getuid",
+        "getgid",
+        "geteuid",
+        "getegid",
+        "getgroups",
+        "gettid", // Thread ID query (Python GIL threading)
+        "execve", // Launch interpreter (called in pre_exec → execvp)
         // Signal handling
-        "rt_sigaction", "rt_sigprocmask", "rt_sigreturn", "rt_sigsuspend",
-        "sigaltstack", "kill",
+        "rt_sigaction",
+        "rt_sigprocmask",
+        "rt_sigreturn",
+        "rt_sigsuspend",
+        "sigaltstack",
+        "kill",
         // Directory traversal (workspace only — Landlock enforces boundaries)
-        "getcwd", "chdir", "getdents", "getdents64",
-        "mkdir", "mkdirat", "rmdir", "unlink", "unlinkat",
-        "rename", "renameat", "renameat2",
+        "getcwd",
+        "chdir",
+        "getdents",
+        "getdents64",
+        "mkdir",
+        "mkdirat",
+        "rmdir",
+        "unlink",
+        "unlinkat",
+        "rename",
+        "renameat",
+        "renameat2",
         // Standard operations
-        "futex", "set_robust_list", "nanosleep", "clock_nanosleep",
-        "clock_gettime", "clock_getres", "gettimeofday", "time",
+        "futex",
+        "set_robust_list",
+        "nanosleep",
+        "clock_nanosleep",
+        "clock_gettime",
+        "clock_getres",
+        "gettimeofday",
+        "time",
         // File metadata
-        "access", "faccessat", "chmod", "fchmod", "fchmodat",
-        "truncate", "ftruncate",
+        "access",
+        "faccessat",
+        "chmod",
+        "fchmod",
+        "fchmodat",
+        "truncate",
+        "ftruncate",
         // Pipe (needed for subprocess output capture, not network)
-        "pipe", "pipe2",
+        "pipe",
+        "pipe2",
         // System info (read-only, no side effects)
-        "uname", "sysinfo",
+        "uname",
+        "sysinfo",
         // Thread support (for Python's GIL and similar runtimes)
-        "set_tid_address", "arch_prctl", "rseq",
+        "set_tid_address",
+        "arch_prctl",
+        "rseq",
         // Needed by some runtimes for self-inspection
-        "readlink", "readlinkat",
+        "readlink",
+        "readlinkat",
         // Python 3.12+ required syscalls
-        "getrandom",        // ASLR/hash seeding (non-blocking, no network)
-        "prlimit64",        // Stack/resource limit query (read-only)
-        "ioctl",            // Terminal detection (Python checks if stdout is a tty)
-        "newfstatat",       // Modern fstatat variant used by Python 3.12+ linker
-        "fcntl",            // File control flags (O_CLOEXEC, non-blocking)
-        "clone",            // Thread creation (Python GIL requires threads)
-        "wait4",            // Wait for child thread/process exit
-        "prctl",            // Process control (stack smash protection init)
-        "capget",           // Capability query (read-only, no privilege change)
-        "sched_getaffinity",// CPU affinity query (Python startup)
+        "getrandom",         // ASLR/hash seeding (non-blocking, no network)
+        "prlimit64",         // Stack/resource limit query (read-only)
+        "ioctl",             // Terminal detection (Python checks if stdout is a tty)
+        "newfstatat",        // Modern fstatat variant used by Python 3.12+ linker
+        "fcntl",             // File control flags (O_CLOEXEC, non-blocking)
+        "clone",             // Thread creation (Python GIL requires threads)
+        "wait4",             // Wait for child thread/process exit
+        "prctl",             // Process control (stack smash protection init)
+        "capget",            // Capability query (read-only, no privilege change)
+        "sched_getaffinity", // CPU affinity query (Python startup)
     ];
 
     for syscall_name in allowed_syscalls {
         match ScmpSyscall::from_name(syscall_name) {
             Ok(syscall) => {
-                filter.add_rule(ScmpAction::Allow, syscall)
+                filter
+                    .add_rule(ScmpAction::Allow, syscall)
                     .with_context(|| format!("Failed to allow syscall: {}", syscall_name))?;
             }
             Err(_) => {
                 // Syscall may not exist on this kernel version — skip silently
-                tracing::debug!("[SECCOMP] Syscall '{}' not found on this kernel, skipping.", syscall_name);
+                tracing::debug!(
+                    "[SECCOMP] Syscall '{}' not found on this kernel, skipping.",
+                    syscall_name
+                );
             }
         }
     }
@@ -545,23 +628,23 @@ fn apply_seccomp_policy(opts: &SandboxOptions) -> Result<()> {
     // All networking syscalls return EACCES. We use EACCES instead of KillProcess
     // so that scripts can handle the error gracefully (e.g., print a message).
     let network_blocked = [
-        "socket",       // ALL socket types: AF_INET, AF_INET6, AF_UNIX, AF_PACKET
-        "socketpair",   // IPC tunnel — covert channel vector
-        "connect",      // TCP/UDP connection establishment
-        "bind",         // Port binding (listen server inside sandbox)
-        "sendto",       // UDP send without prior connect() — DNS leak vector
-        "sendmsg",      // scatter-gather send — covers raw sockets
-        "sendmmsg",     // batch send — covers modern UDP stacks
-        "recvfrom",     // Receiving data — block proactively
-        "recvmsg",      // Receiving scatter-gather
-        "recvmmsg",     // Batch receive
-        "accept",       // Accept incoming connections
-        "accept4",      // Same with flags
-        "listen",       // Mark socket as passive
-        "getsockname",  // Leak local address info
-        "getpeername",  // Leak remote address info
-        "getsockopt",   // Socket option inspection
-        "setsockopt",   // Socket option modification
+        "socket",      // ALL socket types: AF_INET, AF_INET6, AF_UNIX, AF_PACKET
+        "socketpair",  // IPC tunnel — covert channel vector
+        "connect",     // TCP/UDP connection establishment
+        "bind",        // Port binding (listen server inside sandbox)
+        "sendto",      // UDP send without prior connect() — DNS leak vector
+        "sendmsg",     // scatter-gather send — covers raw sockets
+        "sendmmsg",    // batch send — covers modern UDP stacks
+        "recvfrom",    // Receiving data — block proactively
+        "recvmsg",     // Receiving scatter-gather
+        "recvmmsg",    // Batch receive
+        "accept",      // Accept incoming connections
+        "accept4",     // Same with flags
+        "listen",      // Mark socket as passive
+        "getsockname", // Leak local address info
+        "getpeername", // Leak remote address info
+        "getsockopt",  // Socket option inspection
+        "setsockopt",  // Socket option modification
     ];
 
     let network_action = if opts.enable_user_notification {
@@ -576,11 +659,15 @@ fn apply_seccomp_policy(opts: &SandboxOptions) -> Result<()> {
     for syscall_name in network_blocked {
         match ScmpSyscall::from_name(syscall_name) {
             Ok(syscall) => {
-                filter.add_rule(network_action, syscall)
-                    .with_context(|| format!("Failed to block network syscall: {}", syscall_name))?;
+                filter.add_rule(network_action, syscall).with_context(|| {
+                    format!("Failed to block network syscall: {}", syscall_name)
+                })?;
             }
             Err(_) => {
-                tracing::debug!("[SECCOMP] Network syscall '{}' not found on this kernel, skipping.", syscall_name);
+                tracing::debug!(
+                    "[SECCOMP] Network syscall '{}' not found on this kernel, skipping.",
+                    syscall_name
+                );
             }
         }
     }
@@ -588,40 +675,46 @@ fn apply_seccomp_policy(opts: &SandboxOptions) -> Result<()> {
     // --- HARD BLOCKS: Privilege Escalation + Container Escape (KillProcess) ---
     // These are fatal violations. No error return — the kernel kills the process.
     let kill_on_violation = [
-        "unshare",          // Create new namespace (container escape)
-        "mount",            // Remount filesystems (overlay escape)
-        "umount2",          // Unmount (break jail)
-        "pivot_root",       // Switch root filesystem
-        "chroot",           // Classic jail break
-        "ptrace",           // Debug/inject into other processes
-        "process_vm_writev",// Write to other process memory
-        "process_vm_readv", // Read from other process memory
-        "clone3",           // Modern clone with namespace flags (container escape)
-        "setns",            // Join existing namespace
-        "kexec_load",       // Load new kernel
-        "kexec_file_load",  // Load new kernel via file
-        "init_module",      // Load kernel module
-        "finit_module",     // Load kernel module from fd
-        "delete_module",    // Remove kernel module
-        "perf_event_open",  // Performance monitoring (side-channel)
-        "kcmp",             // Compare kernel resources (info leak)
+        "unshare",           // Create new namespace (container escape)
+        "mount",             // Remount filesystems (overlay escape)
+        "umount2",           // Unmount (break jail)
+        "pivot_root",        // Switch root filesystem
+        "chroot",            // Classic jail break
+        "ptrace",            // Debug/inject into other processes
+        "process_vm_writev", // Write to other process memory
+        "process_vm_readv",  // Read from other process memory
+        "clone3",            // Modern clone with namespace flags (container escape)
+        "setns",             // Join existing namespace
+        "kexec_load",        // Load new kernel
+        "kexec_file_load",   // Load new kernel via file
+        "init_module",       // Load kernel module
+        "finit_module",      // Load kernel module from fd
+        "delete_module",     // Remove kernel module
+        "perf_event_open",   // Performance monitoring (side-channel)
+        "kcmp",              // Compare kernel resources (info leak)
     ];
 
     for syscall_name in kill_on_violation {
         match ScmpSyscall::from_name(syscall_name) {
             Ok(syscall) => {
-                filter.add_rule(ScmpAction::KillProcess, syscall)
+                filter
+                    .add_rule(ScmpAction::KillProcess, syscall)
                     .with_context(|| format!("Failed to add kill rule for: {}", syscall_name))?;
             }
             Err(_) => {
-                tracing::debug!("[SECCOMP] Escalation syscall '{}' not found on this kernel, skipping.", syscall_name);
+                tracing::debug!(
+                    "[SECCOMP] Escalation syscall '{}' not found on this kernel, skipping.",
+                    syscall_name
+                );
             }
         }
     }
 
     // Load the filter into the kernel. From this point forward,
     // ANY disallowed syscall triggers the Trap action.
-    filter.load().context("Failed to load Seccomp v2 filter into kernel")?;
+    filter
+        .load()
+        .context("Failed to load Seccomp v2 filter into kernel")?;
 
     tracing::info!("[SECCOMP v2] Filter active. Network air-gap enforced (TCP+UDP+DNS blocked).");
     Ok(())
@@ -681,7 +774,11 @@ fn apply_resource_limits(mem_bytes: u64, _cpu_quota_us: u64, pids_max: u32) {
         }
     }
 
-    tracing::info!("[RLIMIT] Resource limits applied: mem={}, pids={}", mem_bytes, pids_max);
+    tracing::info!(
+        "[RLIMIT] Resource limits applied: mem={}, pids={}",
+        mem_bytes,
+        pids_max
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -728,15 +825,19 @@ fn apply_macos_sandbox(workspace: &Path) -> Result<()> {
         ws
     );
 
-    let c_profile = std::ffi::CString::new(profile)
-        .map_err(|e| anyhow::anyhow!("CString: {}", e))?;
+    let c_profile =
+        std::ffi::CString::new(profile).map_err(|e| anyhow::anyhow!("CString: {}", e))?;
 
     let mut errorbuf: *mut libc::c_char = std::ptr::null_mut();
     let result = unsafe { sandbox_init(c_profile.as_ptr(), 0, &mut errorbuf) };
 
     if result != 0 {
         let msg = if !errorbuf.is_null() {
-            let s = unsafe { std::ffi::CStr::from_ptr(errorbuf).to_string_lossy().into_owned() };
+            let s = unsafe {
+                std::ffi::CStr::from_ptr(errorbuf)
+                    .to_string_lossy()
+                    .into_owned()
+            };
             unsafe { sandbox_free_error(errorbuf) };
             s
         } else {
@@ -745,7 +846,10 @@ fn apply_macos_sandbox(workspace: &Path) -> Result<()> {
         return Err(anyhow::anyhow!("Apple sandbox_init failed: {}", msg));
     }
 
-    tracing::info!("[MACOS SANDBOX] Apple Seatbelt active. FS restricted to: {}", ws);
+    tracing::info!(
+        "[MACOS SANDBOX] Apple Seatbelt active. FS restricted to: {}",
+        ws
+    );
     Ok(())
 }
 
@@ -801,11 +905,10 @@ pub fn check_process_status(status: std::process::ExitStatus) {
             // SIGTERM (15): Clean termination (timeout)
             15 => tracing::warn!(
                 "[SANDBOX] Process terminated by SIGTERM (signal 15). \
-                 Likely: execution timeout ({} sec) reached.", 30
+                 Likely: execution timeout ({} sec) reached.",
+                30
             ),
-            other => tracing::error!(
-                "[SANDBOX FATAL] Process terminated by signal {}.", other
-            ),
+            other => tracing::error!("[SANDBOX FATAL] Process terminated by signal {}.", other),
         }
     }
 }
@@ -818,7 +921,10 @@ pub fn check_process_status(status: std::process::ExitStatus) {
 ///
 /// This calls the v2.0 layers directly. External callers still using the
 /// v1.2 API continue to work without changes.
-#[deprecated(since = "2.0.0", note = "Use spawn_sandboxed_command with SandboxOptions instead")]
+#[deprecated(
+    since = "2.0.0",
+    note = "Use spawn_sandboxed_command with SandboxOptions instead"
+)]
 #[allow(deprecated)]
 pub fn establish_hard_cage(workspace_path: &Path) -> Result<()> {
     apply_landlock_policy(workspace_path)
@@ -870,7 +976,10 @@ mod tests {
         let opts = SandboxOptions::default();
         if let Ok(child) = spawn_sandboxed_command(cmd, &workspace, opts, SecurityMode::Mid) {
             let status = child.wait().expect("Failed to wait for child");
-            assert!(!status.success(), "Process should fail in sandbox: socket blocked");
+            assert!(
+                !status.success(),
+                "Process should fail in sandbox: socket blocked"
+            );
         } else {
             println!("Skipping network test: 'nc' not found.");
         }
@@ -890,7 +999,10 @@ mod tests {
         let opts = SandboxOptions::default();
         if let Ok(child) = spawn_sandboxed_command(cmd, &workspace, opts, SecurityMode::Mid) {
             let status = child.wait().expect("Failed to wait for child");
-            assert!(!status.success(), "cat /etc/passwd should fail: path invisible to Landlock");
+            assert!(
+                !status.success(),
+                "cat /etc/passwd should fail: path invisible to Landlock"
+            );
         }
 
         let _ = std::fs::remove_dir_all(&workspace);

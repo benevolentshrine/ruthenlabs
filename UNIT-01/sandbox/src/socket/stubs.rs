@@ -1,4 +1,4 @@
-﻿//! SANDBOX Socket Stubs — Reserved for INDEXER and ORCHESTRATOR
+//! SANDBOX Socket Stubs — Reserved for INDEXER and ORCHESTRATOR
 //!
 //! These are placeholder stubs for the Trinity architecture.
 //! DO NOT implement INDEXER or ORCHESTRATOR logic here — that lives in their own repositories.
@@ -10,8 +10,8 @@
 
 #![allow(dead_code)]
 
+use crate::socket::config::{indexer_socket_path, orchestrator_socket_path, sandbox_socket_path};
 use std::path::Path;
-use crate::socket::config::{sandbox_socket_path, orchestrator_socket_path, indexer_socket_path};
 
 /// Stub function for INDEXER socket operations
 ///
@@ -35,5 +35,7 @@ pub fn orchestrator_stub() -> anyhow::Result<()> {
 
 /// Validate that a socket path is one of the Trinity paths
 pub fn validate_trinity_path(path: &Path) -> bool {
-    path == sandbox_socket_path() || path == indexer_socket_path() || path == orchestrator_socket_path()
+    path == sandbox_socket_path()
+        || path == indexer_socket_path()
+        || path == orchestrator_socket_path()
 }

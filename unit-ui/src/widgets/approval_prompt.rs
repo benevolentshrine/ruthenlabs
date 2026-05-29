@@ -66,44 +66,71 @@ impl<'a> ApprovalPrompt<'a> {
     }
 
     /// Sets the tool name requesting permission.
-    pub fn tool_name(mut self, name: &'a str) -> Self { self.tool_name = name; self }
+    pub fn tool_name(mut self, name: &'a str) -> Self {
+        self.tool_name = name;
+        self
+    }
     /// Sets the tool arguments displayed.
-    pub fn args(mut self, args: &'a str) -> Self { self.args = args; self }
+    pub fn args(mut self, args: &'a str) -> Self {
+        self.args = args;
+        self
+    }
     /// Sets the human-readable reason explaining why this tool is needed.
-    pub fn reason(mut self, reason: &'a str) -> Self { self.reason = reason; self }
+    pub fn reason(mut self, reason: &'a str) -> Self {
+        self.reason = reason;
+        self
+    }
     /// Sets the current approval status.
-    pub fn status(mut self, status: ApprovalStatus) -> Self { self.status = status; self }
+    pub fn status(mut self, status: ApprovalStatus) -> Self {
+        self.status = status;
+        self
+    }
     /// Applies a `StyleToken`.
-    pub fn style(mut self, tokens: StyleToken) -> Self { self.style = tokens; self }
+    pub fn style(mut self, tokens: StyleToken) -> Self {
+        self.style = tokens;
+        self
+    }
 }
 
 impl Default for ApprovalPrompt<'_> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for ApprovalPrompt<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &ApprovalPrompt<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width < 6 || area.height < 5 { return; }
+        if area.width < 6 || area.height < 5 {
+            return;
+        }
 
         let (border_color, badge, badge_style) = match self.status {
             ApprovalStatus::Pending => (
                 self.style.thinking,
                 "● AWAITING APPROVAL",
-                Style::default().fg(self.style.thinking).add_modifier(ratatui::style::Modifier::BOLD),
+                Style::default()
+                    .fg(self.style.thinking)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ),
             ApprovalStatus::Approved => (
                 self.style.success,
                 "✓ APPROVED",
-                Style::default().fg(self.style.success).add_modifier(ratatui::style::Modifier::BOLD),
+                Style::default()
+                    .fg(self.style.success)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ),
             ApprovalStatus::Rejected => (
                 self.style.error,
                 "✗ REJECTED",
-                Style::default().fg(self.style.error).add_modifier(ratatui::style::Modifier::BOLD),
+                Style::default()
+                    .fg(self.style.error)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
             ),
         };
 
@@ -120,11 +147,24 @@ impl Widget for &ApprovalPrompt<'_> {
         let mut y = inner.y;
         let header = Line::from(vec![
             Span::styled("🔒 ", Style::default().fg(self.style.accent)),
-            Span::styled(self.tool_name, Style::default().fg(self.style.accent).add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(
+                self.tool_name,
+                Style::default()
+                    .fg(self.style.accent)
+                    .add_modifier(ratatui::style::Modifier::BOLD),
+            ),
             Span::styled("  ", dimmed),
             Span::styled(badge, badge_style),
         ]);
-        header.render(Rect { x: inner.x, y, width: inner.width, height: 1 }, buf);
+        header.render(
+            Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            },
+            buf,
+        );
         y += 1;
 
         // Reason
@@ -133,7 +173,15 @@ impl Widget for &ApprovalPrompt<'_> {
             let h = (reason_lines.len() as u16 + 1).min(inner.bottom().saturating_sub(y));
             let reason_text = Text::styled(self.reason, dimmed);
             let reason_para = Paragraph::new(reason_text).wrap(Wrap { trim: false });
-            reason_para.render(Rect { x: inner.x, y, width: inner.width, height: h }, buf);
+            reason_para.render(
+                Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: h,
+                },
+                buf,
+            );
             y += h;
         }
 
@@ -142,15 +190,36 @@ impl Widget for &ApprovalPrompt<'_> {
             let args_block = Block::default()
                 .borders(Borders::TOP)
                 .border_style(Style::default().fg(self.style.text_dim));
-            let args_inner = args_block.inner(Rect { x: inner.x, y, width: inner.width, height: inner.bottom().saturating_sub(y) });
+            let args_inner = args_block.inner(Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: inner.bottom().saturating_sub(y),
+            });
 
             let arg_label = Line::from(Span::styled(" Arguments:", dimmed));
-            arg_label.render(Rect { x: args_inner.x, y: args_inner.y - 1, width: 12, height: 1 }, buf);
+            arg_label.render(
+                Rect {
+                    x: args_inner.x,
+                    y: args_inner.y - 1,
+                    width: 12,
+                    height: 1,
+                },
+                buf,
+            );
 
             let arg_text = Text::styled(self.args, text);
             let arg_para = Paragraph::new(arg_text).wrap(Wrap { trim: false });
             let h = inner.bottom().saturating_sub(y + 1);
-            arg_para.render(Rect { x: args_inner.x, y: args_inner.y, width: args_inner.width, height: h }, buf);
+            arg_para.render(
+                Rect {
+                    x: args_inner.x,
+                    y: args_inner.y,
+                    width: args_inner.width,
+                    height: h,
+                },
+                buf,
+            );
         }
     }
 }

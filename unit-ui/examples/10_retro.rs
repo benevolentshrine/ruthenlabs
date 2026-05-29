@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
@@ -55,21 +57,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(Paragraph::new("").style(bg), area);
 
             let [top, mid, bot] = Layout::vertical([
-                Constraint::Length(1), Constraint::Min(1), Constraint::Length(3),
-            ]).areas(area);
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
 
             let bar = StatusBar::new()
-                .provider("RETRO-AI").model("legacy")
-                .connection(ConnectionStatus::Connected).started_at(started)
+                .provider("RETRO-AI")
+                .model("legacy")
+                .connection(ConnectionStatus::Connected)
+                .started_at(started)
                 .style(s.clone());
             f.render_widget(&bar, top);
 
-            let outer = Block::default().borders(Borders::ALL)
+            let outer = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.accent));
             let outer_inner = outer.inner(mid);
             outer.render(mid, f.buffer_mut());
 
-            let inner_block = Block::default().borders(Borders::ALL)
+            let inner_block = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.text_dim))
                 .title(" SHELL ");
             let inner = inner_block.inner(outer_inner);
@@ -77,10 +86,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mut y = inner.y;
             for line in boot_log.iter().rev().take(inner.height as usize).rev() {
-                if y >= inner.bottom() { break; }
+                if y >= inner.bottom() {
+                    break;
+                }
                 let fg = if line.contains("ERROR") || line.contains("FAIL") {
                     s.error
-                } else if line.contains("INIT") || line.contains("LOADED") || line.contains("ONLINE") {
+                } else if line.contains("INIT")
+                    || line.contains("LOADED")
+                    || line.contains("ONLINE")
+                {
                     s.success
                 } else if line.contains("WELCOME") {
                     s.thinking
@@ -88,14 +102,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     s.text
                 };
                 let paragraph = Paragraph::new(line.as_str()).style(Style::default().fg(fg));
-                f.render_widget(&paragraph, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 });
+                f.render_widget(
+                    &paragraph,
+                    Rect {
+                        x: inner.x + 1,
+                        y,
+                        width: inner.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
                 y += 1;
             }
 
-            let dots = ThinkingDots::new().label("AWAITING INPUT").frame_index(frame_count).style(s.clone());
-            f.render_widget(&dots, Rect { x: inner.x + 1, y: inner.bottom().saturating_sub(1), width: inner.width.saturating_sub(2), height: 1 });
+            let dots = ThinkingDots::new()
+                .label("AWAITING INPUT")
+                .frame_index(frame_count)
+                .style(s.clone());
+            f.render_widget(
+                &dots,
+                Rect {
+                    x: inner.x + 1,
+                    y: inner.bottom().saturating_sub(1),
+                    width: inner.width.saturating_sub(2),
+                    height: 1,
+                },
+            );
 
-            let input = BasicInput::new(&input_text).placeholder("retro> ").style(s.clone());
+            let input = BasicInput::new(&input_text)
+                .placeholder("retro> ")
+                .style(s.clone());
             f.render_widget(&input, bot);
         })?;
 
@@ -112,7 +147,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     crossterm::event::KeyCode::Char(c) => input_text.push(c),
-                    crossterm::event::KeyCode::Backspace => { input_text.pop(); }
+                    crossterm::event::KeyCode::Backspace => {
+                        input_text.pop();
+                    }
                     _ => {}
                 }
             }

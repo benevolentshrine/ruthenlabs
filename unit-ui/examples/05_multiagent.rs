@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
@@ -48,20 +50,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(Paragraph::new("").style(bg), area);
 
             let [top, main, bot] = Layout::vertical([
-                Constraint::Length(1), Constraint::Min(1), Constraint::Length(3),
-            ]).areas(area);
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
 
             let bar = StatusBar::new()
-                .provider("Multi-Agent").model("orchestrator")
-                .connection(ConnectionStatus::Connected).started_at(started)
-                .token_count(frame_count as u64).style(s.clone());
+                .provider("Multi-Agent")
+                .model("orchestrator")
+                .connection(ConnectionStatus::Connected)
+                .started_at(started)
+                .token_count(frame_count as u64)
+                .style(s.clone());
             f.render_widget(&bar, top);
 
-            let [left, right] = Layout::horizontal([
-                Constraint::Percentage(55), Constraint::Percentage(45),
-            ]).areas(main);
+            let [left, right] =
+                Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+                    .areas(main);
 
-            let agents_block = Block::default().borders(Borders::ALL)
+            let agents_block = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.accent))
                 .title(" Parallel Agents ");
             let ai = agents_block.inner(left);
@@ -69,16 +78,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             for (i, (name, status)) in agents_data.iter().enumerate() {
                 let y = ai.y + 1 + i as u16 * 3;
-                let spinner = Spinner::new().label(*name).frame_index(frame_count + i * 3).style(s.clone());
-                f.render_widget(&spinner, Rect { x: ai.x + 1, y, width: ai.width.saturating_sub(2), height: 1 });
-                let dots = ThinkingDots::new().label(*status).frame_index(frame_count).style(s.clone());
-                f.render_widget(&dots, Rect { x: ai.x + 2, y: y + 1, width: ai.width.saturating_sub(3), height: 1 });
-                let progress = Paragraph::new(format!("[{}%]", ((frame_count + i * 7) % 100).to_string()))
-                    .style(Style::default().fg(s.success));
-                f.render_widget(&progress, Rect { x: ai.x + 2, y: y + 2, width: ai.width.saturating_sub(3), height: 1 });
+                let spinner = Spinner::new()
+                    .label(*name)
+                    .frame_index(frame_count + i * 3)
+                    .style(s.clone());
+                f.render_widget(
+                    &spinner,
+                    Rect {
+                        x: ai.x + 1,
+                        y,
+                        width: ai.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
+                let dots = ThinkingDots::new()
+                    .label(*status)
+                    .frame_index(frame_count)
+                    .style(s.clone());
+                f.render_widget(
+                    &dots,
+                    Rect {
+                        x: ai.x + 2,
+                        y: y + 1,
+                        width: ai.width.saturating_sub(3),
+                        height: 1,
+                    },
+                );
+                let progress =
+                    Paragraph::new(format!("[{}%]", ((frame_count + i * 7) % 100).to_string()))
+                        .style(Style::default().fg(s.success));
+                f.render_widget(
+                    &progress,
+                    Rect {
+                        x: ai.x + 2,
+                        y: y + 2,
+                        width: ai.width.saturating_sub(3),
+                        height: 1,
+                    },
+                );
             }
 
-            let log_block = Block::default().borders(Borders::ALL)
+            let log_block = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.text_dim))
                 .title(" Agent Log ");
             let li = log_block.inner(right);
@@ -93,16 +134,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             for (i, log) in log_lines.iter().enumerate() {
                 let y = li.y + 1 + i as u16;
                 let line = Paragraph::new(log.as_str()).style(Style::default().fg(s.text_dim));
-                f.render_widget(&line, Rect { x: li.x + 1, y, width: li.width.saturating_sub(2), height: 1 });
+                f.render_widget(
+                    &line,
+                    Rect {
+                        x: li.x + 1,
+                        y,
+                        width: li.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
             }
 
-            let input = BasicInput::new("").placeholder("Orchestrator prompt...").style(s.clone());
+            let input = BasicInput::new("")
+                .placeholder("Orchestrator prompt...")
+                .style(s.clone());
             f.render_widget(&input, bot);
         })?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(100))? {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-                if key.code == crossterm::event::KeyCode::Char('q') { break; }
+                if key.code == crossterm::event::KeyCode::Char('q') {
+                    break;
+                }
             }
         }
     }

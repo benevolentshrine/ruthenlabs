@@ -28,7 +28,9 @@ fn sessions_dir() -> String {
 }
 
 pub fn save_session(id: &str, name: &str, history: &History) -> Result<(), String> {
-    if id.is_empty() { return Ok(()); }
+    if id.is_empty() {
+        return Ok(());
+    }
     let dir = sessions_dir();
     let path = format!("{}/{}.json", dir, id);
 

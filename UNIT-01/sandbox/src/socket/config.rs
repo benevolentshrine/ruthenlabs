@@ -96,9 +96,15 @@ impl EcosystemStatus {
     /// Get count of available services
     pub fn service_count(&self) -> usize {
         let mut count = 0;
-        if self.sandbox { count += 1; }
-        if self.orchestrator { count += 1; }
-        if self.indexer { count += 1; }
+        if self.sandbox {
+            count += 1;
+        }
+        if self.orchestrator {
+            count += 1;
+        }
+        if self.indexer {
+            count += 1;
+        }
         count
     }
 }
@@ -124,6 +130,6 @@ mod tests {
         // Just verify it doesn't panic
         let status = ecosystem_status();
         assert!(status.sandbox); // We exist
-        // Other values depend on runtime state
+                                 // Other values depend on runtime state
     }
 }

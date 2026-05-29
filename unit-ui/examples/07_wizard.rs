@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
@@ -46,16 +48,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(Paragraph::new("").style(bg), area);
 
             let [top, mid, bot] = Layout::vertical([
-                Constraint::Length(1), Constraint::Min(1), Constraint::Length(3),
-            ]).areas(area);
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
 
             let bar = StatusBar::new()
-                .provider("Setup Wizard").model("installer")
-                .connection(ConnectionStatus::Connected).started_at(started)
+                .provider("Setup Wizard")
+                .model("installer")
+                .connection(ConnectionStatus::Connected)
+                .started_at(started)
                 .style(s.clone());
             f.render_widget(&bar, top);
 
-            let block = Block::default().borders(Borders::ALL)
+            let block = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.accent))
                 .title(format!(" Step {} of {} ", current_step + 1, steps.len()));
             let inner = block.inner(mid);
@@ -65,42 +73,116 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let header = Paragraph::new(format!("--- {} Configuration ---", steps[current_step]))
                 .style(Style::default().fg(s.accent));
-            f.render_widget(&header, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 });
+            f.render_widget(
+                &header,
+                Rect {
+                    x: inner.x + 1,
+                    y,
+                    width: inner.width.saturating_sub(2),
+                    height: 1,
+                },
+            );
             y += 2;
 
             for (i, step) in steps.iter().enumerate() {
-                if y >= inner.bottom() { break; }
-                let mark = if i == current_step { "▶" } else if i < current_step { "✓" } else { "○" };
-                let fg = if i == current_step { s.accent } else if i < current_step { s.success } else { s.text_dim };
-                let line = Paragraph::new(format!(" {} {}", mark, step)).style(Style::default().fg(fg));
-                f.render_widget(&line, Rect { x: inner.x + 2, y, width: inner.width.saturating_sub(4), height: 1 });
+                if y >= inner.bottom() {
+                    break;
+                }
+                let mark = if i == current_step {
+                    "▶"
+                } else if i < current_step {
+                    "✓"
+                } else {
+                    "○"
+                };
+                let fg = if i == current_step {
+                    s.accent
+                } else if i < current_step {
+                    s.success
+                } else {
+                    s.text_dim
+                };
+                let line =
+                    Paragraph::new(format!(" {} {}", mark, step)).style(Style::default().fg(fg));
+                f.render_widget(
+                    &line,
+                    Rect {
+                        x: inner.x + 2,
+                        y,
+                        width: inner.width.saturating_sub(4),
+                        height: 1,
+                    },
+                );
                 y += 1;
             }
 
             y += 1;
             if current_step < 4 {
-                let prompt = Paragraph::new(format!("Enter {}:", steps[current_step].to_lowercase()))
-                    .style(Style::default().fg(s.text_dim));
-                f.render_widget(&prompt, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 });
+                let prompt =
+                    Paragraph::new(format!("Enter {}:", steps[current_step].to_lowercase()))
+                        .style(Style::default().fg(s.text_dim));
+                f.render_widget(
+                    &prompt,
+                    Rect {
+                        x: inner.x + 1,
+                        y,
+                        width: inner.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
             } else {
                 let done = Paragraph::new("Setup complete! Press Enter to start.")
                     .style(Style::default().fg(s.success));
-                f.render_widget(&done, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 });
-                let dots = ThinkingDots::new().label("Finalizing").frame_index(frame_count).style(s.clone());
-                f.render_widget(&dots, Rect { x: inner.x + 1, y: y + 1, width: inner.width.saturating_sub(2), height: 1 });
+                f.render_widget(
+                    &done,
+                    Rect {
+                        x: inner.x + 1,
+                        y,
+                        width: inner.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
+                let dots = ThinkingDots::new()
+                    .label("Finalizing")
+                    .frame_index(frame_count)
+                    .style(s.clone());
+                f.render_widget(
+                    &dots,
+                    Rect {
+                        x: inner.x + 1,
+                        y: y + 1,
+                        width: inner.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
             }
 
             if !setup_log.is_empty() {
-                y = inner.bottom().saturating_sub(setup_log.len() as u16).saturating_sub(1);
+                y = inner
+                    .bottom()
+                    .saturating_sub(setup_log.len() as u16)
+                    .saturating_sub(1);
                 for log in setup_log.iter() {
-                    if y >= inner.bottom() { break; }
+                    if y >= inner.bottom() {
+                        break;
+                    }
                     let line = Paragraph::new(log.as_str()).style(Style::default().fg(s.text_dim));
-                    f.render_widget(&line, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 });
+                    f.render_widget(
+                        &line,
+                        Rect {
+                            x: inner.x + 1,
+                            y,
+                            width: inner.width.saturating_sub(2),
+                            height: 1,
+                        },
+                    );
                     y += 1;
                 }
             }
 
-            let input = BasicInput::new(&input_text).placeholder("Type value...").style(s.clone());
+            let input = BasicInput::new(&input_text)
+                .placeholder("Type value...")
+                .style(s.clone());
             f.render_widget(&input, bot);
         })?;
 
@@ -112,7 +194,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if current_step < 4 {
                             if !input_text.is_empty() || current_step == 3 {
                                 let val = std::mem::take(&mut input_text);
-                                let log = format!("✓ {} configured: {}", steps[current_step], if val.is_empty() { "default" } else { &val });
+                                let log = format!(
+                                    "✓ {} configured: {}",
+                                    steps[current_step],
+                                    if val.is_empty() { "default" } else { &val }
+                                );
                                 setup_log.push(log);
                                 current_step += 1;
                             }
@@ -121,7 +207,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     crossterm::event::KeyCode::Char(c) => input_text.push(c),
-                    crossterm::event::KeyCode::Backspace => { input_text.pop(); }
+                    crossterm::event::KeyCode::Backspace => {
+                        input_text.pop();
+                    }
                     _ => {}
                 }
             }

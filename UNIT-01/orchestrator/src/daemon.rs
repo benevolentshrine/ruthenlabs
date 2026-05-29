@@ -19,7 +19,9 @@ pub struct DaemonManager {
 
 impl DaemonManager {
     pub fn new() -> Self {
-        Self { processes: Arc::new(Mutex::new(HashMap::new())) }
+        Self {
+            processes: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     pub async fn spawn_if_missing(&self, name: &str, socket_path: &str) -> DaemonStatus {
@@ -28,8 +30,14 @@ impl DaemonManager {
             .unwrap_or_else(|| "/tmp".to_string());
 
         let (bin_path, args) = match name {
-            "indexer" => (format!("{}/.ruthen/unit01/bin/indexer", home), vec!["daemon".to_string(), "start".to_string()]),
-            "sandbox" => (format!("{}/.ruthen/unit01/bin/sandbox", home), vec!["daemon".to_string()]),
+            "indexer" => (
+                format!("{}/.ruthen/unit01/bin/indexer", home),
+                vec!["daemon".to_string(), "start".to_string()],
+            ),
+            "sandbox" => (
+                format!("{}/.ruthen/unit01/bin/sandbox", home),
+                vec!["daemon".to_string()],
+            ),
             _ => return DaemonStatus::NotFound,
         };
 
@@ -53,8 +61,16 @@ impl DaemonManager {
 
         match Command::new(&bin_path)
             .args(&args)
-            .stdout(if let Some(ref f) = log_file { Stdio::from(f.try_clone().unwrap()) } else { Stdio::null() })
-            .stderr(if let Some(ref f) = log_file { Stdio::from(f.try_clone().unwrap()) } else { Stdio::null() })
+            .stdout(if let Some(ref f) = log_file {
+                Stdio::from(f.try_clone().unwrap())
+            } else {
+                Stdio::null()
+            })
+            .stderr(if let Some(ref f) = log_file {
+                Stdio::from(f.try_clone().unwrap())
+            } else {
+                Stdio::null()
+            })
             .spawn()
         {
             Ok(child) => {

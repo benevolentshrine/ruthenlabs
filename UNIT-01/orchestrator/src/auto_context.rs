@@ -3,12 +3,15 @@ use crate::workspace::Workspace;
 use std::path::Path;
 
 pub async fn get_auto_context(input: &str, ws: &Workspace) -> String {
-    if !ws.active { return String::new(); }
+    if !ws.active {
+        return String::new();
+    }
 
     let indexer = IndexerClient::new();
     match indexer.search(input).await {
         Ok(records) if !records.is_empty() => {
-            let mut context = String::from("\n# IMPLICIT CONTEXT (Pre-fetched based on your request):\n");
+            let mut context =
+                String::from("\n# IMPLICIT CONTEXT (Pre-fetched based on your request):\n");
             let mut found = 0;
             for rec in &records {
                 let full_path = if Path::new(&rec.path).is_absolute() {
@@ -25,9 +28,13 @@ pub async fn get_auto_context(input: &str, ws: &Workspace) -> String {
                     };
                     context.push_str(&format!("\n## File: {}\n```\n{}\n```\n", rec.path, content));
                 }
-                if found >= 3 { break; }
+                if found >= 3 {
+                    break;
+                }
             }
-            if found > 0 { return context; }
+            if found > 0 {
+                return context;
+            }
         }
         Ok(_) => {}
         Err(_) => {}
@@ -37,7 +44,9 @@ pub async fn get_auto_context(input: &str, ws: &Workspace) -> String {
 }
 
 fn search_chat_history(input: &str, ws: &Workspace) -> String {
-    if !ws.active { return String::new(); }
+    if !ws.active {
+        return String::new();
+    }
 
     let chat_path = Path::new(&ws.path).join(".ruthen").join("chat_history.md");
     let content = match std::fs::read_to_string(&chat_path) {
@@ -46,18 +55,26 @@ fn search_chat_history(input: &str, ws: &Workspace) -> String {
     };
 
     let input_lower = input.to_lowercase();
-    let input_words: Vec<&str> = input_lower.split_whitespace()
+    let input_words: Vec<&str> = input_lower
+        .split_whitespace()
         .filter(|w| w.len() >= 4)
         .collect();
 
-    if input_words.is_empty() { return String::new(); }
+    if input_words.is_empty() {
+        return String::new();
+    }
 
     let mut relevant: Vec<String> = Vec::new();
     for block in content.split("---") {
         let block = block.trim();
-        if block.is_empty() { continue; }
+        if block.is_empty() {
+            continue;
+        }
         let block_lower = block.to_lowercase();
-        let matches = input_words.iter().filter(|w| block_lower.contains(*w)).count();
+        let matches = input_words
+            .iter()
+            .filter(|w| block_lower.contains(*w))
+            .count();
         if matches >= 3 {
             let truncated = if block.len() > 1000 {
                 format!("{}\n... (truncated)", &block[..1000])
@@ -65,11 +82,15 @@ fn search_chat_history(input: &str, ws: &Workspace) -> String {
                 block.to_string()
             };
             relevant.push(truncated);
-            if relevant.len() >= 3 { break; }
+            if relevant.len() >= 3 {
+                break;
+            }
         }
     }
 
-    if relevant.is_empty() { return String::new(); }
+    if relevant.is_empty() {
+        return String::new();
+    }
 
     let mut result = String::from("\n# IMPLICIT CONTEXT (Past conversation history):\n");
     for block in &relevant {

@@ -456,18 +456,34 @@ impl Provider {
 }
 
 /// Returns the brand colour for OpenAI.
-pub fn openai() -> Color { Provider::OpenAI.color() }
+pub fn openai() -> Color {
+    Provider::OpenAI.color()
+}
 /// Returns the brand colour for Anthropic.
-pub fn anthropic() -> Color { Provider::Anthropic.color() }
+pub fn anthropic() -> Color {
+    Provider::Anthropic.color()
+}
 /// Returns the brand colour for Google.
-pub fn google() -> Color { Provider::Google.color() }
+pub fn google() -> Color {
+    Provider::Google.color()
+}
 /// Returns the brand colour for Meta.
-pub fn meta() -> Color { Provider::Meta.color() }
+pub fn meta() -> Color {
+    Provider::Meta.color()
+}
 /// Returns the brand colour for Mistral.
-pub fn mistral() -> Color { Provider::Mistral.color() }
+pub fn mistral() -> Color {
+    Provider::Mistral.color()
+}
 /// Returns the brand colour for DeepSeek.
-pub fn deepseek() -> Color { Provider::DeepSeek.color() }
+pub fn deepseek() -> Color {
+    Provider::DeepSeek.color()
+}
 /// Returns the brand colour for Cohere.
-pub fn cohere() -> Color { Provider::Cohere.color() }
+pub fn cohere() -> Color {
+    Provider::Cohere.color()
+}
 /// Returns the brand colour for Ollama.
-pub fn ollama() -> Color { Provider::Ollama.color() }
+pub fn ollama() -> Color {
+    Provider::Ollama.color()
+}

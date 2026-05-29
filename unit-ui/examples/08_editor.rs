@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::{Duration, Instant};
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -76,7 +78,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if crossterm::event::poll(std::time::Duration::from_millis(80))? {
             if let crossterm::event::Event::Key(k) = crossterm::event::read()? {
-                if k.code == crossterm::event::KeyCode::Char('q') { break; }
+                if k.code == crossterm::event::KeyCode::Char('q') {
+                    break;
+                }
             }
         }
     }

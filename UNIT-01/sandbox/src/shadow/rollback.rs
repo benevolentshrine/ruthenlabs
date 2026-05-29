@@ -1,4 +1,4 @@
-﻿//! SANDBOX Filesystem Rollback — Shadow backup and restore
+//! SANDBOX Filesystem Rollback — Shadow backup and restore
 //!
 //! Before SANDBOX allows any FILE_WRITE on an existing file,
 //! it silently copies the original to .ruthenlabs_shadow/<session_id>/.
@@ -107,7 +107,8 @@ impl RollbackManager {
     /// Get shadow backup path for a file
     fn shadow_backup_path(&self, session_id: &str, path: &Path) -> PathBuf {
         let path_hash = compute_path_hash(path);
-        self.session_shadow_dir(session_id).join(format!("{}.bak", path_hash))
+        self.session_shadow_dir(session_id)
+            .join(format!("{}.bak", path_hash))
     }
 
     /// Check if a file has already been backed up for this session
@@ -132,29 +133,31 @@ impl RollbackManager {
         }
 
         let shadow_dir = self.session_shadow_dir(session_id);
-        std::fs::create_dir_all(&shadow_dir)
-            .with_context(|| format!("Failed to create shadow directory: {}", shadow_dir.display()))?;
+        std::fs::create_dir_all(&shadow_dir).with_context(|| {
+            format!(
+                "Failed to create shadow directory: {}",
+                shadow_dir.display()
+            )
+        })?;
 
         let backup_path = self.shadow_backup_path(session_id, path);
 
         // Copy file to shadow
-        std::fs::copy(path, &backup_path)
-            .with_context(|| format!("Failed to create shadow backup: {}", backup_path.display()))?;
+        std::fs::copy(path, &backup_path).with_context(|| {
+            format!("Failed to create shadow backup: {}", backup_path.display())
+        })?;
 
         // Update manifest
         let manifest_path = shadow_dir.join("manifest.json");
         let mut manifest = if manifest_path.exists() {
-            ShadowManifest::load(&manifest_path).unwrap_or_else(|_| ShadowManifest::new(session_id.to_string()))
+            ShadowManifest::load(&manifest_path)
+                .unwrap_or_else(|_| ShadowManifest::new(session_id.to_string()))
         } else {
             ShadowManifest::new(session_id.to_string())
         };
 
         let metadata = std::fs::metadata(path)?;
-        manifest.add_file(
-            compute_path_hash(path),
-            path.to_path_buf(),
-            metadata.len(),
-        );
+        manifest.add_file(compute_path_hash(path), path.to_path_buf(), metadata.len());
         manifest.save(&manifest_path)?;
 
         // Log backup creation
@@ -183,8 +186,13 @@ impl RollbackManager {
         }
 
         // Restore file
-        std::fs::copy(&backup_path, original_path)
-            .with_context(|| format!("Failed to restore: {} -> {}", backup_path.display(), original_path.display()))?;
+        std::fs::copy(&backup_path, original_path).with_context(|| {
+            format!(
+                "Failed to restore: {} -> {}",
+                backup_path.display(),
+                original_path.display()
+            )
+        })?;
 
         let request_id = uuid::Uuid::new_v4();
         log_intercept(
@@ -235,7 +243,8 @@ impl RollbackManager {
             let path = entry.path();
 
             if path.is_dir() {
-                let session_id = path.file_name()
+                let session_id = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
                     .to_string();
@@ -287,12 +296,18 @@ impl RollbackManager {
         }
 
         let manifest = ShadowManifest::load(&manifest_path)?;
-        Ok(manifest.files.iter().map(|f| PathBuf::from(&f.original_path)).collect())
+        Ok(manifest
+            .files
+            .iter()
+            .map(|f| PathBuf::from(&f.original_path))
+            .collect())
     }
 
     /// Check if shadow exists for session
     pub fn has_shadow(&self, session_id: &str) -> bool {
-        self.session_shadow_dir(session_id).join("manifest.json").exists()
+        self.session_shadow_dir(session_id)
+            .join("manifest.json")
+            .exists()
     }
 }
 
@@ -359,11 +374,7 @@ mod tests {
     #[test]
     fn test_shadow_manifest() {
         let mut manifest = ShadowManifest::new("test-session".to_string());
-        manifest.add_file(
-            "abc123".to_string(),
-            PathBuf::from("/tmp/test.txt"),
-            1024,
-        );
+        manifest.add_file("abc123".to_string(), PathBuf::from("/tmp/test.txt"), 1024);
 
         assert_eq!(manifest.files.len(), 1);
         assert_eq!(manifest.session_id, "test-session");

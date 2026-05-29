@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -39,35 +41,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         frame += 1;
         terminal.draw(|f| {
             let area = f.area();
-            f.render_widget(Paragraph::new("").style(Style::default().bg(s.surface)), area);
+            f.render_widget(
+                Paragraph::new("").style(Style::default().bg(s.surface)),
+                area,
+            );
 
             let [top, main, bot] = Layout::vertical([
-                Constraint::Length(1), Constraint::Min(3), Constraint::Length(3),
-            ]).areas(area);
+                Constraint::Length(1),
+                Constraint::Min(3),
+                Constraint::Length(3),
+            ])
+            .areas(area);
 
-            let chunks = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(main);
+            let chunks =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .split(main);
             let md_area = chunks[0];
-            let stream_area = if area.width > 80 { chunks[1] } else { Rect::default() };
+            let stream_area = if area.width > 80 {
+                chunks[1]
+            } else {
+                Rect::default()
+            };
 
-            let bar = StatusBar::new().provider("Markdown Renderer")
-                .connection(ConnectionStatus::Connected).started_at(started)
+            let bar = StatusBar::new()
+                .provider("Markdown Renderer")
+                .connection(ConnectionStatus::Connected)
+                .started_at(started)
                 .style(s.clone());
             f.render_widget(&bar, top);
 
-            let block = Block::default().borders(Borders::ALL)
-                .title(" Rendered ").border_style(Style::default().fg(s.text_dim));
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Rendered ")
+                .border_style(Style::default().fg(s.text_dim));
             let inner = block.inner(md_area);
             f.render_widget(&block, md_area);
             f.render_widget(MarkdownBlock::new().content(md).style(s.clone()), inner);
 
-            let sblock = Block::default().borders(Borders::ALL)
-                .title(" Streaming ").border_style(Style::default().fg(s.text_dim));
+            let sblock = Block::default()
+                .borders(Borders::ALL)
+                .title(" Streaming ")
+                .border_style(Style::default().fg(s.text_dim));
             let sinner = sblock.inner(stream_area);
             f.render_widget(&sblock, stream_area);
             let visible = (frame as usize) % md.len().max(1);
-            f.render_widget(StreamingText::new(&md[..visible]).typing_speed(100).style(s.clone()), sinner);
+            f.render_widget(
+                StreamingText::new(&md[..visible])
+                    .typing_speed(100)
+                    .style(s.clone()),
+                sinner,
+            );
 
-            f.render_widget(BasicInput::new(&input_text).placeholder("Type markdown or press Enter...").style(s.clone()), bot);
+            f.render_widget(
+                BasicInput::new(&input_text)
+                    .placeholder("Type markdown or press Enter...")
+                    .style(s.clone()),
+                bot,
+            );
         })?;
 
         if crossterm::event::poll(std::time::Duration::from_millis(80))? {
@@ -76,7 +106,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     crossterm::event::KeyCode::Char('q') => break,
                     crossterm::event::KeyCode::Char(c) => input_text.push(c),
                     crossterm::event::KeyCode::Enter => input_text.clear(),
-                    crossterm::event::KeyCode::Backspace => { input_text.pop(); }
+                    crossterm::event::KeyCode::Backspace => {
+                        input_text.pop();
+                    }
                     _ => {}
                 }
             }

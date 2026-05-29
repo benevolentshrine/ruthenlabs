@@ -1,4 +1,4 @@
-﻿//! SANDBOX Entropy Scanner — Shannon entropy detection for packed/obfuscated files
+//! SANDBOX Entropy Scanner — Shannon entropy detection for packed/obfuscated files
 //!
 //! High entropy = likely encrypted, packed, or obfuscated = suspicious.
 //!
@@ -41,7 +41,10 @@ impl EntropyVerdict {
 
     /// Check if this is suspicious or worse
     pub fn is_suspicious(&self) -> bool {
-        matches!(self, EntropyVerdict::Suspicious(_) | EntropyVerdict::Critical(_))
+        matches!(
+            self,
+            EntropyVerdict::Suspicious(_) | EntropyVerdict::Critical(_)
+        )
     }
 }
 
@@ -205,7 +208,11 @@ mod tests {
         // English text has relatively low entropy (~4.5)
         let text = b"The quick brown fox jumps over the lazy dog. ".repeat(20);
         let entropy = calculate_entropy(&text[..]);
-        assert!(entropy > 3.0 && entropy < 6.0, "English text entropy should be moderate, got {}", entropy);
+        assert!(
+            entropy > 3.0 && entropy < 6.0,
+            "English text entropy should be moderate, got {}",
+            entropy
+        );
     }
 
     #[test]

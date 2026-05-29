@@ -66,7 +66,9 @@ impl<'a> MessageBubble<'a> {
 }
 
 impl Widget for MessageBubble<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &MessageBubble<'_> {
@@ -77,6 +79,8 @@ impl Widget for &MessageBubble<'_> {
             Role::System => self.style.text_dim,
         };
         let styled = Text::styled(self.content, Style::default().fg(color));
-        Paragraph::new(styled).wrap(Wrap { trim: false }).render(area, buf);
+        Paragraph::new(styled)
+            .wrap(Wrap { trim: false })
+            .render(area, buf);
     }
 }

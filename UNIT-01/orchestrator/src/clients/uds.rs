@@ -12,18 +12,27 @@ pub struct UDSClient {
 
 impl UDSClient {
     pub fn new(socket_path: &str) -> Self {
-        Self { socket_path: socket_path.to_string() }
+        Self {
+            socket_path: socket_path.to_string(),
+        }
     }
 
     pub fn is_available(&self) -> bool {
         Path::new(&self.socket_path).exists()
     }
 
-    pub async fn call<T: DeserializeOwned>(&self, method: &str, params: Value) -> Result<T, String> {
-        let stream = timeout(Duration::from_secs(2), UnixStream::connect(&self.socket_path))
-            .await
-            .map_err(|e| format!("connect timeout: {}", e))?
-            .map_err(|e| format!("connect failed: {}", e))?;
+    pub async fn call<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<T, String> {
+        let stream = timeout(
+            Duration::from_secs(2),
+            UnixStream::connect(&self.socket_path),
+        )
+        .await
+        .map_err(|e| format!("connect timeout: {}", e))?
+        .map_err(|e| format!("connect failed: {}", e))?;
 
         let (mut reader, mut writer) = stream.into_split();
 
@@ -48,17 +57,17 @@ impl UDSClient {
             .map_err(|e| format!("read timeout: {}", e))?
             .map_err(|e| format!("read failed: {}", e))?;
 
-        let resp: Value = serde_json::from_slice(&resp_buf)
-            .map_err(|e| format!("json parse: {}", e))?;
+        let resp: Value =
+            serde_json::from_slice(&resp_buf).map_err(|e| format!("json parse: {}", e))?;
 
         if let Some(err) = resp.get("error") {
             return Err(format!("RPC error: {}", err));
         }
 
-        let result = resp.get("result")
+        let result = resp
+            .get("result")
             .ok_or_else(|| "no result in response".to_string())?;
 
-        serde_json::from_value(result.clone())
-            .map_err(|e| format!("result parse: {}", e))
+        serde_json::from_value(result.clone()).map_err(|e| format!("result parse: {}", e))
     }
 }

@@ -73,30 +73,54 @@ impl<'a> ToolCallCard<'a> {
     }
 
     /// Sets the tool or function name (e.g. "read_file", "bash").
-    pub fn tool_name(mut self, name: &'a str) -> Self { self.tool_name = name; self }
+    pub fn tool_name(mut self, name: &'a str) -> Self {
+        self.tool_name = name;
+        self
+    }
     /// Sets the arguments as a formatted string (typically JSON).
-    pub fn arguments(mut self, args: &'a str) -> Self { self.arguments = args; self }
+    pub fn arguments(mut self, args: &'a str) -> Self {
+        self.arguments = args;
+        self
+    }
     /// Sets the execution status.
-    pub fn status(mut self, status: ToolStatus) -> Self { self.status = status; self }
+    pub fn status(mut self, status: ToolStatus) -> Self {
+        self.status = status;
+        self
+    }
     /// Sets the result/output returned by the tool.
-    pub fn result(mut self, result: &'a str) -> Self { self.result = result; self }
+    pub fn result(mut self, result: &'a str) -> Self {
+        self.result = result;
+        self
+    }
     /// Sets the elapsed execution duration.
-    pub fn duration(mut self, dur: Duration) -> Self { self.duration = Some(dur); self }
+    pub fn duration(mut self, dur: Duration) -> Self {
+        self.duration = Some(dur);
+        self
+    }
     /// Applies a `StyleToken` to the widget.
-    pub fn style(mut self, tokens: StyleToken) -> Self { self.style = tokens; self }
+    pub fn style(mut self, tokens: StyleToken) -> Self {
+        self.style = tokens;
+        self
+    }
 }
 
 impl Default for ToolCallCard<'_> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for ToolCallCard<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &ToolCallCard<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width < 4 || area.height < 3 { return; }
+        if area.width < 4 || area.height < 3 {
+            return;
+        }
 
         let block = Block::default()
             .borders(Borders::ALL)
@@ -128,15 +152,26 @@ impl Widget for &ToolCallCard<'_> {
         if let Some(dur) = self.duration {
             let ms = dur.as_millis();
             header_parts.push(Span::styled(
-                if ms >= 1000 { format!("  ({:.1}s)", ms as f64 / 1000.0) }
-                else { format!("  ({}ms)", ms) },
+                if ms >= 1000 {
+                    format!("  ({:.1}s)", ms as f64 / 1000.0)
+                } else {
+                    format!("  ({}ms)", ms)
+                },
                 dimmed,
             ));
         }
 
         let header = Line::from(header_parts);
         let mut y = inner.y;
-        header.render(Rect { x: inner.x, y, width: inner.width, height: 1 }, buf);
+        header.render(
+            Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            },
+            buf,
+        );
         y += 1;
 
         // Arguments
@@ -145,7 +180,15 @@ impl Widget for &ToolCallCard<'_> {
             let arg_h = (arg_lines.len() as u16).min(inner.bottom().saturating_sub(y));
             let arg_text = Text::styled(self.arguments, dimmed);
             let arg_para = Paragraph::new(arg_text).wrap(Wrap { trim: false });
-            arg_para.render(Rect { x: inner.x, y, width: inner.width, height: arg_h }, buf);
+            arg_para.render(
+                Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: arg_h,
+                },
+                buf,
+            );
             y += arg_h;
         }
 
@@ -153,14 +196,30 @@ impl Widget for &ToolCallCard<'_> {
         if !self.result.is_empty() && y < inner.bottom() {
             if y > inner.y + 1 {
                 let sep = Line::from(Span::styled("─".repeat(inner.width as usize), dimmed));
-                sep.render(Rect { x: inner.x, y, width: inner.width, height: 1 }, buf);
+                sep.render(
+                    Rect {
+                        x: inner.x,
+                        y,
+                        width: inner.width,
+                        height: 1,
+                    },
+                    buf,
+                );
                 y += 1;
             }
             let result_style = Style::default().fg(self.style.text);
             let result_text = Text::styled(self.result, result_style);
             let h = inner.bottom().saturating_sub(y);
             let result_para = Paragraph::new(result_text).wrap(Wrap { trim: false });
-            result_para.render(Rect { x: inner.x, y, width: inner.width, height: h }, buf);
+            result_para.render(
+                Rect {
+                    x: inner.x,
+                    y,
+                    width: inner.width,
+                    height: h,
+                },
+                buf,
+            );
         }
     }
 }

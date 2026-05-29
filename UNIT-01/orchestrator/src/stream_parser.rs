@@ -45,7 +45,10 @@ pub async fn parse_stream(
     let mut in_think = false;
 
     while let Some(chunk_result) = {
-        let chunk = body.chunk().await.map_err(|e| format!("http chunk: {}", e))?;
+        let chunk = body
+            .chunk()
+            .await
+            .map_err(|e| format!("http chunk: {}", e))?;
         chunk
     } {
         let text = String::from_utf8_lossy(&chunk_result).to_string();
@@ -94,9 +97,7 @@ pub async fn parse_stream(
     })
 }
 
-pub fn parse_stream_sync(
-    body: &[u8],
-) -> Result<StreamResult, String> {
+pub fn parse_stream_sync(body: &[u8]) -> Result<StreamResult, String> {
     let text = String::from_utf8_lossy(body);
     let mut full = String::new();
     let mut in_think = false;
@@ -105,12 +106,19 @@ pub fn parse_stream_sync(
 
     for line in text.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Ok(chunk) = serde_json::from_str::<OllamaChunk>(line) {
             if let Some(msg) = chunk.message {
                 let tok = &msg.content;
-                if tok.contains("<thinking>") { in_think = true; }
-                if tok.contains("</thinking>") { in_think = false; continue; }
+                if tok.contains("<thinking>") {
+                    in_think = true;
+                }
+                if tok.contains("</thinking>") {
+                    in_think = false;
+                    continue;
+                }
                 if !in_think && !tok.contains("<thinking>") {
                     full.push_str(tok);
                 }
@@ -119,12 +127,22 @@ pub fn parse_stream_sync(
                 prompt_tokens = chunk.prompt_eval_count;
                 output_tokens = chunk.eval_count;
                 let directives = extract_directives(&full);
-                return Ok(StreamResult { full_text: full, directives, prompt_tokens, output_tokens });
+                return Ok(StreamResult {
+                    full_text: full,
+                    directives,
+                    prompt_tokens,
+                    output_tokens,
+                });
             }
         }
     }
 
-    Ok(StreamResult { full_text: full, directives: vec![], prompt_tokens, output_tokens })
+    Ok(StreamResult {
+        full_text: full,
+        directives: vec![],
+        prompt_tokens,
+        output_tokens,
+    })
 }
 
 pub fn extract_directives(content: &str) -> Vec<Directive> {
@@ -158,14 +176,22 @@ pub fn extract_directives(content: &str) -> Vec<Directive> {
 }
 
 fn parse_tag_line(line: &str) -> Option<(String, serde_json::Map<String, serde_json::Value>)> {
-    let inner = line.trim().trim_start_matches('<').trim_end_matches("/>").trim_end_matches('>').trim();
+    let inner = line
+        .trim()
+        .trim_start_matches('<')
+        .trim_end_matches("/>")
+        .trim_end_matches('>')
+        .trim();
     let mut parts = inner.splitn(2, char::is_whitespace);
     let name = parts.next()?.to_string();
     let mut args = serde_json::Map::new();
     if let Some(rest) = parts.next() {
         for pair in rest.split_whitespace() {
             if let Some((k, v)) = pair.split_once('=') {
-                args.insert(k.to_string(), serde_json::Value::String(v.trim_matches('"').to_string()));
+                args.insert(
+                    k.to_string(),
+                    serde_json::Value::String(v.trim_matches('"').to_string()),
+                );
             }
         }
     }
@@ -173,8 +199,23 @@ fn parse_tag_line(line: &str) -> Option<(String, serde_json::Map<String, serde_j
 }
 
 const VALID_DIRECTIVES: &[&str] = &[
-    "indexer_ls", "indexer_read", "search", "execute",
-    "write", "delete", "patch", "rollback",
-    "glob", "find", "mv", "cp", "mkdir", "rmdir",
-    "append", "read_multiple", "file_info", "diff", "ls_tree",
+    "indexer_ls",
+    "indexer_read",
+    "search",
+    "execute",
+    "write",
+    "delete",
+    "patch",
+    "rollback",
+    "glob",
+    "find",
+    "mv",
+    "cp",
+    "mkdir",
+    "rmdir",
+    "append",
+    "read_multiple",
+    "file_info",
+    "diff",
+    "ls_tree",
 ];

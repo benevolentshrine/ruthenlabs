@@ -1,4 +1,4 @@
-﻿//! SANDBOX Classifier — Universal file type detection
+//! SANDBOX Classifier — Universal file type detection
 //!
 //! HOTFIX 1: Detection is magic-bytes-first. Extensions are NEVER trusted.
 //! detect_from_bytes() is the sole source of truth for file classification.
@@ -63,9 +63,8 @@ impl FileClassifier {
         // Check for extension mismatch
         let mismatch = magic::check_extension_mismatch(path, &detected_class);
         let extension_matches_magic = mismatch.is_none();
-        let mismatch_detail = mismatch.map(|(ext, real_desc)| {
-            format!("File claims .{} but is actually: {}", ext, real_desc)
-        });
+        let mismatch_detail = mismatch
+            .map(|(ext, real_desc)| format!("File claims .{} but is actually: {}", ext, real_desc));
 
         Ok(ClassificationResult {
             class: detected_class,
@@ -209,7 +208,8 @@ mod tests {
 
         {
             let mut file = std::fs::File::create(&temp_file).unwrap();
-            file.write_all(b"#!/usr/bin/env python3\nprint('hello')").unwrap();
+            file.write_all(b"#!/usr/bin/env python3\nprint('hello')")
+                .unwrap();
         }
 
         let classifier = FileClassifier::new();

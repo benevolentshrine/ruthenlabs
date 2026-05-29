@@ -1,4 +1,4 @@
-﻿//! SANDBOX Threat Intelligence — Malware detection and hash database
+//! SANDBOX Threat Intelligence — Malware detection and hash database
 //!
 //! Provides:
 //! - Local hash database for known malware detection
@@ -6,4 +6,4 @@
 
 pub mod hashdb;
 
-pub use hashdb::{HashDB, HashEntry, HashStatus, Severity, compute_file_hash};
+pub use hashdb::{compute_file_hash, HashDB, HashEntry, HashStatus, Severity};

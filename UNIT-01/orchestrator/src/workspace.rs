@@ -49,7 +49,9 @@ impl Workspace {
     }
 
     pub async fn refresh(&mut self) {
-        if !self.active { return; }
+        if !self.active {
+            return;
+        }
         let indexer = IndexerClient::new();
         match indexer.get_project_map(&self.path).await {
             Ok(m) => self.project_map = m,

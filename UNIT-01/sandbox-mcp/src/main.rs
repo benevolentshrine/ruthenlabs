@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use sandbox::cage::policy::{SecurityMode, SecurityPolicy};
 use sandbox::cage::sandbox::{spawn_sandboxed_command, SandboxOptions};
-use sandbox::shadow::RollbackManager;
 use sandbox::scanner::entropy;
+use sandbox::shadow::RollbackManager;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
@@ -110,9 +110,7 @@ fn handle_request(request: &JsonRpcRequest) -> Value {
                 .unwrap_or(Value::Object(serde_json::Map::new()));
             handle_tool_call(id, tool_name, &args)
         }
-        "notifications/initialized" => {
-            json_response(id, serde_json::json!({}))
-        }
+        "notifications/initialized" => json_response(id, serde_json::json!({})),
         _ => json_error(
             Some(id),
             -32601,
@@ -254,11 +252,7 @@ fn handle_tool_call(id: Value, name: &str, args: &Value) -> Value {
         "sandbox_policy_check" => tool_policy_check(args),
         "sandbox_scan" => tool_scan(args),
         _ => {
-            return json_error(
-                Some(id),
-                -32602,
-                &format!("Unknown tool: {}", name),
-            );
+            return json_error(Some(id), -32602, &format!("Unknown tool: {}", name));
         }
     };
 
@@ -406,15 +400,12 @@ fn tool_execute(args: &Value) -> Result<String> {
         _ => SecurityMode::Mid,
     };
 
-    let tmp_dir = tempfile::tempdir()
-        .context("Failed to create temp directory")?;
+    let tmp_dir = tempfile::tempdir().context("Failed to create temp directory")?;
     let file_path = tmp_dir.path().join(format!("script.{}", cfg.extension));
-    std::fs::write(&file_path, code)
-        .context("Failed to write code to temp file")?;
+    std::fs::write(&file_path, code).context("Failed to write code to temp file")?;
 
     let workspace = std::env::temp_dir().join("ruthen-sandbox-mcp");
-    std::fs::create_dir_all(&workspace)
-        .context("Failed to create workspace directory")?;
+    std::fs::create_dir_all(&workspace).context("Failed to create workspace directory")?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -498,7 +489,10 @@ fn tool_rollback(args: &Value) -> Result<String> {
 
     if dry_run {
         let files = manager.dry_run(session_id)?;
-        let files_str: Vec<String> = files.iter().map(|f| f.to_string_lossy().to_string()).collect();
+        let files_str: Vec<String> = files
+            .iter()
+            .map(|f| f.to_string_lossy().to_string())
+            .collect();
         let result = serde_json::json!({
             "restored_count": 0,
             "failed_count": 0,
@@ -507,7 +501,11 @@ fn tool_rollback(args: &Value) -> Result<String> {
         Ok(serde_json::to_string(&result)?)
     } else {
         let result = manager.rollback(session_id)?;
-        let files_str: Vec<String> = result.restored.iter().map(|f| f.to_string_lossy().to_string()).collect();
+        let files_str: Vec<String> = result
+            .restored
+            .iter()
+            .map(|f| f.to_string_lossy().to_string())
+            .collect();
         let failed_str: Vec<serde_json::Value> = result
             .failed
             .iter()
@@ -609,30 +607,37 @@ fn evaluate_policy(
     let path = path.map(PathBuf::from);
 
     let decision = match (action, category) {
-        ("read", "file") => {
-            policy.evaluate_file_read(
-                path.as_deref().unwrap_or(std::path::Path::new("/")),
-                path.is_some(),
-            )
-        }
-        ("write", "file") => {
-            policy.evaluate_file_write(
-                path.as_deref().unwrap_or(std::path::Path::new("/")),
-                path.is_some(),
-            )
-        }
+        ("read", "file") => policy.evaluate_file_read(
+            path.as_deref().unwrap_or(std::path::Path::new("/")),
+            path.is_some(),
+        ),
+        ("write", "file") => policy.evaluate_file_write(
+            path.as_deref().unwrap_or(std::path::Path::new("/")),
+            path.is_some(),
+        ),
         ("execute", "code") | ("execute", "shell") => policy.evaluate_process_spawn(),
         ("execute", "system") => policy.evaluate_process_spawn(),
         ("network", "network") => policy.evaluate_network(None),
         _ => PolicyDecision::AutoBlock {
-            reason: format!("Unknown action/category combination: {}/{}", action, category),
+            reason: format!(
+                "Unknown action/category combination: {}/{}",
+                action, category
+            ),
         },
     };
 
     match decision {
-        PolicyDecision::AutoAllow => (true, "Action is allowed by policy".to_string(), "low".to_string()),
+        PolicyDecision::AutoAllow => (
+            true,
+            "Action is allowed by policy".to_string(),
+            "low".to_string(),
+        ),
         PolicyDecision::AutoBlock { reason } => (false, reason, "high".to_string()),
-        PolicyDecision::Prompt { reason } => (false, format!("Action requires user approval: {}", reason), "medium".to_string()),
+        PolicyDecision::Prompt { reason } => (
+            false,
+            format!("Action requires user approval: {}", reason),
+            "medium".to_string(),
+        ),
     }
 }
 
@@ -672,8 +677,16 @@ fn tool_scan(args: &Value) -> Result<String> {
     let code_lower = code.to_lowercase();
     let dangerous_patterns = [
         ("base64_decode", "Potentially obfuscated code", "medium"),
-        ("eval(", "Use of eval() - arbitrary code execution risk", "high"),
-        ("exec(", "Use of exec() - arbitrary code execution risk", "high"),
+        (
+            "eval(",
+            "Use of eval() - arbitrary code execution risk",
+            "high",
+        ),
+        (
+            "exec(",
+            "Use of exec() - arbitrary code execution risk",
+            "high",
+        ),
         ("system(", "Shell command execution", "high"),
         ("popen(", "Process execution", "high"),
         ("subprocess", "Process spawning", "medium"),
@@ -765,8 +778,20 @@ mod tests {
     #[test]
     fn test_language_config_all_supported() {
         for lang in &[
-            "python", "rust", "shell", "javascript", "go", "ruby", "php",
-            "perl", "lua", "swift", "kotlin", "scala", "r", "powershell",
+            "python",
+            "rust",
+            "shell",
+            "javascript",
+            "go",
+            "ruby",
+            "php",
+            "perl",
+            "lua",
+            "swift",
+            "kotlin",
+            "scala",
+            "r",
+            "powershell",
         ] {
             assert!(
                 language_config(lang).is_some(),
@@ -799,7 +824,8 @@ mod tests {
     #[test]
     fn test_evaluate_policy_allowed() {
         let policy = SecurityPolicy::new(SecurityMode::Easy);
-        let (allowed, _reason, risk) = evaluate_policy(&policy, "read", "file", Some("/tmp/test.txt"));
+        let (allowed, _reason, risk) =
+            evaluate_policy(&policy, "read", "file", Some("/tmp/test.txt"));
         assert!(allowed);
         assert_eq!(risk, "low");
     }

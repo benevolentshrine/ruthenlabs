@@ -1,4 +1,4 @@
-﻿use crate::DaemonAction;
+use crate::DaemonAction;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -45,10 +45,18 @@ fn get_indexer_dir() -> PathBuf {
     }
 }
 
-fn get_port_file() -> PathBuf  { get_indexer_dir().join("port")       }
-fn get_token_file() -> PathBuf { get_indexer_dir().join("auth_token") }
-fn get_pid_file() -> PathBuf   { get_indexer_dir().join("daemon.pid") }
-fn get_log_file() -> PathBuf   { get_indexer_dir().join("daemon.log") }
+fn get_port_file() -> PathBuf {
+    get_indexer_dir().join("port")
+}
+fn get_token_file() -> PathBuf {
+    get_indexer_dir().join("auth_token")
+}
+fn get_pid_file() -> PathBuf {
+    get_indexer_dir().join("daemon.pid")
+}
+fn get_log_file() -> PathBuf {
+    get_indexer_dir().join("daemon.log")
+}
 
 // ── PID helpers ───────────────────────────────────────────────────────────────
 
@@ -112,7 +120,10 @@ pub async fn handle_daemon_action(action: &DaemonAction) -> Result<(), Box<dyn s
                     info!("Daemon is already running (PID {}).", pid);
                     return Ok(());
                 }
-                info!("Stale PID file found (PID {} is dead). Cleaning up and restarting.", pid);
+                info!(
+                    "Stale PID file found (PID {} is dead). Cleaning up and restarting.",
+                    pid
+                );
                 cleanup_state_files();
             }
 
@@ -160,7 +171,10 @@ pub async fn handle_daemon_action(action: &DaemonAction) -> Result<(), Box<dyn s
                     return Ok(());
                 }
                 Some(pid) if !pid_is_alive(pid) => {
-                    info!("Daemon is not running (PID {} is dead). Cleaning up stale files.", pid);
+                    info!(
+                        "Daemon is not running (PID {} is dead). Cleaning up stale files.",
+                        pid
+                    );
                     cleanup_state_files();
                     return Ok(());
                 }
@@ -170,7 +184,7 @@ pub async fn handle_daemon_action(action: &DaemonAction) -> Result<(), Box<dyn s
             }
             match send_rpc("status", serde_json::json!({})).await {
                 Ok(res) => info!("Daemon status: {:?}", res),
-                Err(e)  => info!("Daemon unreachable: {}", e),
+                Err(e) => info!("Daemon unreachable: {}", e),
             }
         }
 
@@ -186,7 +200,7 @@ pub async fn handle_daemon_action(action: &DaemonAction) -> Result<(), Box<dyn s
 
 async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
     let socket_path = "/tmp/ruthen/indexer.sock";
-    
+
     // Ensure parent directory exists
     if let Some(parent) = std::path::Path::new(socket_path).parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -196,7 +210,11 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(socket_path);
 
     let listener = UnixListener::bind(socket_path)?;
-    info!("Indexer daemon listening on UDS: {} (PID {})", socket_path, std::process::id());
+    info!(
+        "Indexer daemon listening on UDS: {} (PID {})",
+        socket_path,
+        std::process::id()
+    );
 
     write_pid_file()?;
 
@@ -213,7 +231,7 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             use tokio::signal::unix::{signal, SignalKind};
             let mut sigterm = signal(SignalKind::terminate()).unwrap();
-            let mut sigint  = signal(SignalKind::interrupt()).unwrap();
+            let mut sigint = signal(SignalKind::interrupt()).unwrap();
             tokio::select! {
                 _ = sigterm.recv() => info!("Received SIGTERM"),
                 _ = sigint.recv()  => info!("Received SIGINT"),
@@ -315,7 +333,7 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
                                             let query = req.params.get("query").and_then(|v| v.as_str()).unwrap_or("");
                                             let limit = req.params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
                                             let engine = crate::index::query::QueryEngine::new(storage_clone.clone());
-                                            
+
                                             match engine.execute(query, None, None, limit, 0) {
                                                 Ok(results) => {
                                                     let res = JsonRpcResponse {
@@ -623,385 +641,385 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
                                                 }
                                             }
                                         }
-										"glob" => {
-											let pattern = req.params.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
-											let base = req.params.get("base").and_then(|v| v.as_str()).unwrap_or(".");
-											match glob_files(pattern, base) {
-												Ok(files) => {
-													let res = JsonRpcResponse {
-														jsonrpc: "2.0".to_string(),
-														result: Some(serde_json::json!({ "files": files })),
-														error: None,
-														id: req.id,
-													};
-													let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-												}
-												Err(e) => {
-													let res = JsonRpcResponse {
-														jsonrpc: "2.0".to_string(),
-														result: None,
-														error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-														id: req.id,
-													};
-													let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-												}
-											}
-										}
-										"find" => {
-											let name = req.params.get("name").and_then(|v| v.as_str()).unwrap_or("");
-											let root = req.params.get("root").and_then(|v| v.as_str()).unwrap_or(".");
-											let files = find_files(name, root);
-											let res = JsonRpcResponse {
-												jsonrpc: "2.0".to_string(),
-												result: Some(serde_json::json!({ "files": files })),
-												error: None,
-												id: req.id,
-											};
-											let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-										}
-										"mv" => {
-											let from = req.params.get("from").and_then(|v| v.as_str()).unwrap_or("");
-											let to = req.params.get("to").and_then(|v| v.as_str()).unwrap_or("");
-											if from.contains("..") || to.contains("..") {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												let _ = shadow_backup(to);
-												match std::fs::rename(from, to) {
-													Ok(_) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({ "status": format!("Moved {} to {}", from, to) })),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"cp" => {
-											let from = req.params.get("from").and_then(|v| v.as_str()).unwrap_or("");
-											let to = req.params.get("to").and_then(|v| v.as_str()).unwrap_or("");
-											if from.contains("..") || to.contains("..") {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												match std::fs::copy(from, to) {
-													Ok(n) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({ "status": format!("Copied {} to {} ({} bytes)", from, to, n) })),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"mkdir" => {
-											let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
-											if path_str.contains("..") {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												match std::fs::create_dir_all(path_str) {
-													Ok(_) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({ "status": format!("Directory created: {}", path_str) })),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"rmdir" => {
-											let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
-											if path_str.contains("..") {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												match std::fs::remove_dir_all(path_str) {
-													Ok(_) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({ "status": format!("Directory removed: {}", path_str) })),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"append" => {
-											let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
-											let content = req.params.get("content").and_then(|v| v.as_str()).unwrap_or("");
-											if path_str.contains("..") {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												let _ = shadow_backup(path_str);
-												let mut f = match std::fs::OpenOptions::new().create(true).append(true).open(path_str) {
-													Ok(f) => f,
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-														return;
-													}
-												};
-												match std::io::Write::write_all(&mut f, content.as_bytes()) {
-													Ok(_) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({ "status": format!("Appended to {}", path_str) })),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"read_multiple" => {
-											let paths = req.params.get("paths").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-											let mut files = serde_json::Map::new();
-											for p in &paths {
-												if let Some(path_str) = p.as_str() {
-													if path_str.contains("..") {
-														files.insert(path_str.to_string(), serde_json::json!("ERROR: Invalid path"));
-													} else {
-														match std::fs::read_to_string(path_str) {
-															Ok(content) => { files.insert(path_str.to_string(), serde_json::json!(content)); }
-															Err(e) => { files.insert(path_str.to_string(), serde_json::json!(format!("ERROR: {}", e))); }
-														}
-													}
-												}
-											}
-											let res = JsonRpcResponse {
-												jsonrpc: "2.0".to_string(),
-												result: Some(serde_json::json!({ "files": files })),
-												error: None,
-												id: req.id,
-											};
-											let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-										}
-										"file_info" => {
-											let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
-											if path_str.contains("..") {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												match std::fs::metadata(path_str) {
-													Ok(meta) => {
-														let modified = meta.modified()
-															.map(|t| chrono::DateTime::from_timestamp(t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64, 0)
-																.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-																.unwrap_or_default())
-															.unwrap_or_default();
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({
-																"size": meta.len() as i64,
-																"is_dir": meta.is_dir(),
-																"permissions": 0u32,
-																"modified": modified,
-															})),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													Err(e) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"diff" => {
-											let files = req.params.get("files").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-											let paths: Vec<&str> = files.iter().filter_map(|v| v.as_str()).collect();
-											if paths.len() < 2 {
-												let res = JsonRpcResponse {
-													jsonrpc: "2.0".to_string(),
-													result: None,
-													error: Some(serde_json::json!({ "code": -32000, "message": "Need at least 2 files to diff" })),
-													id: req.id,
-												};
-												let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-											} else {
-												match (std::fs::read_to_string(paths[0]), std::fs::read_to_string(paths[1])) {
-													(Ok(a), Ok(b)) => {
-														let mut lines = Vec::new();
-														let a_lines: Vec<&str> = a.lines().collect();
-														let b_lines: Vec<&str> = b.lines().collect();
-														let max = std::cmp::max(a_lines.len(), b_lines.len());
-														for i in 0..max {
-															match (a_lines.get(i), b_lines.get(i)) {
-																(Some(la), Some(lb)) if la == lb => {
-																	lines.push(serde_json::json!({"type": "same", "number": i + 1, "text": la}));
-																}
-																(Some(la), Some(lb)) => {
-																	lines.push(serde_json::json!({"type": "removed", "number": i + 1, "text": la}));
-																	lines.push(serde_json::json!({"type": "added", "number": i + 1, "text": lb}));
-																}
-																(Some(la), None) => {
-																	lines.push(serde_json::json!({"type": "removed", "number": i + 1, "text": la}));
-																}
-																(None, Some(lb)) => {
-																	lines.push(serde_json::json!({"type": "added", "number": i + 1, "text": lb}));
-																}
-																_ => {}
-															}
-														}
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: Some(serde_json::json!({
-																"files": paths,
-																"lines": lines,
-															})),
-															error: None,
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-													(Err(e), _) | (_, Err(e)) => {
-														let res = JsonRpcResponse {
-															jsonrpc: "2.0".to_string(),
-															result: None,
-															error: Some(serde_json::json!({ "code": -32000, "message": format!("Failed to read files: {}", e) })),
-															id: req.id,
-														};
-														let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-													}
-												}
-											}
-										}
-										"ls_tree" => {
-											let root = req.params.get("root").and_then(|v| v.as_str()).unwrap_or(".");
-											match build_tree(root) {
-												Ok(tree) => {
-													let res = JsonRpcResponse {
-														jsonrpc: "2.0".to_string(),
-														result: Some(serde_json::json!({ "root": root, "tree": tree })),
-														error: None,
-														id: req.id,
-													};
-													let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-												}
-												Err(e) => {
-													let res = JsonRpcResponse {
-														jsonrpc: "2.0".to_string(),
-														result: None,
-														error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
-														id: req.id,
-													};
-													let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-												}
-											}
-										}
-										_ => {
-											let res = JsonRpcResponse {
-												jsonrpc: "2.0".to_string(),
-												result: None,
-												error: Some(serde_json::json!({
-													"code": -32601,
-													"message": "Method not found"
-												})),
-												id: req.id,
-											};
-											let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
-										}
+                                        "glob" => {
+                                            let pattern = req.params.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+                                            let base = req.params.get("base").and_then(|v| v.as_str()).unwrap_or(".");
+                                            match glob_files(pattern, base) {
+                                                Ok(files) => {
+                                                    let res = JsonRpcResponse {
+                                                        jsonrpc: "2.0".to_string(),
+                                                        result: Some(serde_json::json!({ "files": files })),
+                                                        error: None,
+                                                        id: req.id,
+                                                    };
+                                                    let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                }
+                                                Err(e) => {
+                                                    let res = JsonRpcResponse {
+                                                        jsonrpc: "2.0".to_string(),
+                                                        result: None,
+                                                        error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                        id: req.id,
+                                                    };
+                                                    let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                }
+                                            }
+                                        }
+                                        "find" => {
+                                            let name = req.params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                            let root = req.params.get("root").and_then(|v| v.as_str()).unwrap_or(".");
+                                            let files = find_files(name, root);
+                                            let res = JsonRpcResponse {
+                                                jsonrpc: "2.0".to_string(),
+                                                result: Some(serde_json::json!({ "files": files })),
+                                                error: None,
+                                                id: req.id,
+                                            };
+                                            let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                        }
+                                        "mv" => {
+                                            let from = req.params.get("from").and_then(|v| v.as_str()).unwrap_or("");
+                                            let to = req.params.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                                            if from.contains("..") || to.contains("..") {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                let _ = shadow_backup(to);
+                                                match std::fs::rename(from, to) {
+                                                    Ok(_) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({ "status": format!("Moved {} to {}", from, to) })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "cp" => {
+                                            let from = req.params.get("from").and_then(|v| v.as_str()).unwrap_or("");
+                                            let to = req.params.get("to").and_then(|v| v.as_str()).unwrap_or("");
+                                            if from.contains("..") || to.contains("..") {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                match std::fs::copy(from, to) {
+                                                    Ok(n) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({ "status": format!("Copied {} to {} ({} bytes)", from, to, n) })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "mkdir" => {
+                                            let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                            if path_str.contains("..") {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                match std::fs::create_dir_all(path_str) {
+                                                    Ok(_) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({ "status": format!("Directory created: {}", path_str) })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "rmdir" => {
+                                            let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                            if path_str.contains("..") {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                match std::fs::remove_dir_all(path_str) {
+                                                    Ok(_) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({ "status": format!("Directory removed: {}", path_str) })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "append" => {
+                                            let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                            let content = req.params.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                            if path_str.contains("..") {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                let _ = shadow_backup(path_str);
+                                                let mut f = match std::fs::OpenOptions::new().create(true).append(true).open(path_str) {
+                                                    Ok(f) => f,
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                        return;
+                                                    }
+                                                };
+                                                match std::io::Write::write_all(&mut f, content.as_bytes()) {
+                                                    Ok(_) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({ "status": format!("Appended to {}", path_str) })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "read_multiple" => {
+                                            let paths = req.params.get("paths").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                                            let mut files = serde_json::Map::new();
+                                            for p in &paths {
+                                                if let Some(path_str) = p.as_str() {
+                                                    if path_str.contains("..") {
+                                                        files.insert(path_str.to_string(), serde_json::json!("ERROR: Invalid path"));
+                                                    } else {
+                                                        match std::fs::read_to_string(path_str) {
+                                                            Ok(content) => { files.insert(path_str.to_string(), serde_json::json!(content)); }
+                                                            Err(e) => { files.insert(path_str.to_string(), serde_json::json!(format!("ERROR: {}", e))); }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            let res = JsonRpcResponse {
+                                                jsonrpc: "2.0".to_string(),
+                                                result: Some(serde_json::json!({ "files": files })),
+                                                error: None,
+                                                id: req.id,
+                                            };
+                                            let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                        }
+                                        "file_info" => {
+                                            let path_str = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                                            if path_str.contains("..") {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Invalid path" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                match std::fs::metadata(path_str) {
+                                                    Ok(meta) => {
+                                                        let modified = meta.modified()
+                                                            .map(|t| chrono::DateTime::from_timestamp(t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64, 0)
+                                                                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                                                                .unwrap_or_default())
+                                                            .unwrap_or_default();
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({
+                                                                "size": meta.len() as i64,
+                                                                "is_dir": meta.is_dir(),
+                                                                "permissions": 0u32,
+                                                                "modified": modified,
+                                                            })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    Err(e) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "diff" => {
+                                            let files = req.params.get("files").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                                            let paths: Vec<&str> = files.iter().filter_map(|v| v.as_str()).collect();
+                                            if paths.len() < 2 {
+                                                let res = JsonRpcResponse {
+                                                    jsonrpc: "2.0".to_string(),
+                                                    result: None,
+                                                    error: Some(serde_json::json!({ "code": -32000, "message": "Need at least 2 files to diff" })),
+                                                    id: req.id,
+                                                };
+                                                let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                            } else {
+                                                match (std::fs::read_to_string(paths[0]), std::fs::read_to_string(paths[1])) {
+                                                    (Ok(a), Ok(b)) => {
+                                                        let mut lines = Vec::new();
+                                                        let a_lines: Vec<&str> = a.lines().collect();
+                                                        let b_lines: Vec<&str> = b.lines().collect();
+                                                        let max = std::cmp::max(a_lines.len(), b_lines.len());
+                                                        for i in 0..max {
+                                                            match (a_lines.get(i), b_lines.get(i)) {
+                                                                (Some(la), Some(lb)) if la == lb => {
+                                                                    lines.push(serde_json::json!({"type": "same", "number": i + 1, "text": la}));
+                                                                }
+                                                                (Some(la), Some(lb)) => {
+                                                                    lines.push(serde_json::json!({"type": "removed", "number": i + 1, "text": la}));
+                                                                    lines.push(serde_json::json!({"type": "added", "number": i + 1, "text": lb}));
+                                                                }
+                                                                (Some(la), None) => {
+                                                                    lines.push(serde_json::json!({"type": "removed", "number": i + 1, "text": la}));
+                                                                }
+                                                                (None, Some(lb)) => {
+                                                                    lines.push(serde_json::json!({"type": "added", "number": i + 1, "text": lb}));
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: Some(serde_json::json!({
+                                                                "files": paths,
+                                                                "lines": lines,
+                                                            })),
+                                                            error: None,
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                    (Err(e), _) | (_, Err(e)) => {
+                                                        let res = JsonRpcResponse {
+                                                            jsonrpc: "2.0".to_string(),
+                                                            result: None,
+                                                            error: Some(serde_json::json!({ "code": -32000, "message": format!("Failed to read files: {}", e) })),
+                                                            id: req.id,
+                                                        };
+                                                        let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "ls_tree" => {
+                                            let root = req.params.get("root").and_then(|v| v.as_str()).unwrap_or(".");
+                                            match build_tree(root) {
+                                                Ok(tree) => {
+                                                    let res = JsonRpcResponse {
+                                                        jsonrpc: "2.0".to_string(),
+                                                        result: Some(serde_json::json!({ "root": root, "tree": tree })),
+                                                        error: None,
+                                                        id: req.id,
+                                                    };
+                                                    let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                }
+                                                Err(e) => {
+                                                    let res = JsonRpcResponse {
+                                                        jsonrpc: "2.0".to_string(),
+                                                        result: None,
+                                                        error: Some(serde_json::json!({ "code": -32000, "message": e.to_string() })),
+                                                        id: req.id,
+                                                    };
+                                                    let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            let res = JsonRpcResponse {
+                                                jsonrpc: "2.0".to_string(),
+                                                result: None,
+                                                error: Some(serde_json::json!({
+                                                    "code": -32601,
+                                                    "message": "Method not found"
+                                                })),
+                                                id: req.id,
+                                            };
+                                            let _ = socket.write_all(&serde_json::to_vec(&res).unwrap()).await;
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -1036,8 +1054,8 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
 
 // ── Shadow helpers (file operation backup / rollback) ──────────────────────────
 
-use std::sync::Mutex;
 use sha2::{Digest, Sha256};
+use std::sync::Mutex;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ShadowEntry {
@@ -1168,7 +1186,11 @@ fn build_tree(root: &str) -> Result<Vec<serde_json::Value>, String> {
             let b_is_dir = b["type"].as_str() == Some("dir");
             // Dirs first, then alphabetical
             if a_is_dir != b_is_dir {
-                return if a_is_dir { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater };
+                return if a_is_dir {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                };
             }
             a_name.cmp(b_name)
         });
@@ -1178,11 +1200,17 @@ fn build_tree(root: &str) -> Result<Vec<serde_json::Value>, String> {
     build_dir(root_path).map_err(|e| e.to_string())
 }
 
-async fn send_rpc(method: &str, mut params: serde_json::Value) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+async fn send_rpc(
+    method: &str,
+    mut params: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let socket_path = "/tmp/ruthen/indexer.sock";
-    
+
     if let Some(obj) = params.as_object_mut() {
-        obj.insert("token".to_string(), serde_json::Value::String("uds-internal-trust".to_string()));
+        obj.insert(
+            "token".to_string(),
+            serde_json::Value::String("uds-internal-trust".to_string()),
+        );
     }
 
     let req = JsonRpcRequest {

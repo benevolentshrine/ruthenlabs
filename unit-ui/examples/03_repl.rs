@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Widget;
@@ -31,7 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let s = style();
     let started = Instant::now();
-    let mut output_lines: Vec<String> = vec!["Unit REPL v0.1.0 — type and press Enter. Press 'q' to quit.".to_string()];
+    let mut output_lines: Vec<String> =
+        vec!["Unit REPL v0.1.0 — type and press Enter. Press 'q' to quit.".to_string()];
     let mut input_text = String::from("");
     loop {
         terminal.draw(|f| {
@@ -40,16 +43,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(Paragraph::new("").style(bg), area);
 
             let [top, mid, bot] = Layout::vertical([
-                Constraint::Length(1), Constraint::Min(1), Constraint::Length(3),
-            ]).areas(area);
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
 
             let bar = StatusBar::new()
-                .provider("REPL").model("interactive")
-                .connection(ConnectionStatus::Connected).started_at(started)
+                .provider("REPL")
+                .model("interactive")
+                .connection(ConnectionStatus::Connected)
+                .started_at(started)
                 .style(s.clone());
             f.render_widget(&bar, top);
 
-            let block = Block::default().borders(Borders::ALL)
+            let block = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.text_dim))
                 .title(" Output ");
             let inner = block.inner(mid);
@@ -57,13 +66,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mut y = inner.y;
             for line in output_lines.iter().rev().take(inner.height as usize).rev() {
-                if y >= inner.bottom() { break; }
+                if y >= inner.bottom() {
+                    break;
+                }
                 let text = Paragraph::new(line.as_str()).style(Style::default().fg(s.text));
-                f.render_widget(&text, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: 1 });
+                f.render_widget(
+                    &text,
+                    Rect {
+                        x: inner.x + 1,
+                        y,
+                        width: inner.width.saturating_sub(2),
+                        height: 1,
+                    },
+                );
                 y += 1;
             }
 
-            let input = BasicInput::new(&input_text).placeholder("> ").style(s.clone());
+            let input = BasicInput::new(&input_text)
+                .placeholder("> ")
+                .style(s.clone());
             f.render_widget(&input, bot);
         })?;
 
@@ -79,7 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     crossterm::event::KeyCode::Char(c) => input_text.push(c),
-                    crossterm::event::KeyCode::Backspace => { input_text.pop(); }
+                    crossterm::event::KeyCode::Backspace => {
+                        input_text.pop();
+                    }
                     _ => {}
                 }
             }

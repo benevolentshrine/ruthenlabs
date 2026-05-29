@@ -1,11 +1,11 @@
-﻿//! SANDBOX Directory Scanner — Recursive file analysis
+//! SANDBOX Directory Scanner — Recursive file analysis
 //!
 //! Scans directories recursively, classifying every file.
 //! Runs entropy check + hash check on each.
 //! Generates reports. No execution — pure analysis.
 
-use crate::classifier::{FileClassifier, ClassificationResult};
 use crate::cage::policy::SecurityMode;
+use crate::classifier::{ClassificationResult, FileClassifier};
 use crate::scanner::entropy::{scan_file, EntropyResult, EntropyVerdict};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -122,10 +122,26 @@ impl ScanReport {
 
     /// Get summary counts
     pub fn summary(&self) -> (usize, usize, usize, usize) {
-        let clean = self.results.iter().filter(|r| r.verdict == Verdict::Clean).count();
-        let suspicious = self.results.iter().filter(|r| r.verdict == Verdict::Suspicious).count();
-        let critical = self.results.iter().filter(|r| r.verdict == Verdict::Critical).count();
-        let known_bad = self.results.iter().filter(|r| r.verdict == Verdict::KnownBad).count();
+        let clean = self
+            .results
+            .iter()
+            .filter(|r| r.verdict == Verdict::Clean)
+            .count();
+        let suspicious = self
+            .results
+            .iter()
+            .filter(|r| r.verdict == Verdict::Suspicious)
+            .count();
+        let critical = self
+            .results
+            .iter()
+            .filter(|r| r.verdict == Verdict::Critical)
+            .count();
+        let known_bad = self
+            .results
+            .iter()
+            .filter(|r| r.verdict == Verdict::KnownBad)
+            .count();
         (clean, suspicious, critical, known_bad)
     }
 
@@ -159,14 +175,20 @@ impl ScanReport {
             ));
         }
 
-        let quarantined: Vec<_> = self.results.iter()
+        let quarantined: Vec<_> = self
+            .results
+            .iter()
             .filter(|r| matches!(r.verdict, Verdict::Critical | Verdict::KnownBad))
             .collect();
 
         if !quarantined.is_empty() {
             output.push_str("\n## Quarantined Files\n\n");
             for result in quarantined {
-                output.push_str(&format!("- {}: {}\n", result.path.display(), result.reason.as_deref().unwrap_or("")));
+                output.push_str(&format!(
+                    "- {}: {}\n",
+                    result.path.display(),
+                    result.reason.as_deref().unwrap_or("")
+                ));
             }
         }
 
@@ -187,7 +209,11 @@ impl ScanReport {
             let line = format!(
                 "{} {} ({}, entropy: {:.1})",
                 result.emoji(),
-                result.path.file_name().unwrap_or_default().to_string_lossy(),
+                result
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
                 result.class_description(),
                 result.entropy.score
             );
@@ -316,12 +342,10 @@ impl DirectoryScanner {
         // Check hash database if available
         let hash_status = if let Some(ref db) = self.hash_checker {
             match db.check_file(path) {
-                Ok(crate::threat::HashStatus::KnownBad(entry)) => {
-                    HashCheckResult::KnownBad {
-                        name: entry.name.clone(),
-                        family: entry.family.clone(),
-                    }
-                }
+                Ok(crate::threat::HashStatus::KnownBad(entry)) => HashCheckResult::KnownBad {
+                    name: entry.name.clone(),
+                    family: entry.family.clone(),
+                },
                 Ok(crate::threat::HashStatus::Clean) => HashCheckResult::Clean,
                 _ => HashCheckResult::Unknown,
             }
@@ -359,21 +383,32 @@ impl DirectoryScanner {
         if self.mode == SecurityMode::Audit {
             if !classification.extension_matches_magic {
                 let real_type = format!("{:?}", classification.class);
-                return (Verdict::Clean, Some(format!(
-                    "[AUDIT] Extension mismatch → {}, entropy: {:.1}",
-                    real_type, entropy.score
-                )));
+                return (
+                    Verdict::Clean,
+                    Some(format!(
+                        "[AUDIT] Extension mismatch → {}, entropy: {:.1}",
+                        real_type, entropy.score
+                    )),
+                );
             }
             match entropy.verdict {
                 EntropyVerdict::Critical(score) => {
-                    return (Verdict::Clean, Some(format!(
-                        "[AUDIT] High entropy ({:.2}): likely packed/encrypted", score
-                    )));
+                    return (
+                        Verdict::Clean,
+                        Some(format!(
+                            "[AUDIT] High entropy ({:.2}): likely packed/encrypted",
+                            score
+                        )),
+                    );
                 }
                 EntropyVerdict::Suspicious(score) => {
-                    return (Verdict::Clean, Some(format!(
-                        "[AUDIT] Elevated entropy ({:.2}): may be compressed", score
-                    )));
+                    return (
+                        Verdict::Clean,
+                        Some(format!(
+                            "[AUDIT] Elevated entropy ({:.2}): may be compressed",
+                            score
+                        )),
+                    );
                 }
                 _ => {}
             }

@@ -48,32 +48,55 @@ impl<'a> MultiLineInput<'a> {
     }
 
     /// Sets the text content.
-    pub fn text(mut self, text: &'a str) -> Self { self.text = text; self }
+    pub fn text(mut self, text: &'a str) -> Self {
+        self.text = text;
+        self
+    }
     /// Sets the cursor line (0-indexed) for line highlight.
-    pub fn cursor_line(mut self, n: u16) -> Self { self.cursor_line = n; self }
+    pub fn cursor_line(mut self, n: u16) -> Self {
+        self.cursor_line = n;
+        self
+    }
     /// Toggles line number gutter visibility.
-    pub fn show_line_numbers(mut self, show: bool) -> Self { self.show_line_numbers = show; self }
+    pub fn show_line_numbers(mut self, show: bool) -> Self {
+        self.show_line_numbers = show;
+        self
+    }
     /// Sets placeholder text when the input is empty.
-    pub fn placeholder(mut self, text: &'a str) -> Self { self.placeholder = text; self }
+    pub fn placeholder(mut self, text: &'a str) -> Self {
+        self.placeholder = text;
+        self
+    }
     /// Applies a `StyleToken`.
-    pub fn style(mut self, tokens: StyleToken) -> Self { self.style = tokens; self }
+    pub fn style(mut self, tokens: StyleToken) -> Self {
+        self.style = tokens;
+        self
+    }
 }
 
 impl Default for MultiLineInput<'_> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for MultiLineInput<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &mut MultiLineInput<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&*self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&*self).render(area, buf);
+    }
 }
 
 impl Widget for &MultiLineInput<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 { return; }
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
         let dimmed = Style::default().fg(self.style.text_dim);
         let accent = Style::default().fg(self.style.accent);
@@ -98,7 +121,9 @@ impl Widget for &MultiLineInput<'_> {
         let end = area.y + area.height;
 
         for (y, (i, line_text)) in (area.y..).zip(lines.iter().enumerate()) {
-            if y >= end { break; }
+            if y >= end {
+                break;
+            }
             let line_num = i + 1;
             let is_cursor = i as u16 == self.cursor_line;
 
@@ -107,7 +132,15 @@ impl Widget for &MultiLineInput<'_> {
                 let gutter_style = if is_cursor { accent } else { dimmed };
                 let num_str = format!("{:>width$}", line_num, width = (gutter_width - 1) as usize);
                 let gutter = Span::styled(format!("{} ", num_str), gutter_style);
-                gutter.render(Rect { x: area.x, y, width: gutter_width, height: 1 }, buf);
+                gutter.render(
+                    Rect {
+                        x: area.x,
+                        y,
+                        width: gutter_width,
+                        height: 1,
+                    },
+                    buf,
+                );
             }
 
             // Content line
@@ -115,12 +148,27 @@ impl Widget for &MultiLineInput<'_> {
                 if is_cursor {
                     let bg = Style::default().bg(ratatui::style::Color::Rgb(45, 45, 55));
                     let full = format!("{:width$}", "", width = content_w as usize);
-                    Span::styled(full, bg).render(Rect { x: content_x, y, width: content_w, height: 1 }, buf);
+                    Span::styled(full, bg).render(
+                        Rect {
+                            x: content_x,
+                            y,
+                            width: content_w,
+                            height: 1,
+                        },
+                        buf,
+                    );
                 }
                 let span = Span::styled(*line_text, text_style);
-                span.render(Rect { x: content_x, y, width: content_w, height: 1 }, buf);
+                span.render(
+                    Rect {
+                        x: content_x,
+                        y,
+                        width: content_w,
+                        height: 1,
+                    },
+                    buf,
+                );
             }
-
         }
 
         // Placeholder when empty

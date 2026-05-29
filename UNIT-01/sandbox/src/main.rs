@@ -1,4 +1,4 @@
-﻿use anyhow::Result;
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use sandbox::{cage, shadow, socket};
 use std::path::PathBuf;
@@ -72,7 +72,12 @@ fn run() -> Result<()> {
             let result = cage::run_cage(input, security_mode, fuel)?;
             println!("{}", result);
         }
-        Commands::Rollback { session, dry_run, list, clear } => {
+        Commands::Rollback {
+            session,
+            dry_run,
+            list,
+            clear,
+        } => {
             let manager = shadow::RollbackManager::new()?;
             if list {
                 let sessions = manager.list_sessions()?;
@@ -81,7 +86,10 @@ fn run() -> Result<()> {
                 } else {
                     println!("Shadow Backups:");
                     for info in sessions {
-                        println!("  {} | {} | {} files", info.session_id, info.created, info.file_count);
+                        println!(
+                            "  {} | {} | {} files",
+                            info.session_id, info.created, info.file_count
+                        );
                     }
                 }
             } else if let Some(ref session_id) = session {

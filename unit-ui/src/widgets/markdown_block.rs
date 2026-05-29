@@ -39,17 +39,28 @@ pub struct MarkdownBlock<'a> {
 impl<'a> MarkdownBlock<'a> {
     /// Creates a new `MarkdownBlock`.
     pub fn new() -> Self {
-        Self { content: "", style: StyleToken::default() }
+        Self {
+            content: "",
+            style: StyleToken::default(),
+        }
     }
 
     /// Sets the markdown content to render.
-    pub fn content(mut self, content: &'a str) -> Self { self.content = content; self }
+    pub fn content(mut self, content: &'a str) -> Self {
+        self.content = content;
+        self
+    }
     /// Applies a `StyleToken`.
-    pub fn style(mut self, tokens: StyleToken) -> Self { self.style = tokens; self }
+    pub fn style(mut self, tokens: StyleToken) -> Self {
+        self.style = tokens;
+        self
+    }
 }
 
 impl Default for MarkdownBlock<'_> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn parse_inline(text: &str, base: Style, dimmed: Style) -> Line<'_> {
@@ -104,12 +115,16 @@ fn parse_inline(text: &str, base: Style, dimmed: Style) -> Line<'_> {
 }
 
 impl Widget for MarkdownBlock<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &MarkdownBlock<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 { return; }
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
         let text_style = Style::default().fg(self.style.text);
         let dimmed = Style::default().fg(self.style.text_dim);
@@ -151,20 +166,21 @@ impl Widget for &MarkdownBlock<'_> {
                 let text = &raw[2..];
                 let prefix = Span::styled(" • ", accent);
                 let line = parse_inline(text, text_style, dimmed);
-            let mut parts = vec![prefix];
-            parts.extend(line.spans);
-            styled_lines.push(Line::from(parts));
-            continue;
-        }
+                let mut parts = vec![prefix];
+                parts.extend(line.spans);
+                styled_lines.push(Line::from(parts));
+                continue;
+            }
 
-        // Numbered list
-        if let Some(rest) = raw.strip_prefix(|c: char| c.is_ascii_digit())
-            .and_then(|r| r.strip_prefix(". "))
-        {
-            let prefix = Span::styled("   ", dimmed);
-            let line = parse_inline(rest, text_style, dimmed);
-            let mut parts = vec![prefix];
-            parts.extend(line.spans);
+            // Numbered list
+            if let Some(rest) = raw
+                .strip_prefix(|c: char| c.is_ascii_digit())
+                .and_then(|r| r.strip_prefix(". "))
+            {
+                let prefix = Span::styled("   ", dimmed);
+                let line = parse_inline(rest, text_style, dimmed);
+                let mut parts = vec![prefix];
+                parts.extend(line.spans);
                 styled_lines.push(Line::from(parts));
                 continue;
             }

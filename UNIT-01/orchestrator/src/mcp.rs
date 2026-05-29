@@ -67,8 +67,14 @@ impl MCPServerInstance {
         let mut full = header.into_bytes();
         full.extend(data);
 
-        self.stdin.write_all(&full).await.map_err(|e| format!("write: {}", e))?;
-        self.stdin.flush().await.map_err(|e| format!("flush: {}", e))?;
+        self.stdin
+            .write_all(&full)
+            .await
+            .map_err(|e| format!("write: {}", e))?;
+        self.stdin
+            .flush()
+            .await
+            .map_err(|e| format!("flush: {}", e))?;
 
         let mut line = String::new();
         loop {
@@ -77,7 +83,9 @@ impl MCPServerInstance {
                 Ok(0) => return Err("connection closed".to_string()),
                 Ok(_) => {
                     let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
                     if let Ok(resp) = serde_json::from_str::<Value>(trimmed) {
                         if resp.get("id").and_then(|v| v.as_u64()) == Some(id as u64) {
                             if let Some(err) = resp.get("error") {
@@ -168,26 +176,40 @@ impl MCPManager {
             seq_no: 0,
         };
 
-        instance.send_request("initialize", serde_json::json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": { "name": "unit01", "version": "1.0" }
-        })).await?;
+        instance
+            .send_request(
+                "initialize",
+                serde_json::json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": { "name": "unit01", "version": "1.0" }
+                }),
+            )
+            .await?;
 
-        let tools_result = instance.send_request("tools/list", serde_json::json!(null)).await?;
+        let tools_result = instance
+            .send_request("tools/list", serde_json::json!(null))
+            .await?;
         let tools_list: Vec<MCPTool> = serde_json::from_value(
-            tools_result.get("tools").cloned().unwrap_or(serde_json::Value::Array(vec![]))
-        ).map_err(|e| format!("tool parse: {}", e))?;
+            tools_result
+                .get("tools")
+                .cloned()
+                .unwrap_or(serde_json::Value::Array(vec![])),
+        )
+        .map_err(|e| format!("tool parse: {}", e))?;
 
         let mut servers = self.servers.lock().await;
         servers.insert(name.to_string(), instance);
 
         let mut tools = self.tools.lock().await;
         for tool in tools_list {
-            tools.insert(tool.name.clone(), MCPToolRef {
-                server_name: name.to_string(),
-                tool,
-            });
+            tools.insert(
+                tool.name.clone(),
+                MCPToolRef {
+                    server_name: name.to_string(),
+                    tool,
+                },
+            );
         }
 
         Ok(())
@@ -199,7 +221,9 @@ impl MCPManager {
 
     pub async fn tool_descriptions(&self) -> String {
         let tools = self.tools.lock().await;
-        if tools.is_empty() { return String::new(); }
+        if tools.is_empty() {
+            return String::new();
+        }
         let mut desc = String::from("\n\n### MCP EXTENSIBLE TOOLS (available on this system):\n");
         for (_name, ref_) in tools.iter() {
             desc.push_str(&format!("- <{}>", ref_.tool.name));
@@ -218,10 +242,16 @@ impl MCPManager {
         let mut servers = self.servers.lock().await;
         let instance = servers.get_mut(&ref_.server_name)?;
 
-        match instance.send_request("tools/call", serde_json::json!({
-            "name": name,
-            "arguments": args
-        })).await {
+        match instance
+            .send_request(
+                "tools/call",
+                serde_json::json!({
+                    "name": name,
+                    "arguments": args
+                }),
+            )
+            .await
+        {
             Ok(result) => {
                 let tr: MCPToolResult = serde_json::from_value(result).ok()?;
                 let mut text = String::new();

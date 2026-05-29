@@ -36,28 +36,47 @@ pub struct DiffView<'a> {
 impl<'a> DiffView<'a> {
     /// Creates a new `DiffView`.
     pub fn new() -> Self {
-        Self { diff: "", file: None, style: StyleToken::default() }
+        Self {
+            diff: "",
+            file: None,
+            style: StyleToken::default(),
+        }
     }
 
     /// Sets the unified diff text content.
-    pub fn diff(mut self, diff: &'a str) -> Self { self.diff = diff; self }
+    pub fn diff(mut self, diff: &'a str) -> Self {
+        self.diff = diff;
+        self
+    }
     /// Optionally sets the file path shown as a header.
-    pub fn file(mut self, path: &'a str) -> Self { self.file = Some(path); self }
+    pub fn file(mut self, path: &'a str) -> Self {
+        self.file = Some(path);
+        self
+    }
     /// Applies a `StyleToken`.
-    pub fn style(mut self, tokens: StyleToken) -> Self { self.style = tokens; self }
+    pub fn style(mut self, tokens: StyleToken) -> Self {
+        self.style = tokens;
+        self
+    }
 }
 
 impl Default for DiffView<'_> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for DiffView<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &DiffView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 { return; }
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
         let dimmed = Style::default().fg(self.style.text_dim);
         let add = Style::default().fg(self.style.success);
@@ -69,7 +88,12 @@ impl Widget for &DiffView<'_> {
         if let Some(file) = self.file {
             let parts = vec![
                 Span::styled("━━━ ", dimmed),
-                Span::styled(file, Style::default().fg(self.style.accent).add_modifier(ratatui::style::Modifier::BOLD)),
+                Span::styled(
+                    file,
+                    Style::default()
+                        .fg(self.style.accent)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ),
                 Span::styled(" ━━━", dimmed),
             ];
             lines.push(Line::from(parts));

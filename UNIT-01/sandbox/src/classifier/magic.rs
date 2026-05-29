@@ -262,7 +262,10 @@ pub fn detect_from_bytes(bytes: &[u8]) -> FileClass {
     }
 
     // Check MP3 sync word (0xFF followed by 0xFB, 0xF3, or 0xF2)
-    if bytes.len() >= 2 && bytes[0] == 0xFF && (bytes[1] == 0xFB || bytes[1] == 0xF3 || bytes[1] == 0xF2) {
+    if bytes.len() >= 2
+        && bytes[0] == 0xFF
+        && (bytes[1] == 0xFB || bytes[1] == 0xF3 || bytes[1] == 0xF2)
+    {
         return FileClass::Mp3;
     }
 
@@ -278,7 +281,10 @@ pub fn detect_from_bytes(bytes: &[u8]) -> FileClass {
 /// Detect script type from shebang line
 fn detect_shebang(bytes: &[u8]) -> FileClass {
     // Extract the first line (up to newline or 256 bytes, whichever comes first)
-    let end = bytes.iter().position(|&b| b == b'\n').unwrap_or(bytes.len().min(256));
+    let end = bytes
+        .iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(bytes.len().min(256));
     let shebang_line = match std::str::from_utf8(&bytes[..end]) {
         Ok(s) => s,
         Err(_) => return FileClass::Unknown,
@@ -355,7 +361,10 @@ pub fn check_extension_mismatch(path: &Path, detected: &FileClass) -> Option<(St
         // This is suspicious — flag it.
         return Some((
             ext,
-            format!("Unknown (no {} magic bytes found)", class_description(&expected)),
+            format!(
+                "Unknown (no {} magic bytes found)",
+                class_description(&expected)
+            ),
         ));
     }
 
@@ -368,9 +377,13 @@ pub fn check_extension_mismatch(path: &Path, detected: &FileClass) -> Option<(St
 
     // Special case: ZIP-based Office formats (docx/xlsx/pptx are ZIP by magic)
     if *detected == FileClass::Zip
-        && matches!(expected, FileClass::OfficeDoc | FileClass::OfficeXlsx | FileClass::OfficePptx | FileClass::Zip) {
-            return None; // Not a mismatch
-        }
+        && matches!(
+            expected,
+            FileClass::OfficeDoc | FileClass::OfficeXlsx | FileClass::OfficePptx | FileClass::Zip
+        )
+    {
+        return None; // Not a mismatch
+    }
 
     // Special case: JavaClass and Binary share 0xCAFEBABE (Mach-O fat binary)
     if (*detected == FileClass::JavaClass && expected == FileClass::Binary)
@@ -381,10 +394,7 @@ pub fn check_extension_mismatch(path: &Path, detected: &FileClass) -> Option<(St
 
     // Compare
     if expected != *detected {
-        Some((
-            ext,
-            class_description(detected).to_string(),
-        ))
+        Some((ext, class_description(detected).to_string()))
     } else {
         None
     }
@@ -404,7 +414,8 @@ pub fn class_from_magic_bytes(data: &[u8]) -> Option<FileClass> {
 pub fn class_from_extension(ext: &str) -> FileClass {
     match ext.to_lowercase().as_str() {
         "wasm" => FileClass::Wasm,
-        "exe" | "dll" | "scr" | "msi" | "bin" | "out" | "elf" | "so" | "appimage" | "dylib" | "app" | "dmg" => FileClass::Binary,
+        "exe" | "dll" | "scr" | "msi" | "bin" | "out" | "elf" | "so" | "appimage" | "dylib"
+        | "app" | "dmg" => FileClass::Binary,
         "class" => FileClass::JavaClass,
         "py" => FileClass::Python,
         "js" | "mjs" => FileClass::JavaScript,
@@ -612,7 +623,10 @@ mod tests {
 
     #[test]
     fn test_7zip_detection() {
-        assert_eq!(detect_from_bytes(b"7z\xbc\xaf\x27\x1c"), FileClass::SevenZip);
+        assert_eq!(
+            detect_from_bytes(b"7z\xbc\xaf\x27\x1c"),
+            FileClass::SevenZip
+        );
     }
 
     #[test]
@@ -627,36 +641,63 @@ mod tests {
 
     #[test]
     fn test_java_class_detection() {
-        assert_eq!(detect_from_bytes(b"\xCA\xFE\xBA\xBE\x00\x00"), FileClass::JavaClass);
+        assert_eq!(
+            detect_from_bytes(b"\xCA\xFE\xBA\xBE\x00\x00"),
+            FileClass::JavaClass
+        );
     }
 
     // Shebang tests
     #[test]
     fn test_shebang_python() {
-        assert_eq!(detect_from_bytes(b"#!/usr/bin/env python3\nprint('hi')"), FileClass::Python);
-        assert_eq!(detect_from_bytes(b"#!/usr/bin/python\nimport os"), FileClass::Python);
+        assert_eq!(
+            detect_from_bytes(b"#!/usr/bin/env python3\nprint('hi')"),
+            FileClass::Python
+        );
+        assert_eq!(
+            detect_from_bytes(b"#!/usr/bin/python\nimport os"),
+            FileClass::Python
+        );
     }
 
     #[test]
     fn test_shebang_bash() {
-        assert_eq!(detect_from_bytes(b"#!/bin/bash\necho hello"), FileClass::Shell);
-        assert_eq!(detect_from_bytes(b"#!/bin/sh\necho hello"), FileClass::Shell);
-        assert_eq!(detect_from_bytes(b"#!/usr/bin/env bash\necho hello"), FileClass::Shell);
+        assert_eq!(
+            detect_from_bytes(b"#!/bin/bash\necho hello"),
+            FileClass::Shell
+        );
+        assert_eq!(
+            detect_from_bytes(b"#!/bin/sh\necho hello"),
+            FileClass::Shell
+        );
+        assert_eq!(
+            detect_from_bytes(b"#!/usr/bin/env bash\necho hello"),
+            FileClass::Shell
+        );
     }
 
     #[test]
     fn test_shebang_node() {
-        assert_eq!(detect_from_bytes(b"#!/usr/bin/env node\nconsole.log('hi')"), FileClass::JavaScript);
+        assert_eq!(
+            detect_from_bytes(b"#!/usr/bin/env node\nconsole.log('hi')"),
+            FileClass::JavaScript
+        );
     }
 
     #[test]
     fn test_shebang_ruby() {
-        assert_eq!(detect_from_bytes(b"#!/usr/bin/env ruby\nputs 'hi'"), FileClass::Ruby);
+        assert_eq!(
+            detect_from_bytes(b"#!/usr/bin/env ruby\nputs 'hi'"),
+            FileClass::Ruby
+        );
     }
 
     #[test]
     fn test_shebang_perl() {
-        assert_eq!(detect_from_bytes(b"#!/usr/bin/perl\nprint 'hi'"), FileClass::Perl);
+        assert_eq!(
+            detect_from_bytes(b"#!/usr/bin/perl\nprint 'hi'"),
+            FileClass::Perl
+        );
     }
 
     // Extension mismatch tests
@@ -714,7 +755,10 @@ mod tests {
 
     #[test]
     fn test_random_bytes_returns_unknown() {
-        assert_eq!(detect_from_bytes(b"\x42\x43\x44\x45\x46"), FileClass::Unknown);
+        assert_eq!(
+            detect_from_bytes(b"\x42\x43\x44\x45\x46"),
+            FileClass::Unknown
+        );
     }
 
     #[test]

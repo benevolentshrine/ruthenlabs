@@ -50,7 +50,8 @@ impl LLMClient {
             return Ok(cached.clone());
         }
         let body = serde_json::json!({"name": self.model});
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/show", self.endpoint))
             .json(&body)
             .send()
@@ -62,16 +63,26 @@ impl LLMClient {
         Ok(show)
     }
 
-    pub async fn stream_directives(&self, messages: Vec<OllamaMessage>, temperature: f64) -> Result<(Vec<Directive>, i32, i32), String> {
+    pub async fn stream_directives(
+        &self,
+        messages: Vec<OllamaMessage>,
+        temperature: f64,
+    ) -> Result<(Vec<Directive>, i32, i32), String> {
         let req = OllamaRequest {
             model: self.model.clone(),
             messages,
             stream: true,
             format: Some(directive_schema()),
-            options: Some(serde_json::json!({"temperature": temperature}).as_object().unwrap().clone()),
+            options: Some(
+                serde_json::json!({"temperature": temperature})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
         };
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/chat", self.endpoint))
             .json(&req)
             .send()
@@ -79,7 +90,11 @@ impl LLMClient {
             .map_err(|e| format!("http: {}", e))?;
 
         let result = parse_stream(resp, None).await?;
-        Ok((result.directives, result.prompt_tokens, result.output_tokens))
+        Ok((
+            result.directives,
+            result.prompt_tokens,
+            result.output_tokens,
+        ))
     }
 
     pub async fn stream_cli(
@@ -93,10 +108,16 @@ impl LLMClient {
             messages,
             stream: true,
             format: None,
-            options: Some(serde_json::json!({"temperature": temperature}).as_object().unwrap().clone()),
+            options: Some(
+                serde_json::json!({"temperature": temperature})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
         };
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/chat", self.endpoint))
             .json(&req)
             .send()
@@ -107,7 +128,12 @@ impl LLMClient {
         if result.directives.is_empty() {
             result.directives = crate::stream_parser::extract_directives(&result.full_text);
         }
-        Ok((result.full_text, result.directives, result.prompt_tokens, result.output_tokens))
+        Ok((
+            result.full_text,
+            result.directives,
+            result.prompt_tokens,
+            result.output_tokens,
+        ))
     }
 
     pub async fn chat(&self, messages: Vec<OllamaMessage>) -> Result<String, String> {
@@ -119,7 +145,8 @@ impl LLMClient {
             options: None,
         };
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/api/chat", self.endpoint))
             .json(&req)
             .send()
@@ -131,7 +158,9 @@ impl LLMClient {
             message: ChatRespMessage,
         }
         #[derive(Deserialize)]
-        struct ChatRespMessage { content: String }
+        struct ChatRespMessage {
+            content: String,
+        }
 
         let cr: ChatResp = resp.json().await.map_err(|e| format!("json: {}", e))?;
         Ok(cr.message.content)

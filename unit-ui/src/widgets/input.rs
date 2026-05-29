@@ -78,7 +78,9 @@ impl<'a> BasicInput<'a> {
 }
 
 impl Widget for BasicInput<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &BasicInput<'_> {

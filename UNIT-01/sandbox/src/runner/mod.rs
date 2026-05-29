@@ -1,4 +1,4 @@
-﻿//! SANDBOX Runners (Open-Core)
+//! SANDBOX Runners (Open-Core)
 //!
 //! Execution strategies:
 //! - InterpreterRunner: Landlock + Seccomp + Cgroups for interpreted languages
@@ -25,7 +25,12 @@ pub enum RunnerVerdict {
 
 pub trait Runner {
     fn can_handle(&self, class: &FileClass) -> bool;
-    fn execute(&self, path: &Path, classification: &ClassificationResult, mode: SecurityMode) -> Result<RunnerVerdict>;
+    fn execute(
+        &self,
+        path: &Path,
+        classification: &ClassificationResult,
+        mode: SecurityMode,
+    ) -> Result<RunnerVerdict>;
     fn check_dependencies(&self) -> Vec<DependencyStatus>;
 }
 
@@ -52,7 +57,12 @@ impl RunnerRouter {
         }
     }
 
-    pub fn route(&self, path: &Path, classification: &ClassificationResult, mode: SecurityMode) -> Result<RunnerVerdict> {
+    pub fn route(
+        &self,
+        path: &Path,
+        classification: &ClassificationResult,
+        mode: SecurityMode,
+    ) -> Result<RunnerVerdict> {
         let class = &classification.class;
         use crate::classifier::magic::is_interpreted;
 
@@ -87,9 +97,13 @@ mod tests {
 
     #[test]
     fn test_runner_verdict_variants() {
-        let success = RunnerVerdict::Success { output: "test".to_string() };
+        let success = RunnerVerdict::Success {
+            output: "test".to_string(),
+        };
         assert!(matches!(success, RunnerVerdict::Success { .. }));
-        let blocked = RunnerVerdict::Blocked { reason: "test".to_string() };
+        let blocked = RunnerVerdict::Blocked {
+            reason: "test".to_string(),
+        };
         assert!(matches!(blocked, RunnerVerdict::Blocked { .. }));
     }
 }

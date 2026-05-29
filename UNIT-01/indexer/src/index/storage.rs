@@ -1,8 +1,8 @@
-use sled::{Db, Tree};
 use crate::models::FileRecord;
-use std::path::Path;
-use std::io;
 use bincode;
+use sled::{Db, Tree};
+use std::io;
+use std::path::Path;
 
 #[derive(Clone)]
 pub struct Storage {
@@ -28,21 +28,22 @@ impl Storage {
         let mut records = Vec::new();
         for result in self.metadata.iter() {
             let (_, value) = result.map_err(io::Error::other)?;
-            let record = bincode::deserialize::<FileRecord>(&value)
-                .map_err(io::Error::other)?;
+            let record = bincode::deserialize::<FileRecord>(&value).map_err(io::Error::other)?;
             records.push(record);
         }
         Ok(records)
     }
 
     pub fn get_record(&self, path: &str) -> io::Result<Option<FileRecord>> {
-        let res = self.metadata.get(path.as_bytes())
+        let res = self
+            .metadata
+            .get(path.as_bytes())
             .map_err(io::Error::other)?;
 
         match res {
             Some(bytes) => {
-                let record = bincode::deserialize::<FileRecord>(&bytes)
-                    .map_err(io::Error::other)?;
+                let record =
+                    bincode::deserialize::<FileRecord>(&bytes).map_err(io::Error::other)?;
                 Ok(Some(record))
             }
             None => Ok(None),
@@ -52,8 +53,7 @@ impl Storage {
     pub fn batch_insert(&self, records: Vec<FileRecord>) -> io::Result<()> {
         for record in records {
             let path_bytes = record.path.as_bytes();
-            let encoded_record = bincode::serialize(&record)
-                .map_err(io::Error::other)?;
+            let encoded_record = bincode::serialize(&record).map_err(io::Error::other)?;
 
             self.metadata
                 .insert(path_bytes, encoded_record.as_slice())

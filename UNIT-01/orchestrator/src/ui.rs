@@ -40,7 +40,12 @@ pub struct ChatMsg {
     pub content: String,
 }
 
-async fn build_executor_prompt(ws: &Workspace, profile: &ModelProfile, auto_ctx: &str, mcp: &MCPManager) -> String {
+async fn build_executor_prompt(
+    ws: &Workspace,
+    profile: &ModelProfile,
+    auto_ctx: &str,
+    mcp: &MCPManager,
+) -> String {
     let home = home::home_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "/tmp".to_string());
@@ -89,14 +94,18 @@ pub async fn run_ui(
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             let mut app = state_for_uds.lock().await;
-            let content = msg.payload.get("content")
+            let content = msg
+                .payload
+                .get("content")
                 .or_else(|| msg.payload.get("text"))
                 .or_else(|| msg.payload.get("message"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
-            if content.is_empty() { continue; }
+            if content.is_empty() {
+                continue;
+            }
 
             if let Some(last) = app.messages.last_mut() {
                 if last.source == msg.source {
@@ -132,7 +141,11 @@ pub async fn run_ui(
         }
 
         let app = state.lock().await;
-        let prompt = if app.thinking { "⏳ thinking... ".to_string() } else { "» ".to_string() };
+        let prompt = if app.thinking {
+            "⏳ thinking... ".to_string()
+        } else {
+            "» ".to_string()
+        };
         drop(app);
         eprint!("{}", prompt);
 
@@ -142,9 +155,13 @@ pub async fn run_ui(
         };
 
         let input = line.trim().to_string();
-        if input.is_empty() { continue; }
+        if input.is_empty() {
+            continue;
+        }
 
-        if input == "/exit" || input == "/quit" { break; }
+        if input == "/exit" || input == "/quit" {
+            break;
+        }
         if input == "/clear" {
             let mut app = state.lock().await;
             app.messages.clear();
@@ -172,8 +189,12 @@ pub async fn run_ui(
 
         // ─── PHASE 1: Directives ────────────────────────────────────
         let prompt = build_executor_prompt(
-            &app.ws, &app.profile, &get_auto_context(&input, &app.ws).await, &app.mcp_mgr
-        ).await;
+            &app.ws,
+            &app.profile,
+            &get_auto_context(&input, &app.ws).await,
+            &app.mcp_mgr,
+        )
+        .await;
 
         let directive_prompt = format!(
             "{}\n\n### DIRECTIVE PHASE (JSON STRUCTURED OUTPUT):\n\
@@ -205,7 +226,10 @@ pub async fn run_ui(
             role: "system".to_string(),
             content: directive_prompt,
         }];
-        ollama_msgs.extend(app.history.build_ollama_messages(app.profile.max_messages_per_turn));
+        ollama_msgs.extend(
+            app.history
+                .build_ollama_messages(app.profile.max_messages_per_turn),
+        );
 
         let mcp_mgr = app.mcp_mgr.clone();
         let ws_path = app.ws.path.clone();
@@ -222,7 +246,8 @@ pub async fn run_ui(
         drop(app);
 
         let (directives, _prompt_tokens, _output_tokens) = match LLMClient::new(&model_name)
-            .stream_directives(ollama_msgs, profile_temp).await
+            .stream_directives(ollama_msgs, profile_temp)
+            .await
         {
             Ok(result) => result,
             Err(e) => {
@@ -248,22 +273,36 @@ pub async fn run_ui(
 
         let mut tool_results: Vec<String> = Vec::new();
         for dir in &directives {
-            let result = execute_tool(&dir.name, &dir.args, &crate::workspace::Workspace {
-                path: ws_path.clone(),
-                session_id: String::new(),
-                project_map: String::new(),
-                instructions: String::new(),
-                identity: String::new(),
-                active: ws_active,
-            }, &mcp_mgr).await;
+            let result = execute_tool(
+                &dir.name,
+                &dir.args,
+                &crate::workspace::Workspace {
+                    path: ws_path.clone(),
+                    session_id: String::new(),
+                    project_map: String::new(),
+                    instructions: String::new(),
+                    identity: String::new(),
+                    active: ws_active,
+                },
+                &mcp_mgr,
+            )
+            .await;
 
             let display = if result.len() > profile_max_tool {
-                format!("[Tool '{}' output truncated: {} bytes]", dir.name, result.len())
+                format!(
+                    "[Tool '{}' output truncated: {} bytes]",
+                    dir.name,
+                    result.len()
+                )
             } else {
                 result.clone()
             };
 
-            tool_results.push(format!("  {} → {}", dir.name, display.lines().next().unwrap_or("")));
+            tool_results.push(format!(
+                "  {} → {}",
+                dir.name,
+                display.lines().next().unwrap_or("")
+            ));
 
             let mut app = state.lock().await;
             app.history.append(Message {
@@ -302,7 +341,8 @@ pub async fn run_ui(
         };
 
         let (final_response, _dirs, _pt, _ot) = match LLMClient::new(&model_name)
-            .stream_cli(phase2_msgs, &mut token_cb, profile_temp).await
+            .stream_cli(phase2_msgs, &mut token_cb, profile_temp)
+            .await
         {
             Ok(result) => result,
             Err(e) => {
@@ -368,7 +408,9 @@ fn extract_thinking(content: &str) -> String {
             in_think = false;
             i += 12;
         } else {
-            if in_think { t.push(chars[i]); }
+            if in_think {
+                t.push(chars[i]);
+            }
             i += 1;
         }
     }
@@ -387,7 +429,9 @@ fn strip_thinking(content: &str) -> String {
             in_think = false;
             i += 12;
         } else {
-            if !in_think { c.push(content[i..].chars().next().unwrap()); }
+            if !in_think {
+                c.push(content[i..].chars().next().unwrap());
+            }
             i += content[i..].chars().next().unwrap().len_utf8();
         }
     }

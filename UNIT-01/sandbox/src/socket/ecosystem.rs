@@ -1,4 +1,4 @@
-﻿//! SANDBOX Ecosystem Integration — Auto-discovery and communication with RUTHENLABS siblings
+//! SANDBOX Ecosystem Integration — Auto-discovery and communication with RUTHENLABS siblings
 //!
 //! Unix Philosophy: Discover siblings via filesystem sockets, not localhost ports.
 //! If siblings are present → collaborate. If not → work standalone.
@@ -167,13 +167,9 @@ pub fn get_capabilities(mode: SecurityMode) -> ServiceCapabilities {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-
 
     #[test]
     fn test_get_capabilities() {

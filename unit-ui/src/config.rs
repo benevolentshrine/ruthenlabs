@@ -51,8 +51,10 @@ fn parse_hex_into_color(hex: &str) -> Option<Color> {
 impl UnitConfig {
     /// Parses a `Unit.toml` file from disk.
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, String> {
-        let content = fs::read_to_string(path.as_ref()).map_err(|e| format!("Failed to read Unit.toml: {e}"))?;
-        let config: UnitConfig = toml::from_str(&content).map_err(|e| format!("Failed to parse Unit.toml: {e}"))?;
+        let content = fs::read_to_string(path.as_ref())
+            .map_err(|e| format!("Failed to read Unit.toml: {e}"))?;
+        let config: UnitConfig =
+            toml::from_str(&content).map_err(|e| format!("Failed to parse Unit.toml: {e}"))?;
         Ok(config)
     }
 

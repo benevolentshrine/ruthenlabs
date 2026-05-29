@@ -3,10 +3,10 @@
 //! For files with unknown extensions or no magic bytes match,
 //! applies heuristic analysis to determine the best runner.
 
+use crate::cage::policy::SecurityMode;
 use crate::classifier::magic::FileClass;
 use crate::classifier::ClassificationResult;
 use crate::runner::{DependencyStatus, Runner, RunnerVerdict};
-use crate::cage::policy::SecurityMode;
 use anyhow::Result;
 use std::path::Path;
 
@@ -20,8 +20,7 @@ impl HeuristicRunner {
     }
 
     /// Analyze file content for hints
-    fn analyze_content(&self, _data: &[u8]
-    ) -> ContentAnalysis {
+    fn analyze_content(&self, _data: &[u8]) -> ContentAnalysis {
         // Content analysis heuristics:
         // 1. Check for shebang (#!) patterns
         // 2. Look for common script signatures
@@ -38,9 +37,7 @@ impl HeuristicRunner {
     }
 
     /// Check for shebang and return interpreter
-    fn detect_shebang(&self,
-        data: &[u8]
-    ) -> Option<&'static str> {
+    fn detect_shebang(&self, data: &[u8]) -> Option<&'static str> {
         if data.starts_with(b"#!/") {
             // Parse shebang line
             let shebang = String::from_utf8_lossy(data);
@@ -65,8 +62,7 @@ impl HeuristicRunner {
     }
 
     /// Check if data is likely text
-    fn is_likely_text(&self, data: &[u8]
-    ) -> bool {
+    fn is_likely_text(&self, data: &[u8]) -> bool {
         // Simple heuristic: check for high proportion of printable ASCII
         if data.is_empty() {
             return false;
@@ -87,10 +83,7 @@ impl HeuristicRunner {
 
         // Check for shebang
         if let Some(interp) = self.detect_shebang(data) {
-            recommendations.push(format!(
-                "Detected shebang: {} interpreter",
-                interp
-            ));
+            recommendations.push(format!("Detected shebang: {} interpreter", interp));
         }
 
         // Check if text or binary
@@ -99,8 +92,7 @@ impl HeuristicRunner {
 
             // Look for script patterns
             let text = String::from_utf8_lossy(data);
-            if text.contains("function") || text.contains("var ") || text.contains("const ")
-            {
+            if text.contains("function") || text.contains("var ") || text.contains("const ") {
                 recommendations.push("Contains JavaScript-like patterns".to_string());
             }
             if text.contains("def ") || text.contains("import ") {

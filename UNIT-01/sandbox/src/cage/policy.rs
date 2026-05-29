@@ -1,4 +1,4 @@
-﻿//! SANDBOX Security Policy — 5 security modes with absolute invariants
+//! SANDBOX Security Policy — 5 security modes with absolute invariants
 //!
 //! Security Modes:
 //! - HARD (🔴): Auto-block everything, always quarantine
@@ -68,14 +68,7 @@ pub struct AbsoluteInvariants;
 
 impl AbsoluteInvariants {
     /// Sensitive path patterns that are NEVER allowed
-    const SENSITIVE_PATHS: &[&str] = &[
-        ".ssh",
-        ".gnupg",
-        ".aws",
-        ".config",
-        ".netrc",
-        "keystore",
-    ];
+    const SENSITIVE_PATHS: &[&str] = &[".ssh", ".gnupg", ".aws", ".config", ".netrc", "keystore"];
 
     /// Sensitive file patterns
     const SENSITIVE_FILES: &[&str] = &[
@@ -186,18 +179,12 @@ impl SecurityPolicy {
         // Mode-specific evaluation
         match self.mode {
             SecurityMode::Hard => PolicyDecision::AutoBlock {
-                reason: format!(
-                    "File read blocked in HARD mode: {}",
-                    path.display()
-                ),
+                reason: format!("File read blocked in HARD mode: {}", path.display()),
             },
             SecurityMode::Mid => {
                 if outside_workspace {
                     PolicyDecision::Prompt {
-                        reason: format!(
-                            "File read outside workspace: {}",
-                            path.display()
-                        ),
+                        reason: format!("File read outside workspace: {}", path.display()),
                     }
                 } else {
                     PolicyDecision::AutoAllow
@@ -228,10 +215,7 @@ impl SecurityPolicy {
             let path_str = path.to_string_lossy().to_string();
             if self.denied_paths.contains(&path_str) {
                 return PolicyDecision::AutoBlock {
-                    reason: format!(
-                        "Path explicitly denied by custom rules: {}",
-                        path.display()
-                    ),
+                    reason: format!("Path explicitly denied by custom rules: {}", path.display()),
                 };
             }
             if self.allowed_paths.contains(&path_str) {
@@ -242,18 +226,12 @@ impl SecurityPolicy {
         // Mode-specific evaluation
         match self.mode {
             SecurityMode::Hard => PolicyDecision::AutoBlock {
-                reason: format!(
-                    "File write blocked in HARD mode: {}",
-                    path.display()
-                ),
+                reason: format!("File write blocked in HARD mode: {}", path.display()),
             },
             SecurityMode::Mid => {
                 if outside_workspace {
                     PolicyDecision::Prompt {
-                        reason: format!(
-                            "File write outside workspace: {}",
-                            path.display()
-                        ),
+                        reason: format!("File write outside workspace: {}", path.display()),
                     }
                 } else {
                     PolicyDecision::AutoAllow
@@ -262,10 +240,7 @@ impl SecurityPolicy {
             SecurityMode::Easy => {
                 if outside_workspace {
                     PolicyDecision::Prompt {
-                        reason: format!(
-                            "File write outside home directory: {}",
-                            path.display()
-                        ),
+                        reason: format!("File write outside home directory: {}", path.display()),
                     }
                 } else {
                     PolicyDecision::AutoAllow
@@ -374,10 +349,7 @@ impl SecurityPolicy {
     pub fn evaluate_unknown_file(&self, filename: &str) -> PolicyDecision {
         match self.mode {
             SecurityMode::Hard => PolicyDecision::AutoBlock {
-                reason: format!(
-                    "Unknown file type blocked in HARD mode: {}",
-                    filename
-                ),
+                reason: format!("Unknown file type blocked in HARD mode: {}", filename),
             },
             SecurityMode::Audit => PolicyDecision::AutoAllow, // AUDIT: observe only
             _ => PolicyDecision::Prompt {
@@ -424,11 +396,11 @@ impl SecurityPolicy {
     fn scan_hard(source: &str) -> Option<String> {
         // Forbidden path patterns: any access to system directories
         const FORBIDDEN_PATH_PREFIXES: &[(&str, &str)] = &[
-            ("/etc/",   "forbidden path read: /etc/"),
-            ("/proc/",  "forbidden path read: /proc/"),
-            ("/sys/",   "forbidden path read: /sys/"),
-            ("/root/",  "forbidden path read: /root/"),
-            ("/home/",  "forbidden path read: /home/"),
+            ("/etc/", "forbidden path read: /etc/"),
+            ("/proc/", "forbidden path read: /proc/"),
+            ("/sys/", "forbidden path read: /sys/"),
+            ("/root/", "forbidden path read: /root/"),
+            ("/home/", "forbidden path read: /home/"),
         ];
 
         for (prefix, reason) in FORBIDDEN_PATH_PREFIXES {
@@ -439,31 +411,106 @@ impl SecurityPolicy {
 
         // Forbidden import/module patterns
         const HARD_BLOCKED_PATTERNS: &[ScanPattern] = &[
-            ScanPattern { pattern: "import os",          reason: "forbidden import: os module (filesystem/process access)" },
-            ScanPattern { pattern: "import shutil",      reason: "forbidden import: shutil module (destructive file ops)" },
-            ScanPattern { pattern: "import subprocess",  reason: "forbidden import: subprocess module (process spawn)" },
-            ScanPattern { pattern: "import socket",      reason: "forbidden import: socket module (network access)" },
-            ScanPattern { pattern: "import requests",    reason: "forbidden import: requests module (HTTP network)" },
-            ScanPattern { pattern: "import urllib",      reason: "forbidden import: urllib module (HTTP network)" },
-            ScanPattern { pattern: "import httplib",     reason: "forbidden import: httplib module (HTTP network)" },
-            ScanPattern { pattern: "import http.client", reason: "forbidden import: http.client module (HTTP network)" },
-            ScanPattern { pattern: "requests.",          reason: "forbidden call: requests (HTTP network)" },
-            ScanPattern { pattern: "urllib.",            reason: "forbidden call: urllib (HTTP network)" },
-            ScanPattern { pattern: "eval(",              reason: "forbidden call: eval() (arbitrary code execution)" },
-            ScanPattern { pattern: "exec(",              reason: "forbidden call: exec() (arbitrary code execution)" },
-            ScanPattern { pattern: "__import__(",        reason: "forbidden call: __import__() (dynamic module load)" },
-            ScanPattern { pattern: "os.system(",         reason: "forbidden syscall: os.system (process spawn)" },
-            ScanPattern { pattern: "os.popen(",          reason: "forbidden syscall: os.popen (process spawn)" },
-            ScanPattern { pattern: "os.remove(",         reason: "forbidden syscall: os.remove (file deletion)" },
-            ScanPattern { pattern: "os.unlink(",         reason: "forbidden syscall: os.unlink (file deletion)" },
-            ScanPattern { pattern: "os.rmdir(",          reason: "forbidden syscall: os.rmdir (directory deletion)" },
-            ScanPattern { pattern: "shutil.rmtree(",     reason: "forbidden syscall: shutil.rmtree (recursive deletion)" },
-            ScanPattern { pattern: "shutil.move(",       reason: "forbidden syscall: shutil.move (file move)" },
-            ScanPattern { pattern: "subprocess.run(",    reason: "forbidden syscall: subprocess.run (process spawn)" },
-            ScanPattern { pattern: "subprocess.Popen(",  reason: "forbidden syscall: subprocess.Popen (process spawn)" },
-            ScanPattern { pattern: "subprocess.call(",   reason: "forbidden syscall: subprocess.call (process spawn)" },
-            ScanPattern { pattern: "socket.socket(",     reason: "forbidden call: socket.socket (raw network socket)" },
-            ScanPattern { pattern: "socket.connect(",    reason: "forbidden call: socket.connect (network connection)" },
+            ScanPattern {
+                pattern: "import os",
+                reason: "forbidden import: os module (filesystem/process access)",
+            },
+            ScanPattern {
+                pattern: "import shutil",
+                reason: "forbidden import: shutil module (destructive file ops)",
+            },
+            ScanPattern {
+                pattern: "import subprocess",
+                reason: "forbidden import: subprocess module (process spawn)",
+            },
+            ScanPattern {
+                pattern: "import socket",
+                reason: "forbidden import: socket module (network access)",
+            },
+            ScanPattern {
+                pattern: "import requests",
+                reason: "forbidden import: requests module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "import urllib",
+                reason: "forbidden import: urllib module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "import httplib",
+                reason: "forbidden import: httplib module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "import http.client",
+                reason: "forbidden import: http.client module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "requests.",
+                reason: "forbidden call: requests (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "urllib.",
+                reason: "forbidden call: urllib (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "eval(",
+                reason: "forbidden call: eval() (arbitrary code execution)",
+            },
+            ScanPattern {
+                pattern: "exec(",
+                reason: "forbidden call: exec() (arbitrary code execution)",
+            },
+            ScanPattern {
+                pattern: "__import__(",
+                reason: "forbidden call: __import__() (dynamic module load)",
+            },
+            ScanPattern {
+                pattern: "os.system(",
+                reason: "forbidden syscall: os.system (process spawn)",
+            },
+            ScanPattern {
+                pattern: "os.popen(",
+                reason: "forbidden syscall: os.popen (process spawn)",
+            },
+            ScanPattern {
+                pattern: "os.remove(",
+                reason: "forbidden syscall: os.remove (file deletion)",
+            },
+            ScanPattern {
+                pattern: "os.unlink(",
+                reason: "forbidden syscall: os.unlink (file deletion)",
+            },
+            ScanPattern {
+                pattern: "os.rmdir(",
+                reason: "forbidden syscall: os.rmdir (directory deletion)",
+            },
+            ScanPattern {
+                pattern: "shutil.rmtree(",
+                reason: "forbidden syscall: shutil.rmtree (recursive deletion)",
+            },
+            ScanPattern {
+                pattern: "shutil.move(",
+                reason: "forbidden syscall: shutil.move (file move)",
+            },
+            ScanPattern {
+                pattern: "subprocess.run(",
+                reason: "forbidden syscall: subprocess.run (process spawn)",
+            },
+            ScanPattern {
+                pattern: "subprocess.Popen(",
+                reason: "forbidden syscall: subprocess.Popen (process spawn)",
+            },
+            ScanPattern {
+                pattern: "subprocess.call(",
+                reason: "forbidden syscall: subprocess.call (process spawn)",
+            },
+            ScanPattern {
+                pattern: "socket.socket(",
+                reason: "forbidden call: socket.socket (raw network socket)",
+            },
+            ScanPattern {
+                pattern: "socket.connect(",
+                reason: "forbidden call: socket.connect (network connection)",
+            },
         ];
 
         for pat in HARD_BLOCKED_PATTERNS {
@@ -479,9 +526,9 @@ impl SecurityPolicy {
     fn scan_mid(source: &str) -> Option<String> {
         // System path reads are forbidden in MID mode
         const MID_FORBIDDEN_PATHS: &[(&str, &str)] = &[
-            ("/etc/",  "forbidden path read: /etc/"),
+            ("/etc/", "forbidden path read: /etc/"),
             ("/proc/", "forbidden path read: /proc/"),
-            ("/sys/",  "forbidden path read: /sys/"),
+            ("/sys/", "forbidden path read: /sys/"),
             ("/root/", "forbidden path read: /root/"),
         ];
 
@@ -493,15 +540,42 @@ impl SecurityPolicy {
 
         // Network access is always blocked in MID mode
         const MID_NETWORK_PATTERNS: &[ScanPattern] = &[
-            ScanPattern { pattern: "import socket",      reason: "forbidden import: socket module (network access)" },
-            ScanPattern { pattern: "import requests",    reason: "forbidden import: requests module (HTTP network)" },
-            ScanPattern { pattern: "import urllib",      reason: "forbidden import: urllib module (HTTP network)" },
-            ScanPattern { pattern: "import httplib",     reason: "forbidden import: httplib module (HTTP network)" },
-            ScanPattern { pattern: "import http.client", reason: "forbidden import: http.client module (HTTP network)" },
-            ScanPattern { pattern: "requests.",          reason: "forbidden call: requests (HTTP network)" },
-            ScanPattern { pattern: "urllib.",            reason: "forbidden call: urllib (HTTP network)" },
-            ScanPattern { pattern: "socket.socket(",     reason: "forbidden call: socket.socket (raw network socket)" },
-            ScanPattern { pattern: "socket.connect(",    reason: "forbidden call: socket.connect (network connection)" },
+            ScanPattern {
+                pattern: "import socket",
+                reason: "forbidden import: socket module (network access)",
+            },
+            ScanPattern {
+                pattern: "import requests",
+                reason: "forbidden import: requests module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "import urllib",
+                reason: "forbidden import: urllib module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "import httplib",
+                reason: "forbidden import: httplib module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "import http.client",
+                reason: "forbidden import: http.client module (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "requests.",
+                reason: "forbidden call: requests (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "urllib.",
+                reason: "forbidden call: urllib (HTTP network)",
+            },
+            ScanPattern {
+                pattern: "socket.socket(",
+                reason: "forbidden call: socket.socket (raw network socket)",
+            },
+            ScanPattern {
+                pattern: "socket.connect(",
+                reason: "forbidden call: socket.connect (network connection)",
+            },
         ];
 
         for pat in MID_NETWORK_PATTERNS {
@@ -512,20 +586,56 @@ impl SecurityPolicy {
 
         // Process spawning is blocked in MID mode
         const MID_SPAWN_PATTERNS: &[ScanPattern] = &[
-            ScanPattern { pattern: "subprocess.run(",   reason: "forbidden syscall: subprocess.run (process spawn)" },
-            ScanPattern { pattern: "subprocess.Popen(", reason: "forbidden syscall: subprocess.Popen (process spawn)" },
-            ScanPattern { pattern: "subprocess.call(",  reason: "forbidden syscall: subprocess.call (process spawn)" },
-            ScanPattern { pattern: "os.system(",        reason: "forbidden syscall: os.system (process spawn)" },
-            ScanPattern { pattern: "os.popen(",         reason: "forbidden syscall: os.popen (process spawn)" },
+            ScanPattern {
+                pattern: "subprocess.run(",
+                reason: "forbidden syscall: subprocess.run (process spawn)",
+            },
+            ScanPattern {
+                pattern: "subprocess.Popen(",
+                reason: "forbidden syscall: subprocess.Popen (process spawn)",
+            },
+            ScanPattern {
+                pattern: "subprocess.call(",
+                reason: "forbidden syscall: subprocess.call (process spawn)",
+            },
+            ScanPattern {
+                pattern: "os.system(",
+                reason: "forbidden syscall: os.system (process spawn)",
+            },
+            ScanPattern {
+                pattern: "os.popen(",
+                reason: "forbidden syscall: os.popen (process spawn)",
+            },
             // Env var access blocked in MID mode
-            ScanPattern { pattern: "os.environ",        reason: "forbidden call: os.environ (environment variable access)" },
-            ScanPattern { pattern: "os.getenv(",        reason: "forbidden call: os.getenv (environment variable access)" },
+            ScanPattern {
+                pattern: "os.environ",
+                reason: "forbidden call: os.environ (environment variable access)",
+            },
+            ScanPattern {
+                pattern: "os.getenv(",
+                reason: "forbidden call: os.getenv (environment variable access)",
+            },
             // Destructive file ops blocked in MID mode
-            ScanPattern { pattern: "os.remove(",        reason: "forbidden syscall: os.remove (file deletion)" },
-            ScanPattern { pattern: "os.unlink(",        reason: "forbidden syscall: os.unlink (file deletion)" },
-            ScanPattern { pattern: "os.rmdir(",         reason: "forbidden syscall: os.rmdir (directory deletion)" },
-            ScanPattern { pattern: "shutil.rmtree(",    reason: "forbidden syscall: shutil.rmtree (recursive deletion)" },
-            ScanPattern { pattern: "shutil.move(",      reason: "forbidden syscall: shutil.move (file move)" },
+            ScanPattern {
+                pattern: "os.remove(",
+                reason: "forbidden syscall: os.remove (file deletion)",
+            },
+            ScanPattern {
+                pattern: "os.unlink(",
+                reason: "forbidden syscall: os.unlink (file deletion)",
+            },
+            ScanPattern {
+                pattern: "os.rmdir(",
+                reason: "forbidden syscall: os.rmdir (directory deletion)",
+            },
+            ScanPattern {
+                pattern: "shutil.rmtree(",
+                reason: "forbidden syscall: shutil.rmtree (recursive deletion)",
+            },
+            ScanPattern {
+                pattern: "shutil.move(",
+                reason: "forbidden syscall: shutil.move (file move)",
+            },
         ];
 
         for pat in MID_SPAWN_PATTERNS {
@@ -561,7 +671,9 @@ mod tests {
         assert!(AbsoluteInvariants::is_sensitive_path(Path::new(
             "/home/user/.ssh/id_rsa"
         )));
-        assert!(AbsoluteInvariants::is_sensitive_path(Path::new("/app/.env")));
+        assert!(AbsoluteInvariants::is_sensitive_path(Path::new(
+            "/app/.env"
+        )));
         assert!(AbsoluteInvariants::is_sensitive_path(Path::new(
             "/home/user/.aws/credentials"
         )));

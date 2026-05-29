@@ -1,28 +1,29 @@
-mod socket;
-mod types;
-mod schema;
-mod clients;
-mod hardware;
-mod llm_client;
-mod stream_parser;
-mod history;
-mod workspace;
-mod model_profile;
-mod mcp;
-mod daemon;
 mod auto_context;
-mod markdown;
-mod review;
-mod session;
+mod clients;
+mod daemon;
 mod executor;
+mod hardware;
+mod history;
+mod llm_client;
+mod markdown;
+mod mcp;
+mod model_profile;
+mod review;
+mod schema;
+mod session;
+mod socket;
+mod stream_parser;
+mod types;
 mod ui;
+mod workspace;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() {
-    let model_name_str = std::env::var("UNIT01_MODEL").unwrap_or_else(|_| "qwen2.5-coder:3b".to_string());
+    let model_name_str =
+        std::env::var("UNIT01_MODEL").unwrap_or_else(|_| "qwen2.5-coder:3b".to_string());
 
     let model_name = model_name_str.clone();
 
@@ -35,15 +36,20 @@ async fn main() {
 
     mcp_mgr.load_config().await;
 
-    let indexer_status = daemon_mgr.spawn_if_missing("indexer", "/tmp/ruthen/indexer.sock").await;
-    let sandbox_status = daemon_mgr.spawn_if_missing("sandbox", "/tmp/ruthen/sandbox.sock").await;
+    let indexer_status = daemon_mgr
+        .spawn_if_missing("indexer", "/tmp/ruthen/indexer.sock")
+        .await;
+    let sandbox_status = daemon_mgr
+        .spawn_if_missing("sandbox", "/tmp/ruthen/sandbox.sock")
+        .await;
 
     // SIGTERM handler
     {
         let daemon_mgr = daemon_mgr.clone();
         let mcp_mgr = mcp_mgr.clone();
         tokio::spawn(async move {
-            let mut sig = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+            let mut sig =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
             sig.recv().await;
             mcp_mgr.shutdown().await;
             daemon_mgr.shutdown().await;
@@ -59,8 +65,10 @@ async fn main() {
     let ram = hardware::system_ram_gb();
 
     eprintln!("◆ UNIT-01 SOVEREIGN ENGINE [BOOTED]");
-    eprintln!("◆ Model: {} ({}) | Context: {} | RAM: {}GB",
-              profile.name, profile.parameter_size, profile.context_window, ram);
+    eprintln!(
+        "◆ Model: {} ({}) | Context: {} | RAM: {}GB",
+        profile.name, profile.parameter_size, profile.context_window, ram
+    );
     eprintln!("◆ Workspace: {}", cwd);
 
     // ─── UDS LISTENER ──────────────────────────────────────────────

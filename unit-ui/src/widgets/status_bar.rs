@@ -114,7 +114,9 @@ fn connection_dot(status: ConnectionStatus) -> (char, Color) {
 use ratatui::style::Color;
 
 impl Widget for StatusBar {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &StatusBar {
@@ -133,7 +135,10 @@ impl Widget for &StatusBar {
                 parts.push(Span::styled("  ", dimmed));
             }
             let (dot, color) = connection_dot(*conn);
-            parts.push(Span::styled(format!("{} ", dot), Style::default().fg(color)));
+            parts.push(Span::styled(
+                format!("{} ", dot),
+                Style::default().fg(color),
+            ));
             let label = match conn {
                 ConnectionStatus::Connected => "connected",
                 ConnectionStatus::Disconnected => "disconnected",

@@ -1,4 +1,4 @@
-﻿//! SANDBOX Cgroups v2 — Resource Determinism Layer
+//! SANDBOX Cgroups v2 — Resource Determinism Layer
 //!
 //! This module implements Phase 2.0: Resource Determinism via Linux Cgroups v2.
 //!
@@ -46,7 +46,7 @@ fn cgroup_root_path() -> PathBuf {
         for line in content.lines() {
             // Format: "0::/user.slice/user-1000.slice/user@1000.service/app.slice"
             let parts: Vec<&str> = line.splitn(3, ':').collect();
-            if parts.len() == 3 && parts.last().map_or(false, |p| !p.is_empty()) {
+            if parts.len() == 3 && parts.last().is_some_and(|p| !p.is_empty()) {
                 let cgroup = parts.last().unwrap();
                 // Skip the root cgroup "/" — use sysfs root
                 if *cgroup != "/" {
@@ -151,11 +151,8 @@ impl CgroupJail {
         }
 
         // 1. Memory limit: "536870912" (bytes)
-        self.write_cgroup_file(
-            "memory.max",
-            &memory_bytes.to_string(),
-        )
-        .context("Failed to set memory.max")?;
+        self.write_cgroup_file("memory.max", &memory_bytes.to_string())
+            .context("Failed to set memory.max")?;
 
         // Enable memory swap accounting (prevent swap escapes)
         self.write_cgroup_file(
@@ -165,18 +162,12 @@ impl CgroupJail {
         .context("Failed to set memory.swap.max")?;
 
         // 2. CPU quota: "25000 100000" (quota_us period_us)
-        self.write_cgroup_file(
-            "cpu.max",
-            &format!("{} {}", cpu_quota_us, cpu_period_us),
-        )
-        .context("Failed to set cpu.max")?;
+        self.write_cgroup_file("cpu.max", &format!("{} {}", cpu_quota_us, cpu_period_us))
+            .context("Failed to set cpu.max")?;
 
         // 3. PID limit: "20"
-        self.write_cgroup_file(
-            "pids.max",
-            &pids_max.to_string(),
-        )
-        .context("Failed to set pids.max")?;
+        self.write_cgroup_file("pids.max", &pids_max.to_string())
+            .context("Failed to set pids.max")?;
 
         tracing::info!(
             "[CGROUP] Applied limits to '{}': memory={}MB, cpu={}%, pids={}",
@@ -210,7 +201,10 @@ impl CgroupJail {
         }
 
         self.write_cgroup_file("cgroup.procs", &pid.to_string())
-            .context(format!("Failed to add PID {} to cgroup '{}'", pid, self.name))?;
+            .context(format!(
+                "Failed to add PID {} to cgroup '{}'",
+                pid, self.name
+            ))?;
 
         tracing::debug!("[CGROUP] Added PID {} to jail '{}'", pid, self.name);
         Ok(())
@@ -231,7 +225,8 @@ impl CgroupJail {
                 tracing::warn!(
                     "[CGROUP] Failed to remove cgroup '{}': {}. \
                      It will be cleaned up on next boot.",
-                    self.name, e
+                    self.name,
+                    e
                 );
                 return Ok(()); // Don't propagate — best-effort cleanup
             }

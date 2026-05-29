@@ -1,4 +1,4 @@
-﻿//! SANDBOX Configuration — User-saved custom rules
+//! SANDBOX Configuration — User-saved custom rules
 //!
 //! Loads sandbox.custom.toml for CUSTOM mode preferences.
 //! Format supports:
@@ -139,7 +139,8 @@ impl Config {
                         path.starts_with(prefix) && path.ends_with(suffix)
                     }
                 } else {
-                    let pattern_parts: Vec<&str> = rule.pattern.split('*').filter(|p| !p.is_empty()).collect();
+                    let pattern_parts: Vec<&str> =
+                        rule.pattern.split('*').filter(|p| !p.is_empty()).collect();
                     pattern_parts.iter().all(|p| path.contains(p))
                 }
             } else {

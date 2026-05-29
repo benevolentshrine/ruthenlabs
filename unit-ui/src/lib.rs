@@ -17,11 +17,11 @@
 //! let spinner = Spinner::new().label("Thinking...");
 //! ```
 
+pub mod animation;
 pub mod config;
-pub mod widgets;
 pub mod style;
 pub mod theme;
-pub mod animation;
+pub mod widgets;
 
 /// Convenience re-exports for all commonly used types.
 ///
@@ -29,11 +29,11 @@ pub mod animation;
 /// use unit_ui::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::widgets::*;
-    pub use crate::style::StyleToken;
+    pub use crate::animation::spinners;
     pub use crate::config::UnitConfig;
+    pub use crate::style::StyleToken;
     pub use crate::theme::palette;
     pub use crate::theme::providers;
     pub use crate::theme::themes;
-    pub use crate::animation::spinners;
+    pub use crate::widgets::*;
 }

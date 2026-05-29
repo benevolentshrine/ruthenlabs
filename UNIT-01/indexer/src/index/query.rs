@@ -1,7 +1,7 @@
 use std::io;
 
-use crate::index::storage::Storage;
 use crate::index::ripgrep_bridge::RipgrepBridge;
+use crate::index::storage::Storage;
 use crate::models::FileRecord;
 
 pub struct QueryEngine {
@@ -24,12 +24,7 @@ impl QueryEngine {
         // 1. Delegate heavy lifting to ripgrep
         // We use the current working directory as root for the bridge
         let root = std::env::current_dir()?;
-        let matching_paths = RipgrepBridge::search(
-            &root,
-            pattern,
-            path_filter,
-            lang_filter,
-        )?;
+        let matching_paths = RipgrepBridge::search(&root, pattern, path_filter, lang_filter)?;
 
         // 2. Hydrate metadata from Sled
         // We only fetch the records for the paths returned by ripgrep

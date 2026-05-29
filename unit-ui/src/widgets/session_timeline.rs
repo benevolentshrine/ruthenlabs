@@ -26,7 +26,12 @@ pub struct TimelineEntry<'a> {
 impl<'a> TimelineEntry<'a> {
     /// Creates a new timeline entry.
     pub fn new(timestamp: &'a str, icon: &'a str, title: &'a str, detail: &'a str) -> Self {
-        Self { timestamp, icon, title, detail }
+        Self {
+            timestamp,
+            icon,
+            title,
+            detail,
+        }
     }
 }
 
@@ -89,16 +94,22 @@ impl<'a> SessionTimeline<'a> {
 }
 
 impl Default for SessionTimeline<'_> {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Widget for SessionTimeline<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &SessionTimeline<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.width == 0 || area.height == 0 { return; }
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
 
         let dimmed = Style::default().fg(self.style.text_dim);
         let text = Style::default().fg(self.style.text);
@@ -106,7 +117,7 @@ impl Widget for &SessionTimeline<'_> {
         let line_color = Style::default().fg(self.style.text_dim);
 
         let gutter_width = 3u16; // " │ " for the timeline line
-        let ts_width = 10u16;    // fixed timestamp width
+        let ts_width = 10u16; // fixed timestamp width
         let content_x = area.x + gutter_width;
         let ts_x = content_x;
         let title_x = ts_x + ts_width + 1;
@@ -115,39 +126,76 @@ impl Widget for &SessionTimeline<'_> {
         let end = area.y + area.height;
 
         for entry in self.entries.iter().skip(self.scroll_offset as usize) {
-            if y >= end { break; }
+            if y >= end {
+                break;
+            }
 
             // Timeline connector
             let connector = Span::styled(" │ ", line_color);
-            connector.render(Rect { x: area.x, y, width: gutter_width, height: 1 }, buf);
+            connector.render(
+                Rect {
+                    x: area.x,
+                    y,
+                    width: gutter_width,
+                    height: 1,
+                },
+                buf,
+            );
 
             // Timestamp
             let ts = Span::styled(entry.timestamp, dimmed);
-            ts.render(Rect { x: content_x, y, width: ts_width, height: 1 }, buf);
+            ts.render(
+                Rect {
+                    x: content_x,
+                    y,
+                    width: ts_width,
+                    height: 1,
+                },
+                buf,
+            );
 
             // Icon + title
             let icon = Span::styled(entry.icon, accent);
             let title = Span::styled(entry.title, text);
             let title_line = Line::from(vec![icon, Span::styled(" ", text), title]);
-            title_line.render(Rect { x: title_x, y, width: area.width.saturating_sub(title_x - area.x), height: 1 }, buf);
+            title_line.render(
+                Rect {
+                    x: title_x,
+                    y,
+                    width: area.width.saturating_sub(title_x - area.x),
+                    height: 1,
+                },
+                buf,
+            );
             y += 1;
 
             // Optional detail (indented)
             if !entry.detail.is_empty() && y < end {
                 let detail = Span::styled(format!("   {}", entry.detail), dimmed);
-                detail.render(Rect {
-                    x: ts_x,
-                    y,
-                    width: area.width.saturating_sub(ts_x - area.x),
-                    height: 1,
-                }, buf);
+                detail.render(
+                    Rect {
+                        x: ts_x,
+                        y,
+                        width: area.width.saturating_sub(ts_x - area.x),
+                        height: 1,
+                    },
+                    buf,
+                );
                 y += 1;
             }
 
             // Separator between entries
             if y < end {
                 let blank = Span::styled("", dimmed);
-                blank.render(Rect { x: area.x, y, width: area.width, height: 1 }, buf);
+                blank.render(
+                    Rect {
+                        x: area.x,
+                        y,
+                        width: area.width,
+                        height: 1,
+                    },
+                    buf,
+                );
                 y += 1;
             }
         }

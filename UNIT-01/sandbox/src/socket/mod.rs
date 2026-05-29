@@ -1,4 +1,4 @@
-﻿//! SANDBOX Socket — Pure Execution Bodyguard
+//! SANDBOX Socket — Pure Execution Bodyguard
 //!
 //! The sandbox daemon is stripped down to a pure Command Execution service.
 //! File editing, patching, and backups are handled by the Go Orchestrator.
@@ -59,7 +59,6 @@ pub async fn run_daemon(socket_path: Option<PathBuf>) -> Result<()> {
 
 #[cfg(unix)]
 async fn run_unix_daemon(path: PathBuf) -> Result<()> {
-    
     use tokio::net::UnixListener;
 
     if let Some(parent) = path.parent() {
@@ -105,13 +104,19 @@ async fn run_unix_daemon(path: PathBuf) -> Result<()> {
 }
 
 #[cfg(unix)]
-async fn handle_unix_connection(mut stream: tokio::net::UnixStream, state: SharedState) -> Result<()> {
+async fn handle_unix_connection(
+    mut stream: tokio::net::UnixStream,
+    state: SharedState,
+) -> Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     let mut reader = BufReader::new(&mut stream);
     let mut line = String::new();
-    
-    let n = reader.read_line(&mut line).await.context("Failed to read from socket")?;
+
+    let n = reader
+        .read_line(&mut line)
+        .await
+        .context("Failed to read from socket")?;
 
     if n == 0 {
         return Ok(());
@@ -121,7 +126,7 @@ async fn handle_unix_connection(mut stream: tokio::net::UnixStream, state: Share
 
     let mut response_bytes = serde_json::to_vec(&response)?;
     response_bytes.push(b'\n');
-    
+
     stream.write_all(&response_bytes).await?;
     stream.flush().await?;
 
@@ -161,7 +166,10 @@ async fn run_named_pipe_daemon() -> Result<()> {
 }
 
 #[cfg(windows)]
-async fn handle_tcp_connection(mut stream: tokio::net::TcpStream, state: SharedState) -> Result<()> {
+async fn handle_tcp_connection(
+    mut stream: tokio::net::TcpStream,
+    state: SharedState,
+) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut buffer = vec![0u8; MAX_REQUEST_SIZE];
@@ -227,13 +235,18 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
     let audit_id = uuid::Uuid::new_v4();
 
     // Resolve command and working directory
-    let cmd = request.params.get("cmd")
+    let cmd = request
+        .params
+        .get("cmd")
         .and_then(|v| v.as_str())
         .or_else(|| request.params.get("command").and_then(|v| v.as_str()));
 
     if let Some(shell_cmd) = cmd {
         let ws_state = state.lock().await;
-        let workspace = ws_state.workspace.clone().unwrap_or_else(|| PathBuf::from("."));
+        let workspace = ws_state
+            .workspace
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
         let mode_str = ws_state.security_mode.clone();
         drop(ws_state);
 
@@ -318,7 +331,11 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
             }
         } else if !output.status.success() {
             // Non-zero exit but no signal — could be Landlock file write block (EACCES)
-            if exit_code == 1 && (stderr.contains("Permission denied") || stderr.contains("EACCES") || stderr.contains("Operation not permitted")) {
+            if exit_code == 1
+                && (stderr.contains("Permission denied")
+                    || stderr.contains("EACCES")
+                    || stderr.contains("Operation not permitted"))
+            {
                 Some(format!(
                     "❌ Sandbox Violation: Filesystem write blocked. \
                      Directive: Write operations are restricted to [{}] in 'Run' mode. \
@@ -365,7 +382,11 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
     }
 
     // Fallback: WASM execution via cage
-    let code_b64 = request.params.get("code").and_then(|v| v.as_str()).unwrap_or("");
+    let code_b64 = request
+        .params
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let code_bytes = match decode_base64(code_b64) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -397,12 +418,21 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
         };
     }
 
-    let policy_str = request.params.get("policy").and_then(|v| v.as_str()).unwrap_or("strict").to_string();
+    let policy_str = request
+        .params
+        .get("policy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("strict")
+        .to_string();
     let path = temp_file.clone();
 
     let verdict = tokio::task::spawn_blocking(move || {
-        crate::cage::run_cage(path, crate::cage::policy::SecurityMode::from(policy_str.as_str()), None)
-            .map(|r| r.verdict)
+        crate::cage::run_cage(
+            path,
+            crate::cage::policy::SecurityMode::from(policy_str.as_str()),
+            None,
+        )
+        .map(|r| r.verdict)
     })
     .await
     .unwrap_or_else(|e| Err(anyhow::anyhow!("Execution panicked: {}", e)));
@@ -498,7 +528,14 @@ async fn handle_set_workspace(request: JsonRpcRequest, state: &SharedState) -> J
     if let Some(path) = path_str {
         let workspace = PathBuf::from(path);
         if !workspace.exists() || !workspace.is_dir() {
-            return error_response(request.id, -32602, &format!("Invalid workspace: {} (must be an existing directory)", path));
+            return error_response(
+                request.id,
+                -32602,
+                &format!(
+                    "Invalid workspace: {} (must be an existing directory)",
+                    path
+                ),
+            );
         }
 
         let mut daemon_state = state.lock().await;
@@ -524,11 +561,19 @@ async fn handle_set_workspace(request: JsonRpcRequest, state: &SharedState) -> J
 
 /// Set the security policy mode: lock (Hard), run (Mid), root (Audit).
 async fn handle_set_policy(request: JsonRpcRequest, state: &SharedState) -> JsonRpcResponse {
-    let mode = request.params.get("mode").and_then(|v| v.as_str()).unwrap_or("run");
+    let mode = request
+        .params
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("run");
 
     let valid_modes = ["lock", "run", "root"];
     if !valid_modes.contains(&mode) {
-        return error_response(request.id, -32602, &format!("Invalid mode '{}'. Must be one of: lock, run, root", mode));
+        return error_response(
+            request.id,
+            -32602,
+            &format!("Invalid mode '{}'. Must be one of: lock, run, root", mode),
+        );
     }
 
     // Map legacy names to SecurityMode enum values used by cage::policy::From<&str>
@@ -542,12 +587,19 @@ async fn handle_set_policy(request: JsonRpcRequest, state: &SharedState) -> Json
     daemon_state.security_mode = internal_mode.to_string();
     drop(daemon_state);
 
-    tracing::info!("Security mode set to: {} (mapped from {})", internal_mode, mode);
+    tracing::info!(
+        "Security mode set to: {} (mapped from {})",
+        internal_mode,
+        mode
+    );
 
     JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         result: Some(ExecuteResult {
-            verdict: format!("Security mode set to: {} (mapped from {})", internal_mode, mode),
+            verdict: format!(
+                "Security mode set to: {} (mapped from {})",
+                internal_mode, mode
+            ),
             audit_ref: uuid::Uuid::new_v4().to_string(),
         }),
         error: None,
@@ -626,8 +678,14 @@ fn decode_base64(s: &str) -> Result<Vec<u8>> {
     };
 
     for chunk in chars.chunks(4) {
-        let b0 = chunk.first().copied().ok_or_else(|| anyhow::anyhow!("Invalid base64"))?;
-        let b1 = chunk.get(1).copied().ok_or_else(|| anyhow::anyhow!("Invalid base64"))?;
+        let b0 = chunk
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("Invalid base64"))?;
+        let b1 = chunk
+            .get(1)
+            .copied()
+            .ok_or_else(|| anyhow::anyhow!("Invalid base64"))?;
 
         let b = [
             decode_char(b0).ok_or_else(|| anyhow::anyhow!("Invalid base64 char"))?,

@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
@@ -36,9 +38,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
 
     let sessions = [
-        ("Search results for 'auth middleware'", "Found 12 relevant files across 3 repositories"),
+        (
+            "Search results for 'auth middleware'",
+            "Found 12 relevant files across 3 repositories",
+        ),
         ("1M token context loaded", "Entire codebase indexed in 4.2s"),
-        ("Google Search grounding", "Latest docs for ratatui 0.29 fetched"),
+        (
+            "Google Search grounding",
+            "Latest docs for ratatui 0.29 fetched",
+        ),
     ];
 
     let entries = [
@@ -91,10 +99,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
                 match key.code {
                     crossterm::event::KeyCode::Char('q') => break,
-                    crossterm::event::KeyCode::Up => { selected = selected.saturating_sub(1); }
-                    crossterm::event::KeyCode::Down => { selected = (selected + 1).min(sessions.len() as u16 - 1); }
+                    crossterm::event::KeyCode::Up => {
+                        selected = selected.saturating_sub(1);
+                    }
+                    crossterm::event::KeyCode::Down => {
+                        selected = (selected + 1).min(sessions.len() as u16 - 1);
+                    }
                     crossterm::event::KeyCode::Char(c) => input.push(c),
-                    crossterm::event::KeyCode::Backspace => { input.pop(); }
+                    crossterm::event::KeyCode::Backspace => {
+                        input.pop();
+                    }
                     _ => {}
                 }
             }

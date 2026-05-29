@@ -1,4 +1,4 @@
-﻿//! SANDBOX Cage (Open-Core)
+//! SANDBOX Cage (Open-Core)
 //!
 //! Minimal execution core. File classification + runner routing only.
 //! No WASM, no audit chain, no threat DB, no quarantine.
@@ -8,10 +8,10 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-pub mod policy;
-pub mod verdict;
-pub mod sandbox;
 pub mod cgroups;
+pub mod policy;
+pub mod sandbox;
+pub mod verdict;
 
 use policy::SecurityMode;
 use verdict::CageResult;
@@ -53,7 +53,10 @@ struct AuditRingBuffer {
 
 impl AuditRingBuffer {
     fn new(capacity: usize) -> Self {
-        Self { entries: VecDeque::with_capacity(capacity), capacity }
+        Self {
+            entries: VecDeque::with_capacity(capacity),
+            capacity,
+        }
     }
     fn push(&mut self, entry: AuditEntry) {
         if self.entries.len() >= self.capacity {
@@ -61,7 +64,9 @@ impl AuditRingBuffer {
         }
         self.entries.push_back(entry);
     }
-    fn entries(&self) -> &VecDeque<AuditEntry> { &self.entries }
+    fn entries(&self) -> &VecDeque<AuditEntry> {
+        &self.entries
+    }
 }
 
 fn get_or_init_ring() -> &'static Mutex<Option<AuditRingBuffer>> {
@@ -100,7 +105,12 @@ pub fn run_cage(input: PathBuf, mode: SecurityMode, _fuel: Option<u64>) -> Resul
     use crate::classifier::FileClassifier;
     let request_id = uuid::Uuid::new_v4();
 
-    tracing::info!("[{}] Starting cage execution: {} with mode {:?}", request_id, input.display(), mode);
+    tracing::info!(
+        "[{}] Starting cage execution: {} with mode {:?}",
+        request_id,
+        input.display(),
+        mode
+    );
 
     if !input.exists() {
         let reason = format!("Input file not found: {}", input.display());
@@ -111,7 +121,10 @@ pub fn run_cage(input: PathBuf, mode: SecurityMode, _fuel: Option<u64>) -> Resul
     const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
     let metadata = std::fs::metadata(&input)?;
     if metadata.len() > MAX_FILE_SIZE {
-        let reason = format!("File too large: {}MB. Limit is 100MB.", metadata.len() / 1024 / 1024);
+        let reason = format!(
+            "File too large: {}MB. Limit is 100MB.",
+            metadata.len() / 1024 / 1024
+        );
         log_intercept(Severity::High, "EXECUTE_BLOCKED", &reason, request_id);
         return Ok(CageResult::blocked(&reason));
     }
@@ -132,7 +145,12 @@ pub fn run_cage(input: PathBuf, mode: SecurityMode, _fuel: Option<u64>) -> Resul
             Ok(CageResult::blocked(&reason))
         }
         Ok(RunnerVerdict::Timeout) => {
-            log_intercept(Severity::High, "EXECUTE_TIMEOUT", "Fuel exhausted", request_id);
+            log_intercept(
+                Severity::High,
+                "EXECUTE_TIMEOUT",
+                "Fuel exhausted",
+                request_id,
+            );
             Ok(CageResult::timeout())
         }
         Ok(RunnerVerdict::Unsupported { reason }) => {
@@ -158,7 +176,10 @@ pub fn check(input: PathBuf) -> Result<()> {
     const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
     let metadata = std::fs::metadata(&input)?;
     if metadata.len() > MAX_FILE_SIZE {
-        return Err(anyhow::anyhow!("File too large: {}MB.", metadata.len() / 1024 / 1024));
+        return Err(anyhow::anyhow!(
+            "File too large: {}MB.",
+            metadata.len() / 1024 / 1024
+        ));
     }
 
     let classifier = FileClassifier::new();
@@ -176,7 +197,12 @@ pub fn check(input: PathBuf) -> Result<()> {
         println!("  {}:", runner_name);
         for status in statuses {
             let s = if status.available { "✓" } else { "✗" };
-            println!("    {} {} ({})", s, status.name, status.version.as_deref().unwrap_or("unknown"));
+            println!(
+                "    {} {} ({})",
+                s,
+                status.name,
+                status.version.as_deref().unwrap_or("unknown")
+            );
         }
     }
 

@@ -133,7 +133,9 @@ fn format_duration(d: Duration) -> String {
 }
 
 impl Widget for ThinkingBlock<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &ThinkingBlock<'_> {
@@ -170,14 +172,19 @@ impl Widget for &ThinkingBlock<'_> {
         ];
 
         if let Some(dur) = self.elapsed {
-            header_parts.push(Span::styled(
-                format!(" ({})", format_duration(dur)),
-                dimmed,
-            ));
+            header_parts.push(Span::styled(format!(" ({})", format_duration(dur)), dimmed));
         }
 
         let header_line = Line::from(header_parts);
-        header_line.render(Rect { x: area.x, y: area.y, width: area.width, height: 1 }, buf);
+        header_line.render(
+            Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: 1,
+            },
+            buf,
+        );
 
         // Render content when expanded
         if self.expanded && !self.content.is_empty() && area.height > 2 {

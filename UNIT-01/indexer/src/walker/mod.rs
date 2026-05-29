@@ -1,11 +1,11 @@
-﻿use crate::models::FileRecord;
+use crate::models::FileRecord;
+use chrono::Utc;
+use content_inspector::{inspect, ContentType};
 use ignore::{WalkBuilder, WalkState};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use tracing::{error, info, warn};
-use chrono::Utc;
-use content_inspector::{inspect, ContentType};
-use std::io::Read;
 
 pub struct Walker {
     root_path: PathBuf,
@@ -20,13 +20,13 @@ impl Walker {
 
     pub fn walk(&self) -> Vec<FileRecord> {
         info!("Starting directory walk at: {:?}", self.root_path);
-        
+
         let (tx, rx) = mpsc::channel();
-        
+
         // Use WalkBuilder from ignore crate
         let walker = WalkBuilder::new(&self.root_path)
-            .hidden(false) 
-            .ignore(false) 
+            .hidden(false)
+            .ignore(false)
             .git_ignore(true) // Read .gitignore
             .add_custom_ignore_filename(".indexerignore")
             .build_parallel();
@@ -34,7 +34,7 @@ impl Walker {
         walker.run(|| {
             let tx = tx.clone();
             let root_path = self.root_path.clone();
-            
+
             Box::new(move |result| {
                 let entry = match result {
                     Ok(entry) => entry,
@@ -45,7 +45,7 @@ impl Walker {
                 };
 
                 let path = entry.path();
-                
+
                 // Skip directories
                 if path.is_dir() {
                     return WalkState::Continue;
@@ -56,7 +56,7 @@ impl Walker {
                     Ok(Some(record)) => {
                         let _ = tx.send(record);
                     }
-                    Ok(None) => {},
+                    Ok(None) => {}
                     Err(e) => {
                         error!("Failed to process file {:?}: {}", path, e);
                     }
@@ -78,7 +78,10 @@ impl Walker {
     }
 }
 
-pub fn process_file(path: &Path, root_path: &Path) -> Result<Option<FileRecord>, Box<dyn std::error::Error>> {
+pub fn process_file(
+    path: &Path,
+    root_path: &Path,
+) -> Result<Option<FileRecord>, Box<dyn std::error::Error>> {
     let metadata = match path.symlink_metadata() {
         Ok(m) => m,
         Err(e) => {
@@ -86,30 +89,33 @@ pub fn process_file(path: &Path, root_path: &Path) -> Result<Option<FileRecord>,
             return Ok(None);
         }
     };
-    
+
     let is_symlink = metadata.file_type().is_symlink();
-    
+
     let path_str = path.to_string_lossy().to_string();
-    let relative_path = path.strip_prefix(root_path)
+    let relative_path = path
+        .strip_prefix(root_path)
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();
-        
+
     let size_bytes = metadata.len();
-    
-    let mtime_unix = metadata.modified()
+
+    let mtime_unix = metadata
+        .modified()
         .ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-        
-    let extension = path.extension()
+
+    let extension = path
+        .extension()
         .map(|e| e.to_string_lossy().to_string())
         .map(|e| format!(".{}", e))
         .unwrap_or_default();
-        
+
     let mut is_binary = false;
-    
+
     // Check if binary and hash
     let hash = if size_bytes > 0 {
         let mut buffer = [0; 1024];
@@ -124,7 +130,7 @@ pub fn process_file(path: &Path, root_path: &Path) -> Result<Option<FileRecord>,
     } else {
         String::from("open_core_skipped")
     };
-    
+
     let language = extension_to_language(&extension);
 
     #[cfg(unix)]
@@ -132,7 +138,7 @@ pub fn process_file(path: &Path, root_path: &Path) -> Result<Option<FileRecord>,
         use std::os::unix::fs::PermissionsExt;
         format!("{:o}", metadata.permissions().mode() & 0o777)
     };
-    
+
     #[cfg(not(unix))]
     let permissions = String::from("644");
 
@@ -168,7 +174,8 @@ fn extension_to_language(ext: &str) -> String {
         ".html" => "HTML",
         ".css" => "CSS",
         _ => "Unknown",
-    }.to_string()
+    }
+    .to_string()
 }
 
 pub struct ProjectWalker {
@@ -192,14 +199,16 @@ impl ProjectWalker {
             let path = entry.path();
             if let Ok(rel_path) = path.strip_prefix(&self.root_path) {
                 let depth = rel_path.components().count();
-                if depth == 0 { continue; }
-                
+                if depth == 0 {
+                    continue;
+                }
+
                 let indent = "  ".repeat(depth - 1);
                 let name = rel_path.file_name().unwrap_or_default().to_string_lossy();
                 let prefix = if path.is_dir() { "📁" } else { "📄" };
-                
+
                 map.push_str(&format!("{} {} {}\n", indent, prefix, name));
-                
+
                 if map.len() > 10000 {
                     map.push_str("... (truncated)\n");
                     break;

@@ -1,6 +1,6 @@
-use std::process::Command;
 use std::io;
 use std::path::Path;
+use std::process::Command;
 
 pub struct RipgrepBridge;
 
@@ -36,8 +36,8 @@ impl RipgrepBridge {
 
         // 4. Output options
         cmd.arg("-l") // Only print filenames
-           .arg("--no-ignore") // Ignore .gitignore for a more complete index search
-           .arg(root);
+            .arg("--no-ignore") // Ignore .gitignore for a more complete index search
+            .arg(root);
 
         let output = cmd.output().map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
@@ -52,7 +52,10 @@ impl RipgrepBridge {
             if output.status.code() == Some(1) {
                 return Ok(Vec::new());
             }
-            return Err(io::Error::other( format!("ripgrep failed with status {}", output.status)));
+            return Err(io::Error::other(format!(
+                "ripgrep failed with status {}",
+                output.status
+            )));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

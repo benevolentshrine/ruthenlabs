@@ -20,7 +20,9 @@ pub fn arc() -> Vec<&'static str> {
 
 /// 12-frame clock face spinner (uses emoji).
 pub fn clock() -> Vec<&'static str> {
-    vec!["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
+    vec![
+        "🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛",
+    ]
 }
 
 /// 8-frame braille bounce spinner.

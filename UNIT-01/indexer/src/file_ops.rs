@@ -1,4 +1,3 @@
-﻿
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
@@ -23,12 +22,15 @@ impl IndexManager {
     /// Batch write records to the index.
     /// Replaces the legacy atomic_write_index with Sled batch updates.
     pub fn write_index(&self, records: Vec<FileRecord>) -> Result<(), Box<dyn std::error::Error>> {
-        let _guard = self.write_lock.lock()
+        let _guard = self
+            .write_lock
+            .lock()
             .map_err(|e| format!("Write mutex poisoned: {}", e))?;
 
         info!("Indexing {} files into Sled...", records.len());
 
-        self.storage.batch_insert(records)
+        self.storage
+            .batch_insert(records)
             .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
         Ok(())

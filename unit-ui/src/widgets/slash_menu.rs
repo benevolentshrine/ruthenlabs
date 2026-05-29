@@ -203,7 +203,8 @@ impl<'a> SlashMenu<'a> {
         if self.option_mode {
             return None;
         }
-        self.commands.get(self.selected.min(self.commands.len().saturating_sub(1)))
+        self.commands
+            .get(self.selected.min(self.commands.len().saturating_sub(1)))
     }
 
     /// Returns the currently selected option, if in option mode.
@@ -212,8 +213,13 @@ impl<'a> SlashMenu<'a> {
         if !self.option_mode {
             return None;
         }
-        let idx = if self.selected == 0 { return None } else { self.selected - 1 };
-        self.options.get(idx.min(self.options.len().saturating_sub(1)))
+        let idx = if self.selected == 0 {
+            return None;
+        } else {
+            self.selected - 1
+        };
+        self.options
+            .get(idx.min(self.options.len().saturating_sub(1)))
     }
 
     /// Returns `true` when "Back" is the selected item in option mode.
@@ -223,7 +229,8 @@ impl<'a> SlashMenu<'a> {
 
     fn items(&self) -> Vec<MenuItem<'a>> {
         if self.option_mode {
-            let mut items: Vec<MenuItem> = self.matches_options()
+            let mut items: Vec<MenuItem> = self
+                .matches_options()
                 .into_iter()
                 .map(MenuItem::Option)
                 .collect();
@@ -271,7 +278,9 @@ enum MenuItem<'a> {
 }
 
 impl Widget for SlashMenu<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &SlashMenu<'_> {
@@ -284,8 +293,6 @@ impl Widget for &SlashMenu<'_> {
         if items.is_empty() {
             return;
         }
-
-
 
         let accent = Style::default().fg(self.style.accent);
         let text_dim = Style::default().fg(self.style.text_dim);
@@ -301,7 +308,12 @@ impl Widget for &SlashMenu<'_> {
         let x = area.x;
         let y = area.y;
 
-        let popup_area = Rect { x, y, width: popup_width, height: popup_height };
+        let popup_area = Rect {
+            x,
+            y,
+            width: popup_width,
+            height: popup_height,
+        };
 
         if popup_area.right() > area.right() || popup_area.bottom() > area.bottom() {
             return;
@@ -354,24 +366,18 @@ impl Widget for &SlashMenu<'_> {
             let prefix = if is_selected { "▶ " } else { "  " };
             let line = match item {
                 MenuItem::Back => {
-                    Line::from(vec![
-                        Span::styled(format!("{}.. Back", prefix), name_style),
-                    ])
+                    Line::from(vec![Span::styled(format!("{}.. Back", prefix), name_style)])
                 }
-                MenuItem::Command(cmd) => {
-                    Line::from(vec![
-                        Span::styled(format!("{}{}", prefix, cmd.name), name_style),
-                        Span::styled(" — ", desc_style),
-                        Span::styled(cmd.description, desc_style),
-                    ])
-                }
-                MenuItem::Option(opt) => {
-                    Line::from(vec![
-                        Span::styled(format!("{}{}", prefix, opt.name), name_style),
-                        Span::styled(" — ", desc_style),
-                        Span::styled(opt.description, desc_style),
-                    ])
-                }
+                MenuItem::Command(cmd) => Line::from(vec![
+                    Span::styled(format!("{}{}", prefix, cmd.name), name_style),
+                    Span::styled(" — ", desc_style),
+                    Span::styled(cmd.description, desc_style),
+                ]),
+                MenuItem::Option(opt) => Line::from(vec![
+                    Span::styled(format!("{}{}", prefix, opt.name), name_style),
+                    Span::styled(" — ", desc_style),
+                    Span::styled(opt.description, desc_style),
+                ]),
             };
             line.render(line_area, buf);
             y_cursor += 1;
@@ -416,14 +422,23 @@ mod tests {
 
         let items = menu.items();
         assert_eq!(items.len(), 3, "items should be [Back, opt1, opt2]");
-        assert!(matches!(items[0], MenuItem::Back), "first item must be Back");
-        assert!(matches!(items[1], MenuItem::Option(_)), "second item is first option");
-        assert!(matches!(items[2], MenuItem::Option(_)), "third item is second option");
+        assert!(
+            matches!(items[0], MenuItem::Back),
+            "first item must be Back"
+        );
+        assert!(
+            matches!(items[1], MenuItem::Option(_)),
+            "second item is first option"
+        );
+        assert!(
+            matches!(items[2], MenuItem::Option(_)),
+            "third item is second option"
+        );
 
         // Down arrow in example: slash_selected = (0 + 1) % 3 = 1
         let menu = SlashMenu::new(&cmds)
             .filter("")
-            .selected(1)  // after pressing Down
+            .selected(1) // after pressing Down
             .visible(true)
             .max_visible(10)
             .show_options(&opts);
@@ -445,26 +460,38 @@ mod tests {
 
         // selected=0 => Back must be selected
         let menu = SlashMenu::new(&cmds)
-            .filter("").selected(0).visible(true).max_visible(10)
+            .filter("")
+            .selected(0)
+            .visible(true)
+            .max_visible(10)
             .show_options(&opts);
         assert_eq!(menu.selected, 0);
         assert!(matches!(menu.items()[0], MenuItem::Back));
 
         // selected=1 => first option (Dracula) must be selected
         let menu = SlashMenu::new(&cmds)
-            .filter("").selected(1).visible(true).max_visible(10)
+            .filter("")
+            .selected(1)
+            .visible(true)
+            .max_visible(10)
             .show_options(&opts);
         assert_eq!(menu.selected, 1);
 
         // selected=2 => second option (Nord) must be selected
         let menu = SlashMenu::new(&cmds)
-            .filter("").selected(2).visible(true).max_visible(10)
+            .filter("")
+            .selected(2)
+            .visible(true)
+            .max_visible(10)
             .show_options(&opts);
         assert_eq!(menu.selected, 2);
 
         // selected=3 => third option (Solarized) must be selected
         let menu = SlashMenu::new(&cmds)
-            .filter("").selected(3).visible(true).max_visible(10)
+            .filter("")
+            .selected(3)
+            .visible(true)
+            .max_visible(10)
             .show_options(&opts);
         assert_eq!(menu.selected, 3);
     }

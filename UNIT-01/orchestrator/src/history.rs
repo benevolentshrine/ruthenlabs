@@ -9,22 +9,30 @@ pub struct History {
 
 impl History {
     pub fn new() -> Self {
-        Self { messages: Vec::with_capacity(MAX_HISTORY) }
+        Self {
+            messages: Vec::with_capacity(MAX_HISTORY),
+        }
     }
 
     pub fn append(&mut self, m: Message) {
         if self.messages.len() >= MAX_HISTORY {
             match self.messages.len() {
                 0 => {}
-                1 => { self.messages.remove(0); }
-                _ => { self.messages.drain(0..2); }
+                1 => {
+                    self.messages.remove(0);
+                }
+                _ => {
+                    self.messages.drain(0..2);
+                }
             }
         }
         self.messages.push(m);
     }
 
     pub fn compact(&mut self, summary: &str, count: usize) {
-        if count > self.messages.len() { return; }
+        if count > self.messages.len() {
+            return;
+        }
         let summary_msg = Message {
             role: "system".to_string(),
             content: format!("📦 CONTEXT COMPACTED: {}", summary),
@@ -63,7 +71,8 @@ impl History {
     }
 
     pub fn ollama_messages(&self) -> Vec<OllamaMessage> {
-        self.messages.iter()
+        self.messages
+            .iter()
             .filter(|m| m.content != "Thinking…")
             .map(|m| OllamaMessage {
                 role: m.role.clone(),

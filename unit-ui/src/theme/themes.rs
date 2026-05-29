@@ -73,7 +73,9 @@ pub fn all() -> Vec<Theme> {
 ///
 /// Returns `None` if no theme matches.
 pub fn from_name(name: &str) -> Option<Theme> {
-    all().into_iter().find(|t| t.name.eq_ignore_ascii_case(name))
+    all()
+        .into_iter()
+        .find(|t| t.name.eq_ignore_ascii_case(name))
 }
 
 pub fn dracula() -> Theme {

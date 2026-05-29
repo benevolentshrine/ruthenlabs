@@ -1,4 +1,4 @@
-﻿//! SANDBOX Hash Database — Local malware hash detection
+//! SANDBOX Hash Database — Local malware hash detection
 //!
 //! Offline file of known malware hashes. SHA-256 hash lookup.
 //! No cloud. No API. Fully offline security.
@@ -64,7 +64,9 @@ impl std::fmt::Display for HashStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HashStatus::Clean => write!(f, "Clean"),
-            HashStatus::KnownBad(entry) => write!(f, "KNOWN BAD: {} ({})", entry.name, entry.family),
+            HashStatus::KnownBad(entry) => {
+                write!(f, "KNOWN BAD: {} ({})", entry.name, entry.family)
+            }
         }
     }
 }
@@ -132,8 +134,6 @@ impl HashDB {
         Ok(db)
     }
 
-
-
     /// Save hash database to file
     pub fn save(&self) -> Result<()> {
         let path = default_hashdb_path();
@@ -144,8 +144,8 @@ impl HashDB {
                 .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
         }
 
-        let content = serde_json::to_string_pretty(self)
-            .context("Failed to serialize hash database")?;
+        let content =
+            serde_json::to_string_pretty(self).context("Failed to serialize hash database")?;
 
         std::fs::write(&path, content)
             .with_context(|| format!("Failed to write hash database: {}", path.display()))?;
@@ -190,7 +190,6 @@ impl HashDB {
         }
     }
 
-
     /// Get all entries as sorted vec
     pub fn entries_sorted(&self) -> Vec<(&String, &HashEntry)> {
         let mut entries: Vec<_> = self.entries.iter().collect();
@@ -201,16 +200,24 @@ impl HashDB {
     /// Get statistics
     pub fn stats(&self) -> HashDBStats {
         let total = self.entries.len();
-        let critical = self.entries.values()
+        let critical = self
+            .entries
+            .values()
             .filter(|e| matches!(e.severity, Severity::Critical))
             .count();
-        let high = self.entries.values()
+        let high = self
+            .entries
+            .values()
             .filter(|e| matches!(e.severity, Severity::High))
             .count();
-        let medium = self.entries.values()
+        let medium = self
+            .entries
+            .values()
             .filter(|e| matches!(e.severity, Severity::Medium))
             .count();
-        let low = self.entries.values()
+        let low = self
+            .entries
+            .values()
             .filter(|e| matches!(e.severity, Severity::Low))
             .count();
 
@@ -350,12 +357,15 @@ mod tests {
     #[test]
     fn test_remove() {
         let mut db = HashDB::new();
-        db.add("abc123", HashEntry {
-            name: "Test".to_string(),
-            severity: Severity::Low,
-            family: "test".to_string(),
-            added: "2024-01-15".to_string(),
-        });
+        db.add(
+            "abc123",
+            HashEntry {
+                name: "Test".to_string(),
+                severity: Severity::Low,
+                family: "test".to_string(),
+                added: "2024-01-15".to_string(),
+            },
+        );
 
         assert!(db.remove("abc123"));
         assert!(!db.remove("abc123"));
@@ -364,12 +374,15 @@ mod tests {
     #[test]
     fn test_check_hash() {
         let mut db = HashDB::new();
-        db.add("deadbeef", HashEntry {
-            name: "BadHash".to_string(),
-            severity: Severity::Critical,
-            family: "malware".to_string(),
-            added: "2024-01-15".to_string(),
-        });
+        db.add(
+            "deadbeef",
+            HashEntry {
+                name: "BadHash".to_string(),
+                severity: Severity::Critical,
+                family: "malware".to_string(),
+                added: "2024-01-15".to_string(),
+            },
+        );
 
         let status = db.check_hash("deadbeef");
         assert!(matches!(status, HashStatus::KnownBad(_)));
@@ -381,26 +394,30 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut db = HashDB::new();
-        db.add("h1", HashEntry {
-            name: "Crit".to_string(),
-            severity: Severity::Critical,
-            family: "test".to_string(),
-            added: "2024-01-15".to_string(),
-        });
-        db.add("h2", HashEntry {
-            name: "High".to_string(),
-            severity: Severity::High,
-            family: "test".to_string(),
-            added: "2024-01-15".to_string(),
-        });
+        db.add(
+            "h1",
+            HashEntry {
+                name: "Crit".to_string(),
+                severity: Severity::Critical,
+                family: "test".to_string(),
+                added: "2024-01-15".to_string(),
+            },
+        );
+        db.add(
+            "h2",
+            HashEntry {
+                name: "High".to_string(),
+                severity: Severity::High,
+                family: "test".to_string(),
+                added: "2024-01-15".to_string(),
+            },
+        );
 
         let stats = db.stats();
         assert_eq!(stats.total, 2);
         assert_eq!(stats.critical, 1);
         assert_eq!(stats.high, 1);
     }
-
-
 
     #[test]
     fn test_hash_status_display() {

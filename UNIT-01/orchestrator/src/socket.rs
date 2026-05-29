@@ -40,7 +40,10 @@ pub async fn run_uds_listener(tx: UnboundedSender<SiblingMessage>) {
 
     if let Some(parent) = socket_path.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
-            eprintln!("[orchestrator] Failed to create socket directory {:?}: {}", parent, e);
+            eprintln!(
+                "[orchestrator] Failed to create socket directory {:?}: {}",
+                parent, e
+            );
             return;
         }
     }
@@ -52,7 +55,10 @@ pub async fn run_uds_listener(tx: UnboundedSender<SiblingMessage>) {
     let listener = match UnixListener::bind(&socket_path) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[orchestrator] Failed to bind UDS listener at {:?}: {}", socket_path, e);
+            eprintln!(
+                "[orchestrator] Failed to bind UDS listener at {:?}: {}",
+                socket_path, e
+            );
             return;
         }
     };
@@ -73,7 +79,10 @@ pub async fn run_uds_listener(tx: UnboundedSender<SiblingMessage>) {
 }
 
 #[cfg(unix)]
-async fn handle_unix_connection(stream: tokio::net::UnixStream, tx: UnboundedSender<SiblingMessage>) {
+async fn handle_unix_connection(
+    stream: tokio::net::UnixStream,
+    tx: UnboundedSender<SiblingMessage>,
+) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
 
@@ -97,7 +106,10 @@ async fn handle_unix_connection(stream: tokio::net::UnixStream, tx: UnboundedSen
                         let _ = tx.send(msg);
                     }
                     Err(e) => {
-                        eprintln!("[orchestrator] Failed to parse NDJSON line: {}  line={:?}", e, trimmed);
+                        eprintln!(
+                            "[orchestrator] Failed to parse NDJSON line: {}  line={:?}",
+                            e, trimmed
+                        );
                     }
                 }
             }
@@ -119,13 +131,19 @@ pub async fn run_uds_listener(tx: UnboundedSender<SiblingMessage>) {
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[orchestrator] Failed to bind TCP listener on {}: {}", addr, e);
+            eprintln!(
+                "[orchestrator] Failed to bind TCP listener on {}: {}",
+                addr, e
+            );
             return;
         }
     };
 
     let local_addr = listener.local_addr().unwrap();
-    eprintln!("[orchestrator] TCP listener ready on {} (Unix sockets not available on this platform)", local_addr);
+    eprintln!(
+        "[orchestrator] TCP listener ready on {} (Unix sockets not available on this platform)",
+        local_addr
+    );
 
     loop {
         match listener.accept().await {
@@ -165,7 +183,10 @@ async fn handle_tcp_connection(stream: tokio::net::TcpStream, tx: UnboundedSende
                         let _ = tx.send(msg);
                     }
                     Err(e) => {
-                        eprintln!("[orchestrator] Failed to parse NDJSON line: {}  line={:?}", e, trimmed);
+                        eprintln!(
+                            "[orchestrator] Failed to parse NDJSON line: {}  line={:?}",
+                            e, trimmed
+                        );
                     }
                 }
             }

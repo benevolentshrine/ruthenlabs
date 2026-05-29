@@ -84,21 +84,47 @@ pub struct StyleTokenBuilder {
 
 impl StyleTokenBuilder {
     /// Sets the primary text colour.
-    pub fn text(mut self, color: Color) -> Self { self.token.text = color; self }
+    pub fn text(mut self, color: Color) -> Self {
+        self.token.text = color;
+        self
+    }
     /// Sets the dim text colour.
-    pub fn text_dim(mut self, color: Color) -> Self { self.token.text_dim = color; self }
+    pub fn text_dim(mut self, color: Color) -> Self {
+        self.token.text_dim = color;
+        self
+    }
     /// Sets the accent colour.
-    pub fn accent(mut self, color: Color) -> Self { self.token.accent = color; self }
+    pub fn accent(mut self, color: Color) -> Self {
+        self.token.accent = color;
+        self
+    }
     /// Sets the surface/background colour.
-    pub fn surface(mut self, color: Color) -> Self { self.token.surface = color; self }
+    pub fn surface(mut self, color: Color) -> Self {
+        self.token.surface = color;
+        self
+    }
     /// Sets the error colour.
-    pub fn error(mut self, color: Color) -> Self { self.token.error = color; self }
+    pub fn error(mut self, color: Color) -> Self {
+        self.token.error = color;
+        self
+    }
     /// Sets the success colour.
-    pub fn success(mut self, color: Color) -> Self { self.token.success = color; self }
+    pub fn success(mut self, color: Color) -> Self {
+        self.token.success = color;
+        self
+    }
     /// Sets the thinking block colour.
-    pub fn thinking(mut self, color: Color) -> Self { self.token.thinking = color; self }
+    pub fn thinking(mut self, color: Color) -> Self {
+        self.token.thinking = color;
+        self
+    }
     /// Sets the provider badge colour.
-    pub fn provider(mut self, color: Color) -> Self { self.token.provider = color; self }
+    pub fn provider(mut self, color: Color) -> Self {
+        self.token.provider = color;
+        self
+    }
     /// Consumes the builder and returns the constructed [`StyleToken`].
-    pub fn build(self) -> StyleToken { self.token }
+    pub fn build(self) -> StyleToken {
+        self.token
+    }
 }

@@ -1,12 +1,12 @@
-﻿//! Binary Runner — seccomp + Linux namespaces for native binaries
+//! Binary Runner — seccomp + Linux namespaces for native binaries
 //!
 //! Handles ELF, PE, Mach-O, and other native executable formats.
 //! Uses ptrace or bubblewrap for sandboxing.
 
+use crate::cage::policy::SecurityMode;
 use crate::classifier::magic::FileClass;
 use crate::classifier::ClassificationResult;
 use crate::runner::{DependencyStatus, Runner, RunnerVerdict};
-use crate::cage::policy::SecurityMode;
 use anyhow::Result;
 use std::path::Path;
 

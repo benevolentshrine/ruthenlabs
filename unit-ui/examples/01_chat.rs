@@ -2,7 +2,9 @@ use std::io::stdout;
 use std::time::Instant;
 
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -30,9 +32,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let s = style();
     let started = Instant::now();
-    let mut messages: Vec<(&str, Role)> = vec![
-        ("Hello! I'm Unit AI. How can I help you today?", Role::Assistant),
-    ];
+    let mut messages: Vec<(&str, Role)> = vec![(
+        "Hello! I'm Unit AI. How can I help you today?",
+        Role::Assistant,
+    )];
     let mut input_text = String::from("");
     loop {
         terminal.draw(|f| {
@@ -41,16 +44,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             f.render_widget(Paragraph::new("").style(bg), area);
 
             let [top, mid, bot] = Layout::vertical([
-                Constraint::Length(1), Constraint::Min(1), Constraint::Length(3),
-            ]).areas(area);
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
+            .areas(area);
 
             let bar = StatusBar::new()
-                .provider("Unit AI").model("assistant-v1")
-                .connection(ConnectionStatus::Connected).started_at(started)
-                .token_count(42).style(s.clone());
+                .provider("Unit AI")
+                .model("assistant-v1")
+                .connection(ConnectionStatus::Connected)
+                .started_at(started)
+                .token_count(42)
+                .style(s.clone());
             f.render_widget(&bar, top);
 
-            let block = Block::default().borders(Borders::ALL)
+            let block = Block::default()
+                .borders(Borders::ALL)
                 .border_style(Style::default().fg(s.text_dim));
             let inner = block.inner(mid);
             f.render_widget(&block, mid);
@@ -58,13 +68,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut y = inner.y + 1;
             for &(content, role) in &messages {
                 let h = content.lines().count() as u16 + 2;
-                if y + h > inner.bottom() { break; }
+                if y + h > inner.bottom() {
+                    break;
+                }
                 let bubble = MessageBubble::new(content, role).style(s.clone());
-                f.render_widget(&bubble, Rect { x: inner.x + 1, y, width: inner.width.saturating_sub(2), height: h });
+                f.render_widget(
+                    &bubble,
+                    Rect {
+                        x: inner.x + 1,
+                        y,
+                        width: inner.width.saturating_sub(2),
+                        height: h,
+                    },
+                );
                 y += h + 1;
             }
 
-            let input = BasicInput::new(&input_text).placeholder("Type a message...").style(s.clone());
+            let input = BasicInput::new(&input_text)
+                .placeholder("Type a message...")
+                .style(s.clone());
             f.render_widget(&input, bot);
         })?;
 
@@ -76,12 +98,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if !input_text.is_empty() {
                             let msg = std::mem::take(&mut input_text);
                             messages.push((Box::leak(msg.into_boxed_str()), Role::User));
-                            let response = format!("I received: \"{}\". This is a simulated response.", &messages.last().map(|(t,_)| *t).unwrap_or(""));
+                            let response = format!(
+                                "I received: \"{}\". This is a simulated response.",
+                                &messages.last().map(|(t, _)| *t).unwrap_or("")
+                            );
                             messages.push((Box::leak(response.into_boxed_str()), Role::Assistant));
                         }
                     }
                     crossterm::event::KeyCode::Char(c) => input_text.push(c),
-                    crossterm::event::KeyCode::Backspace => { input_text.pop(); }
+                    crossterm::event::KeyCode::Backspace => {
+                        input_text.pop();
+                    }
                     _ => {}
                 }
             }

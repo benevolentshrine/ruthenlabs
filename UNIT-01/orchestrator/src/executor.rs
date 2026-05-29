@@ -15,7 +15,8 @@ pub async fn execute_tool(
 
     let result = match name {
         "indexer_ls" | "list_files" => {
-            let path = args.get("path")
+            let path = args
+                .get("path")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
             let client = IndexerClient::new();
@@ -23,7 +24,11 @@ pub async fn execute_tool(
                 Ok(list) => {
                     let mut out = format!("Contents of {}:\n", path);
                     for e in &list.entries {
-                        let prefix = if e.entry_type == "dir" { "  d " } else { "  f " };
+                        let prefix = if e.entry_type == "dir" {
+                            "  d "
+                        } else {
+                            "  f "
+                        };
                         out.push_str(&format!("{} {}\n", prefix, e.name));
                     }
                     out
@@ -33,23 +38,34 @@ pub async fn execute_tool(
         }
 
         "indexer_read" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let client = IndexerClient::new();
             match client.read(path).await {
                 Ok(content) => content,
-                Err(_) => std::fs::read_to_string(path).unwrap_or_else(|e| format!("❌ ERROR: {}", e)),
+                Err(_) => {
+                    std::fs::read_to_string(path).unwrap_or_else(|e| format!("❌ ERROR: {}", e))
+                }
             }
         }
 
         "search" => {
-            let query = args.get("query").and_then(|v| v.as_str()).unwrap_or_default();
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let client = IndexerClient::new();
             match client.search(query).await {
                 Ok(records) if records.is_empty() => "🔍 No results found.".to_string(),
                 Ok(records) => {
                     let mut out = format!("🔍 Search results for '{}':\n", query);
                     for r in &records {
-                        out.push_str(&format!("  {}  ({} , {}b)\n", r.path, r.language, r.size_bytes));
+                        out.push_str(&format!(
+                            "  {}  ({} , {}b)\n",
+                            r.path, r.language, r.size_bytes
+                        ));
                     }
                     out
                 }
@@ -58,7 +74,10 @@ pub async fn execute_tool(
         }
 
         "execute" | "sandbox_exec" => {
-            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or_default();
+            let cmd = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let client = SandboxClient::new();
             match client.execute(cmd).await {
                 Ok(out) => out,
@@ -67,7 +86,10 @@ pub async fn execute_tool(
         }
 
         "write" | "sandbox_write" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let content = extract_content(&args);
             let client = IndexerClient::new();
             match client.write(path, &content).await {
@@ -85,9 +107,18 @@ pub async fn execute_tool(
         }
 
         "patch" | "sandbox_patch" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
-            let target = args.get("target").and_then(|v| v.as_str()).unwrap_or_default();
-            let replacement = args.get("replacement").and_then(|v| v.as_str()).unwrap_or_default();
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let target = args
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let replacement = args
+                .get("replacement")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let client = IndexerClient::new();
             match client.patch(path, target, replacement).await {
                 Ok(status) => format!("✅ SUCCESS: {}", status),
@@ -96,7 +127,10 @@ pub async fn execute_tool(
         }
 
         "delete" | "sandbox_delete" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or_default();
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let client = IndexerClient::new();
             match client.delete(path).await {
                 Ok(status) => format!("✅ SUCCESS: {}", status),
@@ -118,7 +152,10 @@ pub async fn execute_tool(
         }
 
         "glob" => {
-            let pattern = args.get("pattern").and_then(|v| v.as_str()).unwrap_or_default();
+            let pattern = args
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let base = args.get("base").and_then(|v| v.as_str()).unwrap_or("");
             let client = IndexerClient::new();
             match client.glob(pattern, base).await {
@@ -129,7 +166,10 @@ pub async fn execute_tool(
         }
 
         "find" => {
-            let name = args.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let root = args.get("root").and_then(|v| v.as_str()).unwrap_or("");
             let client = IndexerClient::new();
             match client.find(name, root).await {
@@ -142,7 +182,9 @@ pub async fn execute_tool(
         _ => {
             if mcp.has_tool(name).await {
                 let params = serde_json::Value::Object(args.clone());
-                mcp.execute_tool(name, params).await.unwrap_or_else(|| format!("❌ MCP tool '{}' returned no result", name))
+                mcp.execute_tool(name, params)
+                    .await
+                    .unwrap_or_else(|| format!("❌ MCP tool '{}' returned no result", name))
             } else {
                 format!("❌ Unknown tool: {}", name)
             }
@@ -153,7 +195,16 @@ pub async fn execute_tool(
 }
 
 fn extract_content(args: &serde_json::Map<String, Value>) -> String {
-    for key in &["content", "target", "content_data", "data", "text", "body", "html", "code"] {
+    for key in &[
+        "content",
+        "target",
+        "content_data",
+        "data",
+        "text",
+        "body",
+        "html",
+        "code",
+    ] {
         if let Some(v) = args.get(*key) {
             if let Some(s) = v.as_str() {
                 if !s.is_empty() {
@@ -170,8 +221,16 @@ fn fallback_list(path: &str) -> String {
         Ok(entries) => {
             let mut out = format!("Contents of {}:\n", path);
             for entry in entries.flatten() {
-                let prefix = if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) { "  d " } else { "  f " };
-                out.push_str(&format!("{} {}\n", prefix, entry.file_name().to_string_lossy()));
+                let prefix = if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    "  d "
+                } else {
+                    "  f "
+                };
+                out.push_str(&format!(
+                    "{} {}\n",
+                    prefix,
+                    entry.file_name().to_string_lossy()
+                ));
             }
             out
         }
@@ -184,7 +243,9 @@ fn resolve_paths(
     args: &serde_json::Map<String, Value>,
     ws: &Workspace,
 ) -> serde_json::Map<String, Value> {
-    if !ws.active { return args.clone(); }
+    if !ws.active {
+        return args.clone();
+    }
 
     let path_keys = ["path", "cwd", "base", "root", "from", "to"];
     let mut resolved = args.clone();

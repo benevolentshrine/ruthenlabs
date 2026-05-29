@@ -84,11 +84,15 @@ impl<'a> StreamingText<'a> {
 }
 
 impl Widget for StreamingText<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&self).render(area, buf);
+    }
 }
 
 impl Widget for &mut StreamingText<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) { (&*self).render(area, buf); }
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        (&*self).render(area, buf);
+    }
 }
 
 impl Widget for &StreamingText<'_> {
@@ -113,7 +117,10 @@ impl Widget for &StreamingText<'_> {
 
         let max_chars = self.content.chars().count();
         let visible = if self.visible_chars < max_chars {
-            self.content.chars().take(self.visible_chars).collect::<String>()
+            self.content
+                .chars()
+                .take(self.visible_chars)
+                .collect::<String>()
         } else {
             self.content.to_string()
         };
