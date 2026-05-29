@@ -380,7 +380,6 @@ impl Widget for &SlashMenu<'_> {
                 ]),
             };
             line.render(line_area, buf);
-            y_cursor += 1;
         }
 
         if items.len() > self.max_visible {
