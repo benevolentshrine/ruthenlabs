@@ -341,8 +341,8 @@ impl Widget for &SlashMenu<'_> {
             .take(self.max_visible)
             .collect();
 
-        let mut y_cursor = inner.top();
         for (i, item) in visible_items.iter().enumerate() {
+            let y_cursor = inner.top() + i as u16;
             if y_cursor >= inner.bottom() {
                 break;
             }

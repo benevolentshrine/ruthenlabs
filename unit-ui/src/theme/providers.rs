@@ -366,6 +366,7 @@ impl Provider {
 
     /// Parses a provider name from a string (case-insensitive, handles
     /// common aliases like `"claude"` → `Anthropic`, `"gpt"` → `OpenAI`).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Provider> {
         let lower = s.to_lowercase();
         match lower.as_str() {

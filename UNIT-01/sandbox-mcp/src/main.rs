@@ -432,8 +432,6 @@ fn tool_execute(args: &Value) -> Result<String> {
             }))?);
         }
         cmd = Command::new(&binary_path);
-    } else if language == "go" {
-        cmd.arg(&file_path);
     } else {
         cmd.arg(&file_path);
     }
