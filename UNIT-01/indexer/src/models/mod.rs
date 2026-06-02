@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 pub struct FileRecord {
     pub path: String,
     pub relative_path: String,
-    pub hash: String,
     pub size_bytes: u64,
     pub mtime_unix: i64,
     pub language: String,
@@ -13,4 +12,13 @@ pub struct FileRecord {
     pub is_symlink: bool,
     pub permissions: String,
     pub indexed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub filepath: String,
+    pub line: usize,
+    pub text: String,
+    pub score: f64,
+    pub language: String,
 }

@@ -35,24 +35,12 @@ pub fn orchestrator_socket_path() -> PathBuf {
 }
 
 /// Indexer socket path
-#[allow(dead_code)]
 pub fn indexer_socket_path() -> PathBuf {
     ruthen_base_dir().join("indexer.sock")
 }
 
 /// Maximum request size: 10MB
 pub const MAX_REQUEST_SIZE: usize = 10 * 1024 * 1024;
-
-/// Socket directory path
-pub fn socket_dir() -> PathBuf {
-    ruthen_base_dir()
-}
-
-/// Sandbox workspace directory for file operations
-#[allow(dead_code)]
-pub fn sandbox_workspace_dir() -> PathBuf {
-    ruthen_base_dir().join("workspace")
-}
 
 /// Service discovery: Check if a sibling service is running
 pub fn is_service_available<P: AsRef<Path>>(socket_path: P) -> bool {
@@ -72,7 +60,7 @@ pub fn indexer_available() -> bool {
 /// Get ecosystem status - which siblings are present
 pub fn ecosystem_status() -> EcosystemStatus {
     EcosystemStatus {
-        sandbox: true, // We're here
+        sandbox: true,
         orchestrator: orchestrator_available(),
         indexer: indexer_available(),
     }
@@ -87,13 +75,6 @@ pub struct EcosystemStatus {
 }
 
 impl EcosystemStatus {
-    /// Check if we're running in full ecosystem mode
-    pub fn full_ecosystem() -> bool {
-        let status = ecosystem_status();
-        status.sandbox && status.orchestrator && status.indexer
-    }
-
-    /// Get count of available services
     pub fn service_count(&self) -> usize {
         let mut count = 0;
         if self.sandbox {

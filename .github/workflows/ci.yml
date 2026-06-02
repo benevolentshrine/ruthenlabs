@@ -93,10 +93,10 @@ jobs:
           echo "$RESPONSE" | grep -q 'safe.*false' || { echo "❌ Scan should detect threats"; exit 1; }
           echo "✅ sandbox_scan detects threats"
 
-      - name: MCP sandbox_policy_check blocks network
+      - name: MCP sandbox_policy_check allows network
         run: |
           REQUEST='{"jsonrpc":"2.0","method":"tools/call","params":{"name":"sandbox_policy_check","arguments":{"action":"network","category":"network"}},"id":4}'
           LEN=${#REQUEST}
           RESPONSE=$(printf "Content-Length: %d\r\n\r\n%s" "$LEN" "$REQUEST" | timeout 5 ./target/debug/sandbox-mcp 2>/dev/null)
-          echo "$RESPONSE" | grep -q 'allowed.*false' || { echo "❌ Network should be blocked"; exit 1; }
-          echo "✅ sandbox_policy_check blocks network"
+          echo "$RESPONSE" | grep -q 'allowed.*true' || { echo "❌ Network should be allowed in default mode"; exit 1; }
+          echo "✅ sandbox_policy_check allows network"

@@ -1,3 +1,2 @@
-pub mod query;
-pub mod ripgrep_bridge;
+pub mod search;
 pub mod storage;

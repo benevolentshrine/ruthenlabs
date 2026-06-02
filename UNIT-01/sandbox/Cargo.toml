@@ -1,6 +1,6 @@
 [package]
 name = "sandbox"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 
 [lib]
@@ -12,42 +12,16 @@ name = "sandbox"
 path = "src/main.rs"
 
 [dependencies]
-# CLI args
 clap = { version = "4.5", features = ["derive"] }
-
-# Error handling
 anyhow = { version = "1.0", default-features = false, features = ["std"] }
-
-# Async runtime
 tokio = { version = "1.40", default-features = false, features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process", "io-util", "net"] }
-
-# Serialization
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["std"] }
-toml = "0.8"
-
-# Structured logging
 tracing = { version = "0.1", default-features = false }
-
-# UUID generation
-uuid = { version = "1.11", default-features = false, features = ["v4", "serde", "std", "rng"] }
-
-# Date/time
-chrono = { version = "0.4", default-features = false, features = ["clock", "std", "alloc"] }
-
-# Tracing subscriber
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
-
-# Directory paths for shadow
-dirs = { version = "5.0", default-features = false }
-
-# SHA-256 for path hashing in shadow
-sha2 = { version = "0.10", default-features = false }
-
-# POSIX resource limits (used on both macOS and Linux)
+uuid = { version = "1.11", default-features = false, features = ["v4", "serde", "std", "rng"] }
 libc = "0.2"
 
-# Linux Kernel Security Primitives
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4"
 libseccomp = "0.3"

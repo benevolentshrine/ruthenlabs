@@ -1,11 +1,7 @@
 use anyhow::{Context, Result};
-use sandbox::cage::policy::{SecurityMode, SecurityPolicy};
 use sandbox::cage::sandbox::{spawn_sandboxed_command, SandboxOptions};
-use sandbox::scanner::entropy;
-use sandbox::shadow::RollbackManager;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
@@ -155,70 +151,13 @@ fn handle_tools_list(id: Value) -> Value {
                         "enum": ["python", "rust", "shell", "javascript", "go", "ruby", "php", "perl", "lua", "swift", "kotlin", "scala", "r", "powershell", "typescript"],
                         "description": "Programming language of the code"
                     },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["run", "review", "sandboxed"],
-                        "default": "sandboxed",
-                        "description": "Security mode: run (default MID), review (AUDIT), sandboxed (MID)"
-                    },
+
                     "fuel": {
                         "type": "integer",
                         "description": "Maximum execution steps (optional)"
                     }
                 },
                 "required": ["code", "language"]
-            }
-        },
-        {
-            "name": "sandbox_rollback",
-            "description": "Rollback filesystem changes from a sandbox session",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "session_id": { "type": "string", "description": "Session ID to rollback" },
-                    "dry_run": { "type": "boolean", "description": "Preview files without restoring", "default": false }
-                },
-                "required": ["session_id"]
-            }
-        },
-        {
-            "name": "sandbox_list_sessions",
-            "description": "List available rollback sessions",
-            "inputSchema": {
-                "type": "object",
-                "properties": {}
-            }
-        },
-        {
-            "name": "sandbox_clear_session",
-            "description": "Clear a rollback session's shadow backups",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "session_id": { "type": "string", "description": "Session ID to clear" }
-                },
-                "required": ["session_id"]
-            }
-        },
-        {
-            "name": "sandbox_policy_check",
-            "description": "Check if an action is allowed by the security policy",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["read", "write", "execute", "network"],
-                        "description": "Action to check"
-                    },
-                    "path": { "type": "string", "description": "Filesystem path (optional)" },
-                    "category": {
-                        "type": "string",
-                        "enum": ["code", "shell", "file", "network", "system"],
-                        "description": "Action category"
-                    }
-                },
-                "required": ["action", "category"]
             }
         },
         {
@@ -246,10 +185,6 @@ fn handle_tools_list(id: Value) -> Value {
 fn handle_tool_call(id: Value, name: &str, args: &Value) -> Value {
     let result = match name {
         "sandbox_execute" => tool_execute(args),
-        "sandbox_rollback" => tool_rollback(args),
-        "sandbox_list_sessions" => tool_list_sessions(),
-        "sandbox_clear_session" => tool_clear_session(args),
-        "sandbox_policy_check" => tool_policy_check(args),
         "sandbox_scan" => tool_scan(args),
         _ => {
             return json_error(Some(id), -32602, &format!("Unknown tool: {}", name));
@@ -383,22 +318,10 @@ fn tool_execute(args: &Value) -> Result<String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("Missing required argument: language"))?;
 
-    let mode_str = args
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("sandboxed");
-
     let _fuel = args.get("fuel").and_then(|v| v.as_u64());
 
     let cfg = language_config(language)
         .ok_or_else(|| anyhow::anyhow!("Unsupported language: {}", language))?;
-
-    let security_mode = match mode_str {
-        "review" => SecurityMode::Audit,
-        "hard" | "strict" => SecurityMode::Hard,
-        "easy" | "permissive" => SecurityMode::Easy,
-        _ => SecurityMode::Mid,
-    };
 
     let tmp_dir = tempfile::tempdir().context("Failed to create temp directory")?;
     let file_path = tmp_dir.path().join(format!("script.{}", cfg.extension));
@@ -411,12 +334,7 @@ fn tool_execute(args: &Value) -> Result<String> {
 
     let start = Instant::now();
 
-    let mut cmd = Command::new(cfg.interpreter);
-    for arg in &cfg.interpreter_args {
-        cmd.arg(arg);
-    }
-
-    if language == "rust" {
+    let (program, spawn_args): (String, Vec<String>) = if language == "rust" {
         let binary_path = tmp_dir.path().join("script");
         let mut build = Command::new("rustc");
         build.arg(&file_path).arg("-o").arg(&binary_path);
@@ -431,20 +349,15 @@ fn tool_execute(args: &Value) -> Result<String> {
                 "session_id": session_id
             }))?);
         }
-        cmd = Command::new(&binary_path);
+        (binary_path.to_string_lossy().to_string(), vec![])
     } else {
-        cmd.arg(&file_path);
-    }
-
-    cmd.current_dir(&workspace)
-        .env_clear()
-        .env("HOME", &workspace)
-        .env("TMPDIR", &workspace)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        let mut all_args: Vec<String> = cfg.interpreter_args.iter().map(|s| s.to_string()).collect();
+        all_args.push(file_path.to_string_lossy().to_string());
+        (cfg.interpreter.to_string(), all_args)
+    };
 
     let sandbox_opts = SandboxOptions::default();
-    let child = spawn_sandboxed_command(cmd, &workspace, sandbox_opts, security_mode)
+    let child = spawn_sandboxed_command(&program, &spawn_args, &workspace, sandbox_opts, true)
         .context("Failed to spawn sandboxed command")?;
 
     let output = child
@@ -468,176 +381,7 @@ fn tool_execute(args: &Value) -> Result<String> {
     Ok(serde_json::to_string(&result)?)
 }
 
-// ---------------------------------------------------------------------------
-// Tool: sandbox_rollback
-// ---------------------------------------------------------------------------
 
-fn tool_rollback(args: &Value) -> Result<String> {
-    let session_id = args
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: session_id"))?;
-
-    let dry_run = args
-        .get("dry_run")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let manager = RollbackManager::new()?;
-
-    if dry_run {
-        let files = manager.dry_run(session_id)?;
-        let files_str: Vec<String> = files
-            .iter()
-            .map(|f| f.to_string_lossy().to_string())
-            .collect();
-        let result = serde_json::json!({
-            "restored_count": 0,
-            "failed_count": 0,
-            "files": files_str
-        });
-        Ok(serde_json::to_string(&result)?)
-    } else {
-        let result = manager.rollback(session_id)?;
-        let files_str: Vec<String> = result
-            .restored
-            .iter()
-            .map(|f| f.to_string_lossy().to_string())
-            .collect();
-        let failed_str: Vec<serde_json::Value> = result
-            .failed
-            .iter()
-            .map(|(path, reason)| {
-                serde_json::json!({
-                    "path": path.to_string_lossy(),
-                    "reason": reason
-                })
-            })
-            .collect();
-
-        let response = serde_json::json!({
-            "restored_count": result.success_count(),
-            "failed_count": result.failure_count(),
-            "files": files_str,
-            "failed": failed_str
-        });
-        Ok(serde_json::to_string(&response)?)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tool: sandbox_list_sessions
-// ---------------------------------------------------------------------------
-
-fn tool_list_sessions() -> Result<String> {
-    let manager = RollbackManager::new()?;
-    let sessions = manager.list_sessions()?;
-
-    let sessions_json: Vec<serde_json::Value> = sessions
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "session_id": s.session_id,
-                "created": s.created,
-                "file_count": s.file_count
-            })
-        })
-        .collect();
-
-    let result = serde_json::json!({ "sessions": sessions_json });
-    Ok(serde_json::to_string(&result)?)
-}
-
-// ---------------------------------------------------------------------------
-// Tool: sandbox_clear_session
-// ---------------------------------------------------------------------------
-
-fn tool_clear_session(args: &Value) -> Result<String> {
-    let session_id = args
-        .get("session_id")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: session_id"))?;
-
-    let manager = RollbackManager::new()?;
-    manager.clear(session_id)?;
-
-    let result = serde_json::json!({ "success": true });
-    Ok(serde_json::to_string(&result)?)
-}
-
-// ---------------------------------------------------------------------------
-// Tool: sandbox_policy_check
-// ---------------------------------------------------------------------------
-
-fn tool_policy_check(args: &Value) -> Result<String> {
-    let action = args
-        .get("action")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: action"))?;
-
-    let category = args
-        .get("category")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Missing required argument: category"))?;
-
-    let path = args.get("path").and_then(|v| v.as_str());
-
-    let policy = SecurityPolicy::new(SecurityMode::Mid);
-
-    let (allowed, reason, risk_level) = evaluate_policy(&policy, action, category, path);
-
-    let result = serde_json::json!({
-        "allowed": allowed,
-        "reason": reason,
-        "risk_level": risk_level
-    });
-    Ok(serde_json::to_string(&result)?)
-}
-
-fn evaluate_policy(
-    policy: &SecurityPolicy,
-    action: &str,
-    category: &str,
-    path: Option<&str>,
-) -> (bool, String, String) {
-    use sandbox::cage::policy::PolicyDecision;
-
-    let path = path.map(PathBuf::from);
-
-    let decision = match (action, category) {
-        ("read", "file") => policy.evaluate_file_read(
-            path.as_deref().unwrap_or(std::path::Path::new("/")),
-            path.is_some(),
-        ),
-        ("write", "file") => policy.evaluate_file_write(
-            path.as_deref().unwrap_or(std::path::Path::new("/")),
-            path.is_some(),
-        ),
-        ("execute", "code") | ("execute", "shell") => policy.evaluate_process_spawn(),
-        ("execute", "system") => policy.evaluate_process_spawn(),
-        ("network", "network") => policy.evaluate_network(None),
-        _ => PolicyDecision::AutoBlock {
-            reason: format!(
-                "Unknown action/category combination: {}/{}",
-                action, category
-            ),
-        },
-    };
-
-    match decision {
-        PolicyDecision::AutoAllow => (
-            true,
-            "Action is allowed by policy".to_string(),
-            "low".to_string(),
-        ),
-        PolicyDecision::AutoBlock { reason } => (false, reason, "high".to_string()),
-        PolicyDecision::Prompt { reason } => (
-            false,
-            format!("Action requires user approval: {}", reason),
-            "medium".to_string(),
-        ),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Tool: sandbox_scan
@@ -650,27 +394,6 @@ fn tool_scan(args: &Value) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("Missing required argument: code"))?;
 
     let mut threats: Vec<serde_json::Value> = Vec::new();
-
-    let policy = SecurityPolicy::new(SecurityMode::Mid);
-    if let Some(violation) = policy.scan_source(code) {
-        threats.push(serde_json::json!({
-            "pattern": "pre_execution_gate",
-            "severity": "high",
-            "line": 0,
-            "detail": violation
-        }));
-    }
-
-    let bytes = code.as_bytes();
-    let entropy_result = entropy::scan_bytes(bytes);
-    if entropy_result.verdict.is_suspicious() {
-        threats.push(serde_json::json!({
-            "pattern": "high_entropy",
-            "severity": if entropy_result.verdict.is_critical() { "critical" } else { "medium" },
-            "line": 0,
-            "detail": format!("Entropy score: {:.2}/8.0 ({})", entropy_result.score, entropy_result.verdict)
-        }));
-    }
 
     let code_lower = code.to_lowercase();
     let dangerous_patterns = [
@@ -688,9 +411,6 @@ fn tool_scan(args: &Value) -> Result<String> {
         ("system(", "Shell command execution", "high"),
         ("popen(", "Process execution", "high"),
         ("subprocess", "Process spawning", "medium"),
-        ("socket.connect", "Network connection attempt", "medium"),
-        ("requests.get", "HTTP network request", "low"),
-        ("requests.post", "HTTP network request", "low"),
         ("os.environ", "Environment variable access", "low"),
     ];
 
@@ -820,23 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_policy_allowed() {
-        let policy = SecurityPolicy::new(SecurityMode::Easy);
-        let (allowed, _reason, risk) =
-            evaluate_policy(&policy, "read", "file", Some("/tmp/test.txt"));
-        assert!(allowed);
-        assert_eq!(risk, "low");
-    }
-
-    #[test]
-    fn test_evaluate_policy_network_blocked() {
-        let policy = SecurityPolicy::new(SecurityMode::Mid);
-        let (allowed, _reason, risk) = evaluate_policy(&policy, "network", "network", None);
-        assert!(!allowed);
-        assert_eq!(risk, "high");
-    }
-
-    #[test]
     fn test_tool_scan_clean_code() {
         let args = serde_json::json!({
             "code": "print('hello world')",
@@ -860,25 +563,10 @@ mod tests {
         let threats = parsed["threats"].as_array().unwrap();
         assert!(!threats.is_empty());
 
-        let has_eval = threats.iter().any(|t| {
-            t["pattern"].as_str().unwrap_or("").contains("os.system")
-                || t["pattern"].as_str().unwrap_or("") == "pre_execution_gate"
+        let has_system = threats.iter().any(|t| {
+            t["pattern"].as_str().unwrap_or("").contains("system(")
         });
-        assert!(has_eval, "Should detect dangerous patterns");
-    }
-
-    #[test]
-    fn test_tool_policy_check() {
-        let args = serde_json::json!({
-            "action": "execute",
-            "category": "code",
-            "path": "/tmp/test.py"
-        });
-        let result = tool_policy_check(&args).unwrap();
-        let parsed: Value = serde_json::from_str(&result).unwrap();
-        assert!(parsed["allowed"].is_boolean());
-        assert!(parsed["reason"].is_string());
-        assert!(parsed["risk_level"].is_string());
+        assert!(has_system, "Should detect dangerous patterns");
     }
 
     #[test]
