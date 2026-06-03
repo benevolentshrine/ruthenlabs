@@ -16,6 +16,20 @@ struct DaemonState {
     workspace: Option<PathBuf>,
     /// Whether sandbox enforcement is active (binary: ON/OFF).
     sandbox_enabled: bool,
+    /// Whether to block outbound network (default: true).
+    deny_network: bool,
+    /// Port of the local egress proxy, if running.
+    proxy_port: Option<u16>,
+    /// Domain allowlist, shared with the proxy task via RwLock.
+    allowed_domains: Arc<std::sync::RwLock<Vec<String>>>,
+    /// Commands excluded from sandbox execution.
+    excluded_commands: Vec<String>,
+    /// Extra paths where writes are allowed (outside workspace).
+    allow_write_paths: Vec<PathBuf>,
+    /// Paths where writes are denied (overrides allow, including workspace subpaths).
+    deny_write_paths: Vec<PathBuf>,
+    /// Paths where reads are denied (credential/location scoping).
+    deny_read_paths: Vec<PathBuf>,
 }
 
 impl DaemonState {
@@ -23,6 +37,18 @@ impl DaemonState {
         Self {
             workspace: None,
             sandbox_enabled: true,
+            deny_network: true,
+            proxy_port: None,
+            allowed_domains: Arc::new(std::sync::RwLock::new(
+                crate::network::domains::default_allowed(),
+            )),
+            excluded_commands: crate::cage::sandbox::DEFAULT_EXCLUDED_COMMANDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            allow_write_paths: vec![],
+            deny_write_paths: vec![],
+            deny_read_paths: vec![],
         }
     }
 }
@@ -86,6 +112,28 @@ async fn run_unix_daemon(path: PathBuf) -> Result<()> {
     tracing::info!("Socket daemon listening on {:?}", path);
 
     let state: SharedState = Arc::new(Mutex::new(DaemonState::new()));
+
+    // Start egress proxy with default allowlist
+    let proxy_domains = {
+        let s = state.lock().await;
+        s.allowed_domains.clone()
+    };
+    let proxy = crate::network::proxy::SandboxProxy::start(proxy_domains).await;
+    match proxy {
+        Ok(p) => {
+            let port = p.port;
+            tokio::spawn(async move {
+                std::future::pending::<()>().await;
+                drop(p);
+            });
+            let mut s = state.lock().await;
+            s.proxy_port = Some(port);
+            tracing::info!("[DAEMON] Egress proxy started on port {}", port);
+        }
+        Err(e) => {
+            tracing::warn!("[DAEMON] Failed to start egress proxy: {}", e);
+        }
+    }
 
     loop {
         match listener.accept().await {
@@ -264,16 +312,41 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
         .and_then(|v| v.as_str())
         .or_else(|| request.params.get("command").and_then(|v| v.as_str()));
 
-    if let Some(shell_cmd) = cmd {
-        let ws_state = state.lock().await;
-        let workspace = ws_state
-            .workspace
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("."));
-        let sandbox_enabled = ws_state.sandbox_enabled;
-        drop(ws_state);
+        if let Some(shell_cmd) = cmd {
+            let ws_state = state.lock().await;
+            let workspace = ws_state
+                .workspace
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("."));
+            let sandbox_enabled = ws_state.sandbox_enabled;
+            let deny_network = ws_state.deny_network;
+            let proxy_port = ws_state.proxy_port;
+            let excluded_commands = ws_state.excluded_commands.clone();
+            let allow_write_paths = ws_state.allow_write_paths.clone();
+            let deny_write_paths = ws_state.deny_write_paths.clone();
+            let deny_read_paths = ws_state.deny_read_paths.clone();
+            drop(ws_state);
 
-        let sandbox_opts = crate::cage::sandbox::SandboxOptions::default();
+        // Allow per-request override: pass "allow_network": true to permit egress
+        let allow_network_override = request
+            .params
+            .get("allow_network")
+            .and_then(|v| v.as_bool());
+        let effective_deny = match allow_network_override {
+            Some(true) => false,
+            Some(false) => true,
+            None => deny_network,
+        };
+
+        let sandbox_opts = crate::cage::sandbox::SandboxOptions {
+            timeout_secs: 30,
+            deny_network: effective_deny,
+            proxy_port,
+            excluded_commands,
+            allow_write_paths,
+            deny_write_paths,
+            deny_read_paths,
+        };
 
         let args: Vec<String> = vec!["-c".to_string(), shell_cmd.to_string()];
         let child = match crate::cage::sandbox::spawn_sandboxed_command(
@@ -314,6 +387,7 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let (stdout, stderr, _secrets_scrubbed) = crate::secrets::scrub_output(&stdout, &stderr);
         let exit_code = output.status.code().unwrap_or(-1);
 
         // Check for sandbox violations via signal
@@ -321,8 +395,11 @@ async fn handle_execute(request: JsonRpcRequest, state: &SharedState) -> JsonRpc
         let violation = if let Some(signal) = output.status.signal() {
             match signal {
                 31 => Some(
-                    "❌ Sandbox Violation: Seccomp blocked a privesc syscall (signal 31). \
-                     Directive: Ask the user to elevate to 'Root' mode."
+                    "❌ Sandbox Violation: Seccomp blocked a restricted syscall (signal 31). \
+                     This may be a privesc attempt (clone3, mount, etc.) or a network operation \
+                     blocked by egress isolation. \
+                     Directive: Avoid privesc syscalls. If you need network, pass \
+                     'allow_network': true in your request or ask the user to elevate to 'Root' mode."
                         .to_string(),
                 ),
                 9 => Some(
@@ -441,9 +518,33 @@ async fn handle_execute_stream(
         .clone()
         .unwrap_or_else(|| PathBuf::from("."));
     let sandbox_enabled = ws_state.sandbox_enabled;
+    let deny_network = ws_state.deny_network;
+    let proxy_port = ws_state.proxy_port;
+    let excluded_commands = ws_state.excluded_commands.clone();
+    let allow_write_paths = ws_state.allow_write_paths.clone();
+    let deny_write_paths = ws_state.deny_write_paths.clone();
+    let deny_read_paths = ws_state.deny_read_paths.clone();
     drop(ws_state);
 
-    let sandbox_opts = crate::cage::sandbox::SandboxOptions::default();
+    let allow_network_override = request
+        .params
+        .get("allow_network")
+        .and_then(|v| v.as_bool());
+    let effective_deny = match allow_network_override {
+        Some(true) => false,
+        Some(false) => true,
+        None => deny_network,
+    };
+
+    let sandbox_opts = crate::cage::sandbox::SandboxOptions {
+        timeout_secs: 30,
+        deny_network: effective_deny,
+        proxy_port,
+        excluded_commands,
+        allow_write_paths,
+        deny_write_paths,
+        deny_read_paths,
+    };
 
     let args: Vec<String> = vec!["-c".to_string(), shell_cmd.to_string()];
     let sandboxed = match crate::cage::sandbox::spawn_sandboxed_command(
@@ -472,7 +573,7 @@ async fn handle_execute_stream(
         }
     };
 
-    let mut child = sandboxed.take_child()?;
+    let (mut child, _temp_guard) = sandboxed.take_child()?;
     let pid = child.id();
     let stdout_handle = child.stdout.take();
     let stderr_handle = child.stderr.take();
@@ -492,7 +593,8 @@ async fn handle_execute_stream(
             for line in reader.lines() {
                 match line {
                     Ok(l) => {
-                        if tx_stdout.blocking_send(("stdout".to_string(), l)).is_err() {
+                        let scrubbed = crate::secrets::scrub(&l);
+                        if tx_stdout.blocking_send(("stdout".to_string(), scrubbed)).is_err() {
                             break;
                         }
                     }
@@ -509,7 +611,8 @@ async fn handle_execute_stream(
             for line in reader.lines() {
                 match line {
                     Ok(l) => {
-                        if tx_stderr.blocking_send(("stderr".to_string(), l)).is_err() {
+                        let scrubbed = crate::secrets::scrub(&l);
+                        if tx_stderr.blocking_send(("stderr".to_string(), scrubbed)).is_err() {
                             break;
                         }
                     }
@@ -624,7 +727,17 @@ async fn handle_set_workspace(request: JsonRpcRequest, state: &SharedState) -> J
     }
 }
 
-/// Toggle sandbox enforcement on/off.
+/// Toggle sandbox enforcement, network policy, domain allowlist, excluded commands,
+/// and path-level controls.
+/// Accepts:
+///   "enabled": bool — toggle sandbox enforcement
+///   "deny_network": bool — toggle kernel-level network block
+///   "ecosystems": ["node", "python", ...] — set domain allowlist by ecosystem name
+///   "allowed_domains": ["example.com", ...] — add raw domains to allowlist
+///   "excluded_commands": ["docker", "sudo", ...] — override default excluded commands
+///   "allow_write_paths": ["/path/to/cargo", ...] — extra writable paths outside workspace
+///   "deny_write_paths": ["/path/to/sensitive", ...] — paths where writes are denied
+///   "deny_read_paths": ["/path/to/secrets", ...] — paths where reads are denied
 async fn handle_set_policy(request: JsonRpcRequest, state: &SharedState) -> JsonRpcResponse {
     let enabled = request
         .params
@@ -632,17 +745,100 @@ async fn handle_set_policy(request: JsonRpcRequest, state: &SharedState) -> Json
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
+    let deny_network = request
+        .params
+        .get("deny_network")
+        .and_then(|v| v.as_bool());
+
     let mut daemon_state = state.lock().await;
     daemon_state.sandbox_enabled = enabled;
+    if let Some(dn) = deny_network {
+        daemon_state.deny_network = dn;
+    }
+
+    // Update excluded commands list
+    if let Some(cmds) = request
+        .params
+        .get("excluded_commands")
+        .and_then(|v| v.as_array())
+    {
+        let cmd_list: Vec<String> = cmds
+            .iter()
+            .filter_map(|e| e.as_str().map(String::from))
+            .collect();
+        if !cmd_list.is_empty() {
+            daemon_state.excluded_commands = cmd_list;
+        } else {
+            // Reset to defaults if empty array passed
+            daemon_state.excluded_commands = crate::cage::sandbox::DEFAULT_EXCLUDED_COMMANDS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
+    }
+
+    // Update domain allowlist
+    let ecosystems: Option<Vec<String>> = request
+        .params
+        .get("ecosystems")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect());
+
+    let extra_domains: Vec<String> = request
+        .params
+        .get("allowed_domains")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    if let Some(ref ecos) = ecosystems {
+        let mut combined = ecos.clone();
+        combined.extend(extra_domains);
+        let resolved = crate::network::domains::resolve(&combined);
+
+        // Write to the shared allowlist (picked up by proxy on next connection)
+        if let Ok(mut list) = daemon_state.allowed_domains.write() {
+            *list = resolved;
+        }
+    }
+
+    // Update path-level controls
+    if let Some(paths) = request.params.get("allow_write_paths").and_then(|v| v.as_array()) {
+        daemon_state.allow_write_paths = paths
+            .iter()
+            .filter_map(|v| v.as_str().map(PathBuf::from))
+            .collect();
+    }
+    if let Some(paths) = request.params.get("deny_write_paths").and_then(|v| v.as_array()) {
+        daemon_state.deny_write_paths = paths
+            .iter()
+            .filter_map(|v| v.as_str().map(PathBuf::from))
+            .collect();
+    }
+    if let Some(paths) = request.params.get("deny_read_paths").and_then(|v| v.as_array()) {
+        daemon_state.deny_read_paths = paths
+            .iter()
+            .filter_map(|v| v.as_str().map(PathBuf::from))
+            .collect();
+    }
+
     drop(daemon_state);
 
     let status = if enabled { "enabled" } else { "disabled" };
-    tracing::info!("Sandbox enforcement {}", status);
+    let net_status = deny_network.map(|dn| if dn { "denied" } else { "allowed" });
+    let mut verdict = match net_status {
+        Some(ns) => format!("Sandbox enforcement {}. Network {}", status, ns),
+        None => format!("Sandbox enforcement {}", status),
+    };
+    if let Some(ecos) = ecosystems {
+        verdict.push_str(&format!(". Ecosystems: [{}]", ecos.join(", ")));
+    }
+    tracing::info!("{}", verdict);
 
     JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         result: Some(ExecuteResult {
-            verdict: format!("Sandbox enforcement {}", status),
+            verdict,
             audit_ref: uuid::Uuid::new_v4().to_string(),
         }),
         error: None,

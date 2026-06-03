@@ -16,6 +16,7 @@ import (
 	"charm.land/fantasy"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/fsext"
+	"github.com/charmbracelet/crush/internal/ruthen"
 )
 
 const GlobToolName = "glob"
@@ -48,7 +49,7 @@ type GlobResponseMetadata struct {
 	Truncated     bool `json:"truncated"`
 }
 
-func NewGlobTool(workingDir string) fantasy.AgentTool {
+func NewGlobTool(workingDir string, indexer *ruthen.IndexerClient) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		GlobToolName,
 		globDescription(),
@@ -58,6 +59,30 @@ func NewGlobTool(workingDir string) fantasy.AgentTool {
 			}
 
 			searchPath := cmp.Or(params.Path, workingDir)
+
+			// Route through indexer if available.
+			if indexer != nil {
+				files, err := indexer.Glob(params.Pattern, searchPath)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("error finding files via indexer: %v", err)), nil
+				}
+				normalizeFilePaths(files)
+				output := strings.Join(files, "\n")
+				if len(files) == 0 {
+					output = "No files found"
+				}
+				truncated := len(files) >= 100
+				if truncated {
+					output += "\n\n(Results are truncated. Consider using a more specific path or pattern.)"
+				}
+				return fantasy.WithResponseMetadata(
+					fantasy.NewTextResponse(output),
+					GlobResponseMetadata{
+						NumberOfFiles: len(files),
+						Truncated:     truncated,
+					},
+				), nil
+			}
 
 			files, truncated, err := globFiles(ctx, params.Pattern, searchPath, 100)
 			if err != nil {

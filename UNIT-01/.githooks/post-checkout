@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
+INDEXER="indexer"
+
+if command -v "$INDEXER" &>/dev/null; then
+    "$INDEXER" index --path "$REPO_ROOT"
+fi

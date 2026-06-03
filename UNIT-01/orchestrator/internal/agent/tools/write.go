@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/history"
+	"github.com/charmbracelet/crush/internal/ruthen"
 
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -49,6 +50,7 @@ func NewWriteTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	indexer *ruthen.IndexerClient,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		WriteToolName,
@@ -134,7 +136,11 @@ func NewWriteTool(
 				return resp, nil
 			}
 
-			err = os.WriteFile(filePath, []byte(params.Content), 0o644)
+			if indexer != nil {
+				err = indexer.Write(filePath, params.Content)
+			} else {
+				err = os.WriteFile(filePath, []byte(params.Content), 0o644)
+			}
 			if err != nil {
 				return fantasy.ToolResponse{}, fmt.Errorf("error writing file: %w", err)
 			}

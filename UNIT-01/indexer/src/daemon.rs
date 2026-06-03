@@ -1,13 +1,18 @@
+use crate::index::embed::Embedder;
 use crate::DaemonAction;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info};
+
+static DEP_GRAPH: once_cell::sync::Lazy<Mutex<crate::index::depgraph::DepGraph>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(crate::index::depgraph::DepGraph::new()));
 
 #[derive(Serialize, Deserialize, Debug)]
 struct JsonRpcRequest {
@@ -242,10 +247,58 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
 
     // Open search index at startup
     let index_dir = crate::index::storage::index_dir();
-    let tantivy = std::sync::Arc::new(tokio::sync::Mutex::new(
-        crate::index::search::SearchIndex::open(&index_dir)
-            .map_err(|e| format!("Open search index: {}", e))?,
-    ));
+
+    // Try to load ONNX embedder, fall back to hash embedder
+    let embedder: Arc<dyn crate::index::embed::Embedder + Send + Sync> =
+        if crate::index::embed_onnx::OrtEmbedder::is_model_available() {
+            let model_dir = crate::index::embed_onnx::OrtEmbedder::model_dir();
+            match crate::index::embed_onnx::OrtEmbedder::new(
+                &model_dir.join("model.onnx"),
+                &model_dir.join("tokenizer.json"),
+            ) {
+                Ok(e) => {
+                    info!("Loaded ONNX embedding model (dim={})", e.dimension());
+                    Arc::new(e)
+                }
+                Err(e) => {
+                    info!("ONNX model load failed ({}), using hash embedder", e);
+                    Arc::new(crate::index::embed::HashEmbedder::new())
+                }
+            }
+        } else {
+            info!("No ONNX model found, using hash embedder");
+            Arc::new(crate::index::embed::HashEmbedder::new())
+        };
+
+    // Try to load cross-encoder reranker
+    let reranker = {
+        let model_dir = crate::index::embed_onnx::OrtEmbedder::model_dir();
+        let reranker_path = model_dir.join("reranker.onnx");
+        let tok_path = model_dir.join("reranker_tokenizer.json");
+        if reranker_path.exists() && tok_path.exists() {
+            match crate::index::reranker::CrossEncoder::new(&reranker_path, &tok_path) {
+                Ok(r) => {
+                    info!("Loaded cross-encoder reranker");
+                    Some(r)
+                }
+                Err(e) => {
+                    info!("Reranker load failed ({}), skipping", e);
+                    None
+                }
+            }
+        } else {
+            info!("No reranker model found, skipping");
+            None
+        }
+    };
+
+    let mut si = crate::index::search::SearchIndex::open(&index_dir)
+        .map_err(|e| format!("Open search index: {}", e))?;
+    si.set_embedder(embedder.clone());
+    if let Some(r) = reranker {
+        si.set_reranker(r);
+    }
+    let tantivy = std::sync::Arc::new(tokio::sync::Mutex::new(si));
 
     // Accept loop
     loop {
@@ -492,6 +545,60 @@ async fn handle_request(
                 (Err(e), _) | (_, Err(e)) => err(socket, req.id, -32000, &format!("Read error: {}", e)).await,
             }
         }
+        "dependents" => {
+            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let deps = DEP_GRAPH.lock().unwrap().dependents_of(path);
+            ok(socket, req.id, serde_json::json!({"dependents": deps})).await;
+        }
+        "dependencies" => {
+            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let deps = DEP_GRAPH.lock().unwrap().dependencies_of(path);
+            ok(socket, req.id, serde_json::json!({"dependencies": deps})).await;
+        }
+        "transitive_dependents" => {
+            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let deps = DEP_GRAPH.lock().unwrap().transitive_dependents(path);
+            ok(socket, req.id, serde_json::json!({"transitive_dependents": deps})).await;
+        }
+        "find_export" => {
+            let symbol = req.params.get("symbol").and_then(|v| v.as_str()).unwrap_or("");
+            let files = DEP_GRAPH.lock().unwrap().find_file_by_export(symbol);
+            ok(socket, req.id, serde_json::json!({"files": files})).await;
+        }
+        "impact" => {
+            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let report = DEP_GRAPH.lock().unwrap().impact_analysis(path);
+            ok(socket, req.id, serde_json::json!({"impact": report})).await;
+        }
+        "index_deps" => {
+            let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            let root = std::path::Path::new(path);
+            let walker = crate::walker::Walker::new(root);
+            let records = walker.walk();
+            let node_count = {
+                let mut graph = DEP_GRAPH.lock().unwrap();
+                for r in &records {
+                    graph.add_file(&r.path, &r.relative_path, &r.language);
+                    if !r.is_binary {
+                        if let Ok(content) = std::fs::read_to_string(&r.path) {
+                            graph.add_dependencies(&r.path, &content, &r.language);
+                        }
+                    }
+                }
+                graph.all_nodes().len()
+            };
+            ok(socket, req.id, serde_json::json!({
+                "indexed": records.len(),
+                "nodes": node_count,
+            })).await;
+        }
+        "shadow_list" => {
+            let entries = list_shadow_backups().unwrap_or_default();
+            ok(socket, req.id, serde_json::json!({
+                "entries": entries,
+                "count": entries.len(),
+            })).await;
+        }
         "rollback" => {
             let shadow_dir = shadow_dir();
             let manifest_path = shadow_dir.join("manifest.json");
@@ -557,15 +664,15 @@ async fn err(socket: &mut UnixStream, id: u64, code: i64, message: &str) {
 
 // ── Shadow backup (for write/patch rollback) ────────────────────────────
 
-#[derive(Serialize, Deserialize)]
-struct ShadowEntry {
-    path_hash: String,
-    original_path: String,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ShadowEntry {
+    pub path_hash: String,
+    pub original_path: String,
 }
 
 static SHADOW_MANIFEST: Mutex<Option<Vec<ShadowEntry>>> = Mutex::new(None);
 
-fn shadow_dir() -> PathBuf {
+pub fn shadow_dir() -> PathBuf {
     let base = std::env::temp_dir().join("ruthen").join("indexer_shadow");
     let _ = std::fs::create_dir_all(&base);
     base
@@ -598,9 +705,22 @@ fn shadow_backup(path_str: &str, actual_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+// ── Shadow status (for CLI) ─────────────────────────────────────────────
+
+pub fn list_shadow_backups() -> Result<Vec<ShadowEntry>, String> {
+    let manifest_path = shadow_dir().join("manifest.json");
+    if !manifest_path.exists() {
+        return Ok(Vec::new());
+    }
+    let data = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+    serde_json::from_str::<Vec<ShadowEntry>>(&data)
+        .map_err(|e| format!("Failed to parse manifest: {}", e))
+}
+
 // ── Client RPC helper ───────────────────────────────────────────────────
 
-async fn send_rpc(
+pub async fn send_rpc(
     method: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {

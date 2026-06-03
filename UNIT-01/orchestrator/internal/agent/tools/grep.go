@@ -23,6 +23,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/fsext"
+	"github.com/charmbracelet/crush/internal/ruthen"
 )
 
 // regexCache provides thread-safe caching of compiled regex patterns
@@ -120,7 +121,7 @@ func escapeRegexPattern(pattern string) string {
 	return escaped
 }
 
-func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
+func NewGrepTool(workingDir string, config config.ToolGrep, indexer *ruthen.IndexerClient) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		GrepToolName,
 		grepDescription(),
@@ -135,6 +136,46 @@ func NewGrepTool(workingDir string, config config.ToolGrep) fantasy.AgentTool {
 			}
 
 			searchPath := cmp.Or(params.Path, workingDir)
+
+			// Route through indexer if available.
+			if indexer != nil {
+				results, err := indexer.Search(searchPattern, 100, "", searchPath)
+				if err != nil {
+					return fantasy.NewTextErrorResponse(fmt.Sprintf("error searching via indexer: %v", err)), nil
+				}
+				var output strings.Builder
+				if len(results.Results) == 0 {
+					output.WriteString("No files found")
+				} else {
+					fmt.Fprintf(&output, "Found %d matches\n", len(results.Results))
+					currentFile := ""
+					for _, m := range results.Results {
+						if currentFile != m.Path {
+							if currentFile != "" {
+								output.WriteString("\n")
+							}
+							currentFile = m.Path
+							fmt.Fprintf(&output, "%s:\n", filepath.ToSlash(m.Path))
+						}
+						lineText := m.Content
+						if len(lineText) > maxGrepContentWidth {
+							lineText = lineText[:maxGrepContentWidth] + "..."
+						}
+						fmt.Fprintf(&output, "  Line %d: %s\n", m.Line, lineText)
+					}
+					truncated := len(results.Results) >= 100
+					if truncated {
+						output.WriteString("\n(Results are truncated. Consider using a more specific path or pattern.)")
+					}
+				}
+				return fantasy.WithResponseMetadata(
+					fantasy.NewTextResponse(output.String()),
+					GrepResponseMetadata{
+						NumberOfMatches: len(results.Results),
+						Truncated:       len(results.Results) >= 100,
+					},
+				), nil
+			}
 
 			searchCtx, cancel := context.WithTimeout(ctx, config.GetTimeout())
 			defer cancel()

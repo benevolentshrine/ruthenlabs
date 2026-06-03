@@ -327,8 +327,6 @@ func TestReloadFromDisk_UsesNewConfigValues(t *testing.T) {
 	// providers are visible.
 	t.Setenv("CRUSH_GLOBAL_CONFIG", dir)
 	t.Setenv("CRUSH_GLOBAL_DATA", dir)
-	resetProviderState()
-	t.Cleanup(resetProviderState)
 
 	// Create initial config with one model preference
 	initialConfig := `{
@@ -337,6 +335,8 @@ func TestReloadFromDisk_UsesNewConfigValues(t *testing.T) {
 		},
 		"providers": {
 			"openai": {
+				"type": "openai",
+				"base_url": "http://localhost:11434",
 				"api_key": "test-key",
 				"models": [{"id": "gpt-4", "name": "GPT-4"}]
 			}
@@ -363,10 +363,14 @@ func TestReloadFromDisk_UsesNewConfigValues(t *testing.T) {
 		},
 		"providers": {
 			"openai": {
+				"type": "openai",
+				"base_url": "http://localhost:11434",
 				"api_key": "test-key",
 				"models": [{"id": "gpt-4", "name": "GPT-4"}]
 			},
 			"anthropic": {
+				"type": "anthropic",
+				"base_url": "http://localhost:11434",
 				"api_key": "test-key-2",
 				"models": [{"id": "claude-3", "name": "Claude 3"}]
 			}
@@ -490,6 +494,9 @@ func TestAutoReloadDisabledDuringReload(t *testing.T) {
 	initialConfig := `{
 		"providers": {
 			"anthropic": {
+				"type": "anthropic",
+				"base_url": "http://localhost:11434",
+				"models": [{"id": "claude-opus-4", "name": "Claude Opus 4"}],
 				"api_key": "test-key",
 				"oauth": {"access_token": "token", "refresh_token": "refresh"}
 			}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -15,7 +14,6 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"github.com/charmbracelet/crush/internal/csync"
 	"github.com/charmbracelet/crush/internal/oauth"
-	"github.com/charmbracelet/crush/internal/oauth/copilot"
 	"github.com/invopop/jsonschema"
 )
 
@@ -139,36 +137,39 @@ type ProviderConfig struct {
 
 // ToProvider converts the [ProviderConfig] to a [catwalk.Provider].
 func (c *ProviderConfig) ToProvider() catwalk.Provider {
-	// Convert config provider to provider.Provider format
-	provider := catwalk.Provider{
-		Name:   c.Name,
-		ID:     catwalk.InferenceProvider(c.ID),
-		Models: make([]catwalk.Model, len(c.Models)),
-	}
-
-	// Convert models
-	for i, model := range c.Models {
-		provider.Models[i] = catwalk.Model{
-			ID:                     model.ID,
-			Name:                   model.Name,
-			CostPer1MIn:            model.CostPer1MIn,
-			CostPer1MOut:           model.CostPer1MOut,
-			CostPer1MInCached:      model.CostPer1MInCached,
-			CostPer1MOutCached:     model.CostPer1MOutCached,
-			ContextWindow:          model.ContextWindow,
-			DefaultMaxTokens:       model.DefaultMaxTokens,
-			CanReason:              model.CanReason,
-			ReasoningLevels:        model.ReasoningLevels,
-			DefaultReasoningEffort: model.DefaultReasoningEffort,
-			SupportsImages:         model.SupportsImages,
+	models := make([]catwalk.Model, len(c.Models))
+	for i, m := range c.Models {
+		models[i] = catwalk.Model{
+			ID:                     m.ID,
+			Name:                   m.Name,
+			CostPer1MIn:            m.CostPer1MIn,
+			CostPer1MOut:           m.CostPer1MOut,
+			CostPer1MInCached:      m.CostPer1MInCached,
+			CostPer1MOutCached:     m.CostPer1MOutCached,
+			ContextWindow:          m.ContextWindow,
+			DefaultMaxTokens:       m.DefaultMaxTokens,
+			CanReason:              m.CanReason,
+			ReasoningLevels:        m.ReasoningLevels,
+			DefaultReasoningEffort: m.DefaultReasoningEffort,
+			SupportsImages:         m.SupportsImages,
 		}
+	}
+	var defaultLargeID, defaultSmallID string
+	if len(models) > 0 {
+		defaultLargeID = models[0].ID
+		defaultSmallID = models[len(models)-1].ID
+	}
+	provider := catwalk.Provider{
+		Name:               c.Name,
+		ID:                 catwalk.InferenceProvider(c.ID),
+		APIKey:             c.APIKey,
+		APIEndpoint:        c.BaseURL,
+		DefaultLargeModelID: defaultLargeID,
+		DefaultSmallModelID: defaultSmallID,
+		Models:             models,
 	}
 
 	return provider
-}
-
-func (c *ProviderConfig) SetupGitHubCopilot() {
-	maps.Copy(c.ExtraHeaders, copilot.Headers())
 }
 
 type MCPType string

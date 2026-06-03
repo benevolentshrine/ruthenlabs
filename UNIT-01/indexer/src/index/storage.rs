@@ -41,7 +41,8 @@ pub fn save_metadata(index_dir: &PathBuf, records: &[FileRecord]) -> io::Result<
         })?;
     }
 
-    db.flush().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("flush: {}", e)))?;
+    db.flush()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("flush: {}", e)))?;
     Ok(())
 }
 
@@ -63,9 +64,8 @@ pub fn load_metadata(index_dir: &PathBuf) -> io::Result<Vec<FileRecord>> {
 
     let mut records = Vec::new();
     for result in tree.iter() {
-        let (_, value) = result.map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("sled iter: {}", e))
-        })?;
+        let (_, value) = result
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sled iter: {}", e)))?;
         match bincode::deserialize::<FileRecord>(&value) {
             Ok(record) => records.push(record),
             Err(e) => error!("Failed to deserialize record: {}", e),
@@ -73,3 +73,5 @@ pub fn load_metadata(index_dir: &PathBuf) -> io::Result<Vec<FileRecord>> {
     }
     Ok(records)
 }
+
+

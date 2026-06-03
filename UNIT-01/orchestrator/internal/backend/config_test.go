@@ -108,7 +108,16 @@ func TestSetCompactMode_PublishesConfigChanged(t *testing.T) {
 func TestSetProviderAPIKey_PublishesConfigChanged(t *testing.T) {
 	b, ws, evc := newPublishingWorkspace(t)
 
-	require.NoError(t, b.SetProviderAPIKey(ws.ID, config.ScopeGlobal, "openai", "test-key"))
+	// Seed a basic provider entry so SetProviderAPIKey can find it.
+	require.NoError(t, b.SetConfigField(ws.ID, config.ScopeGlobal,
+		"providers.openai-compat.type", "openai-compat"))
+	require.NoError(t, b.SetConfigField(ws.ID, config.ScopeGlobal,
+		"providers.openai-compat.base_url", "http://localhost:11434"))
+	require.NoError(t, b.SetConfigField(ws.ID, config.ScopeGlobal,
+		"providers.openai-compat.models", []map[string]any{
+			{"id": "llama3", "name": "Llama 3"},
+		}))
+	require.NoError(t, b.SetProviderAPIKey(ws.ID, config.ScopeGlobal, "openai-compat", "test-key"))
 	awaitConfigChanged(t, evc, ws.ID)
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/ruthen"
 	"github.com/charmbracelet/crush/internal/skills"
 )
 
@@ -93,6 +94,7 @@ func NewViewTool(
 	filetracker filetracker.Service,
 	skillTracker *skills.Tracker,
 	workingDir string,
+	indexer *ruthen.IndexerClient,
 	skillsPaths ...string,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
@@ -228,21 +230,48 @@ func NewViewTool(
 			}
 
 			// Read the file content
-			maxContentSize := MaxViewSize
-			if isSkillFile {
-				maxContentSize = 0
-			}
-			content, hasMore, err := readTextFile(filePath, params.Offset, params.Limit, maxContentSize)
-			if err != nil {
-				var tooLarge contentTooLargeError
-				if errors.As(err, &tooLarge) {
-					return fantasy.NewTextErrorResponse(fmt.Sprintf("Content section is too large (%d bytes). Maximum size is %d bytes",
-						tooLarge.Size, tooLarge.Max)), nil
+			var content string
+			var hasMore bool
+			if indexer != nil && !isSkillFile && !isSupportedImage {
+				content, err = indexer.Read(filePath)
+				if err != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("error reading file via indexer: %w", err)
 				}
-				return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", err)
-			}
-			if !utf8.ValidString(content) {
-				return fantasy.NewTextErrorResponse("File content is not valid UTF-8"), nil
+				if !utf8.ValidString(content) {
+					return fantasy.NewTextErrorResponse("File content is not valid UTF-8"), nil
+				}
+				limit := params.Limit
+				if limit <= 0 {
+					limit = DefaultReadLimit
+				}
+				offset := params.Offset
+				lines := strings.Split(content, "\n")
+				if offset > len(lines) {
+					offset = len(lines)
+				}
+				lines = lines[offset:]
+				hasMore = len(lines) > limit
+				if hasMore {
+					lines = lines[:limit]
+				}
+				content = strings.Join(lines, "\n")
+			} else {
+				maxContentSize := MaxViewSize
+				if isSkillFile {
+					maxContentSize = 0
+				}
+				content, hasMore, err = readTextFile(filePath, params.Offset, params.Limit, maxContentSize)
+				if err != nil {
+					var tooLarge contentTooLargeError
+					if errors.As(err, &tooLarge) {
+						return fantasy.NewTextErrorResponse(fmt.Sprintf("Content section is too large (%d bytes). Maximum size is %d bytes",
+							tooLarge.Size, tooLarge.Max)), nil
+					}
+					return fantasy.ToolResponse{}, fmt.Errorf("error reading file: %w", err)
+				}
+				if !utf8.ValidString(content) {
+					return fantasy.NewTextErrorResponse("File content is not valid UTF-8"), nil
+				}
 			}
 
 			openInLSPs(ctx, lspManager, filePath)

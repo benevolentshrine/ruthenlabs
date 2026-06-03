@@ -47,49 +47,6 @@ pub fn is_service_available<P: AsRef<Path>>(socket_path: P) -> bool {
     socket_path.as_ref().exists()
 }
 
-/// Check if Orchestrator is available
-pub fn orchestrator_available() -> bool {
-    is_service_available(orchestrator_socket_path())
-}
-
-/// Check if Indexer is available
-pub fn indexer_available() -> bool {
-    is_service_available(indexer_socket_path())
-}
-
-/// Get ecosystem status - which siblings are present
-pub fn ecosystem_status() -> EcosystemStatus {
-    EcosystemStatus {
-        sandbox: true,
-        orchestrator: orchestrator_available(),
-        indexer: indexer_available(),
-    }
-}
-
-/// Ecosystem presence detection
-#[derive(Debug, Clone)]
-pub struct EcosystemStatus {
-    pub sandbox: bool,
-    pub orchestrator: bool,
-    pub indexer: bool,
-}
-
-impl EcosystemStatus {
-    pub fn service_count(&self) -> usize {
-        let mut count = 0;
-        if self.sandbox {
-            count += 1;
-        }
-        if self.orchestrator {
-            count += 1;
-        }
-        if self.indexer {
-            count += 1;
-        }
-        count
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,13 +61,5 @@ mod tests {
         assert_eq!(orchestrator_socket_path(), base.join("orchestrator.sock"));
         assert_eq!(indexer_socket_path(), base.join("indexer.sock"));
         assert_eq!(MAX_REQUEST_SIZE, 10 * 1024 * 1024);
-    }
-
-    #[test]
-    fn test_ecosystem_status() {
-        // Just verify it doesn't panic
-        let status = ecosystem_status();
-        assert!(status.sandbox); // We exist
-                                 // Other values depend on runtime state
     }
 }

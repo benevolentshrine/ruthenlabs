@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/crush/internal/history"
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/ruthen"
 )
 
 type MultiEditOperation struct {
@@ -63,6 +64,7 @@ func NewMultiEditTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	indexer *ruthen.IndexerClient,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		MultiEditToolName,
@@ -86,7 +88,7 @@ func NewMultiEditTool(
 			var response fantasy.ToolResponse
 			var err error
 
-			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+			editCtx := editContext{ctx, permissions, files, filetracker, workingDir, indexer}
 			// Handle file creation case (first edit has empty old_string)
 			if len(params.Edits) > 0 && params.Edits[0].OldString == "" {
 				response, err = processMultiEditWithCreation(editCtx, params, call)
@@ -209,7 +211,11 @@ func processMultiEditWithCreation(edit editContext, params MultiEditParams, call
 	}
 
 	// Write the file
-	err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
+	if edit.indexer != nil {
+		err = edit.indexer.Write(params.FilePath, currentContent)
+	} else {
+		err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
+	}
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
@@ -366,7 +372,11 @@ func processMultiEditExistingFile(edit editContext, params MultiEditParams, call
 	}
 
 	// Write the updated content
-	err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
+	if edit.indexer != nil {
+		err = edit.indexer.Write(params.FilePath, currentContent)
+	} else {
+		err = os.WriteFile(params.FilePath, []byte(currentContent), 0o644)
+	}
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}

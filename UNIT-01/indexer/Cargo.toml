@@ -1,12 +1,13 @@
 [package]
 name = "indexer"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Ruthen Labs"]
-description = "UNIT-01 Code Indexer — fast local code search engine for AI agents"
+description = "UNIT-01 Code Indexer — hybrid search (BM25 + embeddings) + file watching + AST chunking"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ignore = "0.4"
@@ -24,6 +25,16 @@ sha2 = "0.10"
 nix = { version = "0.29", features = ["signal", "process"] }
 tantivy = "0.22"
 rayon = "1.10"
+notify = "6.1"
+notify-debouncer-mini = "0.4"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+seq-macro = "0.3"
+regex = "1"
+petgraph = "0.6"
+once_cell = "1"
+ort = { version = "2.0.0-rc.12", features = ["download-binaries", "load-dynamic"] }
+tokenizers = "0.21"
 
 [dev-dependencies]
 tempfile = "3"

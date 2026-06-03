@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/filetracker"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/history"
+	"github.com/charmbracelet/crush/internal/ruthen"
 
 	"github.com/charmbracelet/crush/internal/lsp"
 	"github.com/charmbracelet/crush/internal/permission"
@@ -57,6 +58,7 @@ type editContext struct {
 	files       history.Service
 	filetracker filetracker.Service
 	workingDir  string
+	indexer     *ruthen.IndexerClient
 }
 
 func NewEditTool(
@@ -65,6 +67,7 @@ func NewEditTool(
 	files history.Service,
 	filetracker filetracker.Service,
 	workingDir string,
+	indexer *ruthen.IndexerClient,
 ) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		EditToolName,
@@ -79,7 +82,7 @@ func NewEditTool(
 			var response fantasy.ToolResponse
 			var err error
 
-			editCtx := editContext{ctx, permissions, files, filetracker, workingDir}
+			editCtx := editContext{ctx, permissions, files, filetracker, workingDir, indexer}
 
 			if params.OldString == "" {
 				response, err = createNewFile(editCtx, params.FilePath, params.NewString, call)
@@ -164,7 +167,11 @@ func createNewFile(edit editContext, filePath, content string, call fantasy.Tool
 		return resp, nil
 	}
 
-	err = os.WriteFile(filePath, []byte(content), 0o644)
+	if edit.indexer != nil {
+		err = edit.indexer.Write(filePath, content)
+	} else {
+		err = os.WriteFile(filePath, []byte(content), 0o644)
+	}
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
@@ -297,7 +304,11 @@ func deleteContent(edit editContext, filePath, oldString string, replaceAll bool
 		newContent, _ = fsext.ToWindowsLineEndings(newContent)
 	}
 
-	err = os.WriteFile(filePath, []byte(newContent), 0o644)
+	if edit.indexer != nil {
+		err = edit.indexer.Write(filePath, newContent)
+	} else {
+		err = os.WriteFile(filePath, []byte(newContent), 0o644)
+	}
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}
@@ -438,7 +449,11 @@ func replaceContent(edit editContext, filePath, oldString, newString string, rep
 		newContent, _ = fsext.ToWindowsLineEndings(newContent)
 	}
 
-	err = os.WriteFile(filePath, []byte(newContent), 0o644)
+	if edit.indexer != nil {
+		err = edit.indexer.Write(filePath, newContent)
+	} else {
+		err = os.WriteFile(filePath, []byte(newContent), 0o644)
+	}
 	if err != nil {
 		return fantasy.ToolResponse{}, fmt.Errorf("failed to write file: %w", err)
 	}

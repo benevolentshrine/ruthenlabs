@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/fsext"
 	"github.com/charmbracelet/crush/internal/permission"
+	"github.com/charmbracelet/crush/internal/ruthen"
 	"github.com/charmbracelet/crush/internal/shell"
 )
 
@@ -190,7 +191,13 @@ func blockFuncs() []shell.BlockFunc {
 	}
 }
 
-func NewBashTool(permissions permission.Service, workingDir string, attribution *config.Attribution, modelID string) fantasy.AgentTool {
+func NewBashTool(
+	permissions permission.Service,
+	workingDir string,
+	attribution *config.Attribution,
+	modelID string,
+	sandbox *ruthen.SandboxClient,
+) fantasy.AgentTool {
 	return fantasy.NewAgentTool(
 		BashToolName,
 		string(bashDescription(attribution, modelID)),
@@ -199,7 +206,6 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				return fantasy.NewTextErrorResponse("missing command"), nil
 			}
 
-			// Determine working directory
 			execWorkingDir := cmp.Or(params.WorkingDir, workingDir)
 
 			isSafeReadOnly := false
@@ -241,9 +247,34 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 				}
 			}
 
+			startTime := time.Now()
+
+			// Route to sandbox if available.
+			if sandbox != nil {
+				result, err := sandbox.Execute(ruthen.ExecuteParams{
+					Cmd:        params.Command,
+					WorkingDir: execWorkingDir,
+				})
+				if err != nil {
+					return fantasy.ToolResponse{}, fmt.Errorf("sandbox execute: %w", err)
+				}
+				output := formatOutput(result.Stdout, result.Stderr, exitCodeToError(result.ExitCode))
+				metadata := BashResponseMetadata{
+					StartTime:        startTime.UnixMilli(),
+					EndTime:          time.Now().UnixMilli(),
+					Output:           output,
+					Description:      params.Description,
+					WorkingDirectory: execWorkingDir,
+				}
+				if output == "" {
+					return fantasy.WithResponseMetadata(fantasy.NewTextResponse(BashNoOutput), metadata), nil
+				}
+				output += fmt.Sprintf("\n\n<cwd>%s</cwd>", normalizeWorkingDir(execWorkingDir))
+				return fantasy.WithResponseMetadata(fantasy.NewTextResponse(output), metadata), nil
+			}
+
 			// If explicitly requested as background, start immediately with detached context
 			if params.RunInBackground {
-				startTime := time.Now()
 				bgManager := shell.GetBackgroundShellManager()
 				bgManager.Cleanup()
 				// Use background context so it continues after tool returns
@@ -297,9 +328,6 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			}
 
 			// Start synchronous execution with auto-background support
-			startTime := time.Now()
-
-			// Start with detached context so it can survive if moved to background
 			bgManager := shell.GetBackgroundShellManager()
 			bgManager.Cleanup()
 			bgShell, err := bgManager.Start(context.Background(), execWorkingDir, blockFuncs(), params.Command, params.Description)
@@ -380,6 +408,14 @@ func NewBashTool(permissions permission.Service, workingDir string, attribution 
 			return fantasy.WithResponseMetadata(fantasy.NewTextResponse(response), metadata), nil
 		},
 	)
+}
+
+// exitCodeToError creates an error-like signal from an exit code for formatOutput.
+func exitCodeToError(code int) error {
+	if code == 0 {
+		return nil
+	}
+	return fmt.Errorf("exit code %d", code)
 }
 
 // formatOutput formats the output of a completed command with error handling

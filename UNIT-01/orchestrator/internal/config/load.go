@@ -18,8 +18,7 @@ import (
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
-	"github.com/charmbracelet/crush/internal/csync"
+	"github.com/charmbracelet/crush/internal/config"
 	"github.com/charmbracelet/crush/internal/env"
 	"github.com/charmbracelet/crush/internal/filepathext"
 	"github.com/charmbracelet/crush/internal/fsext"
@@ -273,8 +272,6 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 			store.RemoveConfigField(ScopeGlobal, "providers.anthropic")
 			c.Providers.Del(string(p.ID))
 			continue
-		case p.ID == catwalk.InferenceProviderCopilot && config.OAuthToken != nil:
-			prepared.SetupGitHubCopilot()
 		}
 
 		switch p.ID {
@@ -312,20 +309,6 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 				}
 				continue
 			}
-		case catwalk.InferenceProvider("hyper"):
-			if apiKey := env.Get("HYPER_API_KEY"); apiKey != "" {
-				prepared.APIKey = apiKey
-				prepared.APIKeyTemplate = apiKey
-			} else {
-				v, err := resolver.ResolveValue(p.APIKey)
-				if v == "" || err != nil {
-					if configExists {
-						slog.Warn("Skipping Hyper provider due to missing API key", "provider", p.ID)
-						c.Providers.Del(string(p.ID))
-					}
-					continue
-				}
-			}
 		default:
 			// if the provider api or endpoint are missing we skip them
 			v, err := resolver.ResolveValue(p.APIKey)
@@ -351,7 +334,7 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 		providerConfig.Name = cmp.Or(providerConfig.Name, id) // Use ID as name if not set
 		// default to OpenAI if not set
 		providerConfig.Type = cmp.Or(providerConfig.Type, catwalk.TypeOpenAICompat)
-		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) && providerConfig.Type != hyper.Name {
+		if !slices.Contains(catwalk.KnownProviderTypes(), providerConfig.Type) {
 			slog.Warn("Skipping custom provider due to unsupported provider type", "provider", id)
 			c.Providers.Del(id)
 			continue

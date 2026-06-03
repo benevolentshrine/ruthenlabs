@@ -408,17 +408,8 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 		}
 	}
 
-	// Phase 2: HTTP exchange — no lock held.
-	var refreshedToken *oauth.Token
-	var refreshErr error
-	switch providerID {
-	case string(catwalk.InferenceProviderCopilot):
-		refreshedToken, refreshErr = copilot.RefreshToken(ctx, providerConfig.OAuthToken.RefreshToken)
-	case hyperp.Name:
-		refreshedToken, refreshErr = hyper.ExchangeToken(ctx, providerConfig.OAuthToken.RefreshToken)
-	default:
-		return fmt.Errorf("OAuth refresh not supported for provider %s", providerID)
-	}
+	return fmt.Errorf("OAuth refresh not supported for provider %s", providerID)
+}
 	if refreshErr != nil {
 		// Phase 3: Fallback — re-check disk under lock. The exchange may
 		// have failed because another process already rotated the refresh

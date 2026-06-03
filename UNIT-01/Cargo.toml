@@ -3,5 +3,4 @@ resolver = "2"
 members = [
     "indexer",
     "sandbox",
-    "sandbox-mcp",
 ]

@@ -15,7 +15,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -32,7 +31,6 @@ import (
 	"charm.land/fantasy/providers/openrouter"
 	"charm.land/fantasy/providers/vercel"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/crush/internal/agent/hyper"
 	"github.com/charmbracelet/crush/internal/agent/notify"
 	"github.com/charmbracelet/crush/internal/agent/tools"
 	"github.com/charmbracelet/crush/internal/agent/tools/mcp"
@@ -572,8 +570,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 	a.eventPromptResponded(call.SessionID, time.Since(startTime).Truncate(time.Second))
 
 	if err != nil {
-		isHyper := largeModel.ModelCfg.Provider == hyper.Name
-		isCancelErr := errors.Is(err, context.Canceled)
+			isCancelErr := errors.Is(err, context.Canceled)
 		if currentAssistant == nil {
 			return result, err
 		}
@@ -639,12 +636,6 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (result *
 		linkStyle := lipgloss.NewStyle().Foreground(charmtone.Guac).Underline(true)
 		if isCancelErr {
 			currentAssistant.AddFinish(message.FinishReasonCanceled, "User canceled request", "")
-		} else if isHyper && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusUnauthorized {
-			currentAssistant.AddFinish(message.FinishReasonError, "Unauthorized", `Please re-authenticate with Hyper. You can also run "crush auth" to re-authenticate.`)
-		} else if isHyper && errors.As(err, &providerErr) && providerErr.StatusCode == http.StatusPaymentRequired {
-			url := hyper.BaseURL()
-			link := linkStyle.Hyperlink(url, "id=hyper").Render(url)
-			currentAssistant.AddFinish(message.FinishReasonError, "No credits", "You're out of credits. Add more at "+link)
 		} else if errors.As(err, &providerErr) {
 			if providerErr.Message == "The requested model is not supported." {
 				url := "https://github.com/settings/copilot/features"
