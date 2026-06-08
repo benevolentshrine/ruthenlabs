@@ -1,0 +1,25 @@
+{
+  "name": "unit01",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "bin": {
+    "unit01": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run --bun src/index.ts",
+    "test": "npx tsc --noEmit",
+    "build": "bun build src/index.ts --target=bun --outdir=dist"
+  },
+  "dependencies": {
+    "picocolors": "^1.1.1",
+    "diff": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^8.0.0",
+    "@types/node": "^25.9.1",
+    "bun-types": "^1.3.14",
+    "typescript": "^6.0.3"
+  }
+}

@@ -2,6 +2,7 @@ use crate::index::embed::Embedder;
 use crate::DaemonAction;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -70,9 +71,9 @@ fn cleanup_state_files() {
 
 #[cfg(unix)]
 fn pid_is_alive(pid: u32) -> bool {
-    use nix::sys::signal::{kill, Signal};
+    use nix::sys::signal::kill;
     use nix::unistd::Pid;
-    kill(Pid::from_raw(pid as i32), Signal::SIGEMT).is_ok()
+    kill(Pid::from_raw(pid as i32), None).is_ok()
 }
 
 #[cfg(not(unix))]
@@ -306,6 +307,7 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
             accept = listener.accept() => {
                 let (mut socket, _) = accept?;
                 let tantivy = tantivy.clone();
+                let embedder = embedder.clone();
                 let tx = shutdown_tx.clone();
 
                 tokio::spawn(async move {
@@ -317,7 +319,7 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(Ok(n)) if n > 0 => {
                             match serde_json::from_slice::<JsonRpcRequest>(&buf[..n]) {
                                 Ok(req) => {
-                                    handle_request(req, &mut socket, tantivy, tx).await;
+                                    handle_request(req, &mut socket, tantivy, embedder, tx).await;
                                 }
                                 Err(e) => {
                                     error!("JSON parse error: {}", e);
@@ -347,10 +349,113 @@ async fn run_daemon_server() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+static WATCHED_PATHS: once_cell::sync::Lazy<Mutex<HashSet<PathBuf>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(HashSet::new()));
+
+fn start_background_watcher(
+    path: PathBuf,
+    tantivy: std::sync::Arc<tokio::sync::Mutex<crate::index::search::SearchIndex>>,
+    embedder: Arc<dyn Embedder + Send + Sync>,
+) {
+    let mut watched = WATCHED_PATHS.lock().unwrap();
+    if watched.contains(&path) {
+        return;
+    }
+    watched.insert(path.clone());
+    drop(watched);
+
+    info!("Spawning background watcher for {:?}", path);
+    tokio::spawn(async move {
+        let mut watch_rx = crate::index::watcher::start_watch(&path, 500);
+        let index_dir = crate::index::storage::index_dir();
+        let vector_db_path = index_dir.join("vectors.db");
+        let hash_db_path = index_dir.join("hashes.sled");
+
+        let hash_store = match crate::index::incremental::ContentHashStore::open(&hash_db_path) {
+            Ok(hs) => hs,
+            Err(e) => {
+                error!("Watcher: Failed to open hash store: {}", e);
+                return;
+            }
+        };
+
+        while let Some(event) = watch_rx.recv().await {
+            match event {
+                crate::index::watcher::WatchEvent::Modified(paths) => {
+                    info!("[Watcher] Detected {} file changes, updating index...", paths.len());
+                    for p in &paths {
+                        let p_path = std::path::Path::new(p);
+                        if !p_path.is_file() {
+                            continue;
+                        }
+                        let content = match std::fs::read_to_string(p) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+
+                        // Check if content hash changed
+                        let changed = match hash_store.has_changed(p, content.as_bytes()) {
+                            Ok(c) => c,
+                            Err(_) => true,
+                        };
+                        if !changed {
+                            continue;
+                        }
+
+                        let relative = p_path
+                            .strip_prefix(&path)
+                            .unwrap_or(p_path)
+                            .to_string_lossy()
+                            .to_string();
+                        let ext = p_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                        let language = crate::index::chunker::language_from_ext(ext);
+                        
+                        let chunks = crate::index::chunker::chunk_file(
+                            &content,
+                            p,
+                            &relative,
+                            language,
+                        );
+
+                        // Update vector DB
+                        if let Ok(vs) = crate::index::vector::VectorStore::open(&vector_db_path) {
+                            let _ = vs.remove_file(p);
+                            let _ = vs.insert_chunks(&chunks, embedder.as_ref());
+                        }
+
+                        // Update Tantivy search index
+                        let mut guard = tantivy.lock().await;
+                        let _ = guard.index_chunks(&chunks);
+                        drop(guard);
+
+                        // Update dependency graph
+                        let mut graph = DEP_GRAPH.lock().unwrap();
+                        graph.add_file(p, &relative, language);
+                        let _ = graph.add_dependencies(p, &content, language);
+                        drop(graph);
+
+                        let _ = hash_store.update_hash(p, content.as_bytes());
+                        info!("[Watcher] Reindexed: {}", relative);
+                    }
+                    let _ = hash_store.flush();
+                }
+                crate::index::watcher::WatchEvent::Error(e) => {
+                    error!("[Watcher] File watch error: {}", e);
+                }
+            }
+        }
+        
+        // Remove from watched set on watch end
+        let mut watched = WATCHED_PATHS.lock().unwrap();
+        watched.remove(&path);
+    });
+}
+
 async fn handle_request(
     req: JsonRpcRequest,
     socket: &mut UnixStream,
     tantivy: std::sync::Arc<tokio::sync::Mutex<crate::index::search::SearchIndex>>,
+    embedder: Arc<dyn Embedder + Send + Sync>,
     shutdown_tx: std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 ) {
     match req.method.as_str() {
@@ -573,6 +678,10 @@ async fn handle_request(
         "index_deps" => {
             let path = req.params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
             let root = std::path::Path::new(path);
+            
+            let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+            start_background_watcher(canonical_root.clone(), tantivy.clone(), embedder.clone());
+
             let walker = crate::walker::Walker::new(root);
             let records = walker.walk();
             let node_count = {

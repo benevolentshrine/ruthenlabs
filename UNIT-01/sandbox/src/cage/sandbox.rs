@@ -95,16 +95,42 @@ impl SandboxedChild {
     pub fn wait_with_output(mut self) -> Result<std::process::Output> {
         let timeout = self.timeout_secs;
         let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         if timeout > 0 {
             if let Some(ref child) = self.child {
                 let pid = child.id();
                 let killed_clone = killed.clone();
+                let finished_clone = finished.clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(timeout));
+                    let sleep_interval = std::time::Duration::from_millis(100);
+                    let mut elapsed = std::time::Duration::from_secs(0);
+                    let target = std::time::Duration::from_secs(timeout);
+                    while elapsed < target {
+                        if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        std::thread::sleep(sleep_interval);
+                        elapsed += sleep_interval;
+                    }
+                    if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
                     killed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                     let _ = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    
+                    let mut sigkill_elapsed = std::time::Duration::from_secs(0);
+                    let sigkill_target = std::time::Duration::from_secs(2);
+                    while sigkill_elapsed < sigkill_target {
+                        if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        std::thread::sleep(sleep_interval);
+                        sigkill_elapsed += sleep_interval;
+                    }
+                    if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
                     let _ = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
                 });
             }
@@ -117,6 +143,8 @@ impl SandboxedChild {
         let output = child
             .wait_with_output()
             .context("Failed to wait for sandboxed child")?;
+
+        finished.store(true, std::sync::atomic::Ordering::SeqCst);
 
         if killed.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::warn!(
@@ -132,16 +160,42 @@ impl SandboxedChild {
     pub fn wait(mut self) -> Result<std::process::ExitStatus> {
         let timeout = self.timeout_secs;
         let killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
         if timeout > 0 {
             if let Some(ref child) = self.child {
                 let pid = child.id();
                 let killed_clone = killed.clone();
+                let finished_clone = finished.clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(timeout));
+                    let sleep_interval = std::time::Duration::from_millis(100);
+                    let mut elapsed = std::time::Duration::from_secs(0);
+                    let target = std::time::Duration::from_secs(timeout);
+                    while elapsed < target {
+                        if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        std::thread::sleep(sleep_interval);
+                        elapsed += sleep_interval;
+                    }
+                    if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
                     killed_clone.store(true, std::sync::atomic::Ordering::SeqCst);
                     let _ = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    
+                    let mut sigkill_elapsed = std::time::Duration::from_secs(0);
+                    let sigkill_target = std::time::Duration::from_secs(2);
+                    while sigkill_elapsed < sigkill_target {
+                        if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        std::thread::sleep(sleep_interval);
+                        sigkill_elapsed += sleep_interval;
+                    }
+                    if finished_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
                     let _ = unsafe { libc::kill(pid as i32, libc::SIGKILL) };
                 });
             }
@@ -152,6 +206,8 @@ impl SandboxedChild {
             .take()
             .ok_or_else(|| anyhow::anyhow!("child already taken"))?;
         let status = child.wait().context("Failed to wait for sandboxed child")?;
+
+        finished.store(true, std::sync::atomic::Ordering::SeqCst);
 
         if killed.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::warn!(
