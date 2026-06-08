@@ -128,14 +128,34 @@ export function renderToolCard(tc: ToolCall, collapsed = false, width = 80): str
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {
-  const entries = Object.entries(args)
-  if (entries.length === 0) return ''
-  if (entries.length === 1) {
-    const [k, v] = entries[0]
+  const priorityKeys = [
+    'path', 'TargetFile', 'AbsolutePath',
+    'command', 'CommandLine',
+    'query', 'Query'
+  ]
+  
+  for (const pk of priorityKeys) {
+    if (pk in args && args[pk] !== undefined) {
+      const v = args[pk]
+      const s = typeof v === 'string' ? v : JSON.stringify(v)
+      return trunc(`${pk}=${s}`, 60)
+    }
+  }
+
+  const excludeKeys = new Set([
+    'content', 'replacement', 'target',
+    'ReplacementContent', 'TargetContent', 'CodeContent'
+  ])
+
+  const filteredEntries = Object.entries(args).filter(([k]) => !excludeKeys.has(k))
+
+  if (filteredEntries.length === 0) return ''
+  if (filteredEntries.length === 1) {
+    const [k, v] = filteredEntries[0]
     const s = typeof v === 'string' ? v : JSON.stringify(v)
     return trunc(`${k}=${s}`, 60)
   }
-  return trunc(entries.map(([k, v]) => {
+  return trunc(filteredEntries.map(([k, v]) => {
     const s = typeof v === 'string' ? v : JSON.stringify(v)
     return `${k}=${trunc(s, 20)}`
   }).join(' '), 60)

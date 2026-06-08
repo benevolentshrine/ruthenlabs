@@ -894,18 +894,15 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
             const pctUsed = this.state.contextWindow > 0 ? Math.round((totalTokens / this.state.contextWindow) * 100) : 0
             
             let currentThreshold = 0
-            if (pctUsed >= 95) currentThreshold = 95
-            else if (pctUsed >= 80) currentThreshold = 80
-            else if (pctUsed >= 50) currentThreshold = 50
+            if (pctUsed >= 90) currentThreshold = 90
+            else if (pctUsed >= 75) currentThreshold = 75
 
             if (currentThreshold > this.lastWarnedThreshold) {
               this.lastWarnedThreshold = currentThreshold
-              if (currentThreshold === 95) {
+              if (currentThreshold === 90) {
                 this.notify('error', `Context limit critical (${pctUsed}%). Run /compress now or start a /new session to prevent model failure.`)
-              } else if (currentThreshold === 80) {
+              } else if (currentThreshold === 75) {
                 this.notify('warn', `Context budget is getting full (${pctUsed}%). Consider running /compress to summarize history.`)
-              } else if (currentThreshold === 50) {
-                this.notify('info', `Context is growing (${pctUsed}%). Use /compress if you want to free up space.`)
               }
             } else if (currentThreshold < this.lastWarnedThreshold) {
               this.lastWarnedThreshold = currentThreshold
@@ -1303,12 +1300,10 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
         const totalTokens = this.state.tokensIn + this.state.tokensOut
         const pctUsed = this.state.contextWindow > 0 ? Math.round((totalTokens / this.state.contextWindow) * 100) : 0
         let boxL2 = `  `
-        if (pctUsed >= 95) {
+        if (pctUsed >= 90) {
           boxL2 = `  ${ansi.fg(colors.error)}⚠️ Context critical: ${pctUsed}%! Run /compress now or /new.${ansi.reset}`
-        } else if (pctUsed >= 80) {
+        } else if (pctUsed >= 75) {
           boxL2 = `  ${ansi.fg(colors.warn)}⚠️ Context full: ${pctUsed}%! Consider running /compress.${ansi.reset}`
-        } else if (pctUsed >= 50) {
-          boxL2 = `  ${ansi.fg(colors.textMuted)}ℹ️ Context growing: ${pctUsed}% (Consider running /compress).${ansi.reset}`
         }
         
         const boxL3 = `  ${modeStr} · ${modelStr} · Unit-01 Zen`

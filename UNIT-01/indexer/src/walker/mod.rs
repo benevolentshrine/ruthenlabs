@@ -28,6 +28,20 @@ impl Walker {
             .ignore(false)
             .git_ignore(true)
             .add_custom_ignore_filename(".indexerignore")
+            .filter_entry(|entry| {
+                if let Some(name) = entry.file_name().to_str() {
+                    name != "target"
+                        && name != "node_modules"
+                        && name != "dist"
+                        && name != ".git"
+                        && name != ".ruthen"
+                        && name != "indexer_index"
+                        && name != ".githooks"
+                        && name != ".github"
+                } else {
+                    true
+                }
+            })
             .build_parallel();
 
         walker.run(|| {
@@ -178,7 +192,22 @@ pub fn find_files(name: &str, root: &str) -> Vec<String> {
         return Vec::new();
     }
     let mut results = Vec::new();
-    let walker = WalkBuilder::new(root_path).build();
+    let walker = WalkBuilder::new(root_path)
+        .filter_entry(|entry| {
+            if let Some(n) = entry.file_name().to_str() {
+                n != "target"
+                    && n != "node_modules"
+                    && n != "dist"
+                    && n != ".git"
+                    && n != ".ruthen"
+                    && n != "indexer_index"
+                    && n != ".githooks"
+                    && n != ".github"
+            } else {
+                true
+            }
+        })
+        .build();
     for entry in walker.flatten() {
         if entry.path().is_file() {
             if let Some(fname) = entry.path().file_name().and_then(|n| n.to_str()) {
@@ -204,7 +233,22 @@ pub fn glob_files(pattern: &str, base: &str) -> Result<Vec<String>, String> {
     }
 
     let mut results = Vec::new();
-    let walker = WalkBuilder::new(base_path).build();
+    let walker = WalkBuilder::new(base_path)
+        .filter_entry(|entry| {
+            if let Some(n) = entry.file_name().to_str() {
+                n != "target"
+                    && n != "node_modules"
+                    && n != "dist"
+                    && n != ".git"
+                    && n != ".ruthen"
+                    && n != "indexer_index"
+                    && n != ".githooks"
+                    && n != ".github"
+            } else {
+                true
+            }
+        })
+        .build();
     for entry in walker.flatten() {
         if entry.path().is_file() {
             let rel = entry.path().strip_prefix(base_path).unwrap_or(entry.path());

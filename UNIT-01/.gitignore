@@ -4,10 +4,8 @@
 *.dll
 *.so
 *.dylib
-unit01
-unit-01
-sandbox
-indexer
+/unit01
+/unit-01
 
 # Build artifacts
 target/
