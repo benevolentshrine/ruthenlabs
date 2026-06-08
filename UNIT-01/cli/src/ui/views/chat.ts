@@ -24,6 +24,14 @@ export interface ParsedThoughts {
   isThinking: boolean
 }
 
+export function formatDuration(seconds: number): string {
+  if (seconds < 1.0) {
+    return `${Math.round(seconds * 1000)}ms`
+  }
+  return `${seconds.toFixed(1)}s`
+}
+
+
 export function parseThoughts(content: string): ParsedThoughts {
   const startTag = '<think>'
   const endTag = '</think>'
@@ -132,11 +140,17 @@ export class ChatView {
       if (m.role === 'system') continue
       if (m.role === 'tool') continue  // tool results are visualized in tool cards
       if (m.role === 'user') {
-        const rendered = renderMarkdown(m.content, inner)
+        const wrapW = W - 6
+        const rendered = renderMarkdown(m.content, wrapW)
         const lines: string[] = []
+        const bgCode = ansi.bg(colors.bgLight)
+        const borderCode = `${ansi.fg(colors.borderHi)}│${ansi.reset}`
+        lines.push('') // spacing above
         for (const l of rendered) {
-          lines.push(`  ${ansi.fg(colors.user)}${ansi.bold}${l}${ansi.reset}`)
+          const paddedText = pad(l, wrapW, 'left')
+          lines.push(`  ${borderCode}${bgCode} ${paddedText} ${ansi.reset}`)
         }
+        lines.push('') // spacing below
         blocks.push({ msgId: m.id, kind: 'user', hasThought: false, lines })
       } else if (m.role === 'assistant') {
         const { thought, response, isThinking } = parseThoughts(m.content)
@@ -147,14 +161,15 @@ export class ChatView {
           hasThought = true
           const collapsed = !isThinking && !this.state.expandedThoughts.has(m.id)
           const duration = m.thoughtDuration ?? 1.0
+          const durationStr = formatDuration(duration)
           
           let headerLine = ''
           if (isThinking) {
             const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
-            headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${duration.toFixed(1)}s${ansi.reset}`
+            headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${durationStr}${ansi.reset}`
           } else {
-            const sign = collapsed ? '+' : '-'
-            headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${sign} Thought: ${duration.toFixed(1)}s${ansi.reset}`
+            const sign = collapsed ? '+' : '–'
+            headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${sign} Thought: ${durationStr}${ansi.reset}`
           }
           
           lines.push(headerLine)
@@ -196,8 +211,10 @@ export class ChatView {
       if (thought || isThinking) {
         hasThought = true
         const elapsed = (Date.now() - this.state.thoughtStartTime) / 1000
+        const durationStr = formatDuration(elapsed)
         const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
-        const headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${elapsed.toFixed(1)}s${ansi.reset}`
+        const headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${durationStr}${ansi.reset}`
+
         lines.push(headerLine)
         
         // Always expanded while thinking

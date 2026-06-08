@@ -1,5 +1,5 @@
 import pc from 'picocolors'
-import { vw, wrap } from './util/ansi.js'
+import { vw, wrap, pad } from './util/ansi.js'
 
 interface LangSyntax {
   keywords: Set<string>
@@ -533,6 +533,10 @@ const BLOCK_COMMENT_START = '/*'
 const BLOCK_COMMENT_END = '*/'
 
 export function highlightCodeLine(line: string, lang: string, state: HighlightState): string {
+  const base = LANG_ALIASES[lang] ?? lang
+  if (base === 'html' || base === 'xml' || base === 'svg') {
+    return highlightHtml(line)
+  }
   const { keywords, builtins, commentPrefixes, stringDelimiters } = langSyntax(lang)
   const result: string[] = []
   let i = 0
@@ -540,7 +544,7 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
 
   while (i < len) {
     if (state.inBlockComment) {
-      const endIdx = line.indexOf(BLOCK_COMMENT_END, i)
+      const endIdx = line.indexOf(BLOCK_COMMENT_START, i)
       if (endIdx === -1) {
         result.push(pc.dim(line.slice(i)))
         i = len
@@ -630,6 +634,128 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
   return result.join('')
 }
 
+function highlightHtml(line: string): string {
+  let result = ''
+  let i = 0
+  const len = line.length
+  
+  while (i < len) {
+    if (line.slice(i, i + 4) === '<!--') {
+      const endIdx = line.indexOf('-->', i + 4)
+      if (endIdx === -1) {
+        result += pc.dim(line.slice(i))
+        break
+      } else {
+        result += pc.dim(line.slice(i, endIdx + 3))
+        i = endIdx + 3
+        continue
+      }
+    }
+    
+    if (line[i] === '<') {
+      let j = i + 1
+      let inQuote = false
+      let quoteChar = ''
+      while (j < len) {
+        const char = line[j]
+        if ((char === '"' || char === "'") && line[j - 1] !== '\\') {
+          if (!inQuote) {
+            inQuote = true
+            quoteChar = char
+          } else if (char === quoteChar) {
+            inQuote = false
+          }
+        }
+        if (!inQuote && char === '>') {
+          j++
+          break
+        }
+        j++
+      }
+      
+      const tagContent = line.slice(i, j)
+      result += highlightTag(tagContent)
+      i = j
+      continue
+    }
+    
+    result += line[i]
+    i++
+  }
+  
+  return result
+}
+
+function highlightTag(tag: string): string {
+  let result = pc.gray('<')
+  let content = tag.slice(1)
+  if (content.endsWith('>')) {
+    content = content.slice(0, -1)
+  }
+  
+  let isClosing = false
+  if (content.startsWith('/')) {
+    isClosing = true
+    result += pc.gray('/')
+    content = content.slice(1)
+  }
+  
+  const match = content.match(/^([a-zA-Z0-9:-]+)/)
+  if (match) {
+    const tagName = match[1]
+    result += pc.red(tagName)
+    content = content.slice(tagName.length)
+  }
+  
+  let i = 0
+  const len = content.length
+  while (i < len) {
+    if (/\s/.test(content[i])) {
+      result += content[i]
+      i++
+      continue
+    }
+    
+    const attrMatch = content.slice(i).match(/^([a-zA-Z0-9:-]+)/)
+    if (attrMatch) {
+      const attrName = attrMatch[1]
+      result += pc.yellow(attrName)
+      i += attrName.length
+      
+      if (content[i] === '=') {
+        result += pc.gray('=')
+        i++
+        
+        if (content[i] === '"' || content[i] === "'") {
+          const quote = content[i]
+          let j = i + 1
+          while (j < len && content[j] !== quote) {
+            if (content[j] === '\\') j += 2
+            else j++
+          }
+          if (j < len) j++
+          result += pc.cyan(content.slice(i, j))
+          i = j
+        } else {
+          let j = i
+          while (j < len && !/\s/.test(content[j]) && content[j] !== '>') j++
+          result += pc.cyan(content.slice(i, j))
+          i = j
+        }
+      }
+      continue
+    }
+    
+    result += content[i]
+    i++
+  }
+  
+  if (tag.endsWith('>')) {
+    result += pc.gray('>')
+  }
+  return result
+}
+
 function wrapAnsi(s: string, width: number): string[] {
   if (!s) return ['']
   const lines: string[] = []
@@ -676,6 +802,110 @@ function wrapAnsi(s: string, width: number): string[] {
   return lines
 }
 
+function renderTableBlock(tableLines: string[], maxWidth: number): string[] {
+  const parsedRows: string[][] = []
+  for (const line of tableLines) {
+    const cells = line.split('|').map(c => c.trim())
+    if (cells[0] === '') cells.shift()
+    if (cells[cells.length - 1] === '') cells.pop()
+    parsedRows.push(cells)
+  }
+
+  if (parsedRows.length < 2) return tableLines
+
+  const headers = parsedRows[0]
+  const separators = parsedRows[1]
+  const dataRows = parsedRows.slice(2)
+
+  const numCols = headers.length
+
+  const alignments: ('left' | 'right' | 'center')[] = separators.map(sep => {
+    const left = sep.startsWith(':')
+    const right = sep.endsWith(':')
+    if (left && right) return 'center'
+    if (right) return 'right'
+    return 'left'
+  })
+
+  const renderedHeaders = headers.map(h => renderInline(h))
+  const renderedDataRows = dataRows.map(row => row.map(c => renderInline(c)))
+
+  const colWidths: number[] = Array(numCols).fill(0)
+  for (let col = 0; col < numCols; col++) {
+    let maxW = vw(renderedHeaders[col])
+    for (const row of renderedDataRows) {
+      if (row[col]) {
+        maxW = Math.max(maxW, vw(row[col]))
+      }
+    }
+    colWidths[col] = Math.max(maxW, 1)
+  }
+
+  const overhead = 3 * numCols + 1
+  let totalWidth = colWidths.reduce((a, b) => a + b, 0) + overhead
+
+  if (totalWidth > maxWidth) {
+    const diff = totalWidth - maxWidth
+    let maxColIdx = 0
+    for (let c = 0; c < numCols; c++) {
+      if (colWidths[c] > colWidths[maxColIdx]) {
+        maxColIdx = c
+      }
+    }
+    colWidths[maxColIdx] = Math.max(10, colWidths[maxColIdx] - diff)
+  }
+
+  const borderCol = pc.gray
+  const topBorder = borderCol('┌' + colWidths.map(w => '─'.repeat(w + 2)).join('┬') + '┐')
+  const sepBorder = borderCol('├' + colWidths.map(w => '─'.repeat(w + 2)).join('┼') + '┤')
+  const bottomBorder = borderCol('└' + colWidths.map(w => '─'.repeat(w + 2)).join('┴') + '┘')
+
+  const result: string[] = []
+  result.push(topBorder)
+
+  const headerRowStr = borderCol('│') + renderedHeaders.map((h, colIdx) => {
+    const w = colWidths[colIdx]
+    const align = alignments[colIdx]
+    const styledHeader = pc.bold(pc.cyan(stripAnsi(h)))
+    return ' ' + pad(styledHeader, w, align) + ' '
+  }).join(borderCol('│')) + borderCol('│')
+  result.push(headerRowStr)
+  result.push(sepBorder)
+
+  for (let r = 0; r < renderedDataRows.length; r++) {
+    const row = renderedDataRows[r]
+    let maxLines = 1
+    const cellLinesList: string[][] = []
+    
+    for (let colIdx = 0; colIdx < numCols; colIdx++) {
+      const cellText = row[colIdx] ?? ''
+      const w = colWidths[colIdx]
+      const cellLines = wrapAnsi(cellText, w)
+      cellLinesList.push(cellLines)
+      maxLines = Math.max(maxLines, cellLines.length)
+    }
+
+    for (let lineIdx = 0; lineIdx < maxLines; lineIdx++) {
+      const lineStr = borderCol('│') + cellLinesList.map((lines, colIdx) => {
+        const w = colWidths[colIdx]
+        const align = alignments[colIdx]
+        const lineContent = lines[lineIdx] ?? ''
+        return ' ' + pad(lineContent, w, align) + ' '
+      }).join(borderCol('│')) + borderCol('│')
+      result.push(lineStr)
+    }
+
+    if (r < renderedDataRows.length - 1) {
+      result.push(sepBorder)
+    }
+  }
+
+  result.push(bottomBorder)
+  return result
+}
+
+import { stripAnsi } from './util/ansi.js'
+
 export function renderMarkdown(text: string, maxWidth?: number): string[] {
   const width = maxWidth ?? (process.stdout.columns ?? 100) - 4
   const lines = text.split('\n')
@@ -683,21 +913,21 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
   let inCodeBlock = false
   let codeBlockLang = ''
   let inBlockComment = false
+  let codeLineIndex = 1
 
-  for (const raw of lines) {
+  let lineIdx = 0
+  while (lineIdx < lines.length) {
+    const raw = lines[lineIdx]
+
     if (raw.startsWith('```')) {
-      if (inCodeBlock) {
-        result.push(pc.gray('└' + '─'.repeat(width - 1)))
-      } else {
-        const info = raw.slice(3).trim().split(/\s/)[0]
-        codeBlockLang = LANG_ALIASES[info] ?? info
-        const prefix = '┌──'
-        const suffix = codeBlockLang ? ` ${codeBlockLang} ` : ''
-        const remaining = Math.max(0, width - prefix.length - suffix.length)
-        result.push(pc.gray(prefix + suffix + '─'.repeat(remaining)))
-      }
       inCodeBlock = !inCodeBlock
       inBlockComment = false
+      if (inCodeBlock) {
+        const info = raw.slice(3).trim().split(/\s/)[0]
+        codeBlockLang = LANG_ALIASES[info] ?? info
+        codeLineIndex = 1
+      }
+      lineIdx++
       continue
     }
 
@@ -711,12 +941,33 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
         highlighted = raw
       }
 
-      // Code blocks are indented by 2 spaces, so the inner width is width - 2
-      const wrapped = wrapAnsi(highlighted, width - 2)
-      for (const line of wrapped) {
-        result.push('  ' + line)
-      }
+      const linePrefix = pc.dim(String(codeLineIndex).padStart(2, ' ') + ' ')
+      const lineIndent = pc.dim('   ')
+      const wrapped = wrapAnsi(highlighted, width - 6)
+      wrapped.forEach((line, idx) => {
+        result.push('  ' + (idx === 0 ? linePrefix : lineIndent) + line)
+      })
+      codeLineIndex++
+      lineIdx++
       continue
+    }
+
+    if (raw.trim().startsWith('|')) {
+      const tableLines: string[] = []
+      let tempIdx = lineIdx
+      while (tempIdx < lines.length && lines[tempIdx].trim().startsWith('|')) {
+        tableLines.push(lines[tempIdx].trim())
+        tempIdx++
+      }
+
+      const hasSeparator = tableLines.length >= 2 && tableLines[1].replace(/[\s|:-]/g, '') === ''
+
+      if (hasSeparator) {
+        const renderedTable = renderTableBlock(tableLines, width)
+        result.push(...renderedTable)
+        lineIdx = tempIdx
+        continue
+      }
     }
 
     if (raw.startsWith('### ')) {
@@ -724,6 +975,7 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
       for (const line of wrapped) {
         result.push(pc.bold(pc.cyan(line)))
       }
+      lineIdx++
       continue
     }
     if (raw.startsWith('## ')) {
@@ -731,6 +983,7 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
       for (const line of wrapped) {
         result.push(pc.bold(pc.cyan(line)))
       }
+      lineIdx++
       continue
     }
     if (raw.startsWith('# ')) {
@@ -738,6 +991,7 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
       for (const line of wrapped) {
         result.push(pc.bold(pc.cyan(line)))
       }
+      lineIdx++
       continue
     }
 
@@ -750,6 +1004,31 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
           result.push(pc.dim('│ ') + renderInline(line))
         }
       }
+      lineIdx++
+      continue
+    }
+
+    const checkboxMatch = raw.match(/^[-*]\s+\[([ xX])\]\s+(.*)/)
+    if (checkboxMatch) {
+      const checked = checkboxMatch[1] !== ' '
+      const content = checkboxMatch[2]
+      const checkboxStr = checked
+        ? pc.dim('[') + pc.green('✓') + pc.dim(']')
+        : pc.dim('[ ]')
+      
+      const wrapped = wrap(content, width - 6)
+      if (wrapped.length === 0) {
+        result.push('  ' + checkboxStr)
+      } else {
+        wrapped.forEach((line, idx) => {
+          if (idx === 0) {
+            result.push('  ' + checkboxStr + ' ' + renderInline(line))
+          } else {
+            result.push('      ' + renderInline(line))
+          }
+        })
+      }
+      lineIdx++
       continue
     }
 
@@ -771,6 +1050,7 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
           })
         }
       }
+      lineIdx++
       continue
     }
 
@@ -789,11 +1069,13 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
           }
         })
       }
+      lineIdx++
       continue
     }
 
     if (raw.match(/^[-_]{3,}$/)) {
       result.push(pc.dim('─'.repeat(width)))
+      lineIdx++
       continue
     }
 
@@ -805,16 +1087,16 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
         result.push(renderInline(line))
       }
     }
+    lineIdx++
   }
 
   return result
 }
 
-
 function renderInline(text: string): string {
   let r: string = text
 
-  r = r.replace(/\*\*(.+?)\*\*/g, (_, m: string) => pc.bold(m))
+  r = r.replace(/\*\*(.+?)\*\*/g, (_, m: string) => pc.bold(pc.yellow(m)))
   r = r.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, (_, m: string) => pc.italic(m))
   r = r.replace(/`([^`]+)`/g, (_, m: string) => pc.bgCyan(pc.black(m)))
   r = r.replace(/~~(.+?)~~/g, (_, m: string) => pc.dim(pc.strikethrough(m)))
