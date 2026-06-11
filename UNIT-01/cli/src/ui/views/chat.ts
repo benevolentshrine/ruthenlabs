@@ -2,7 +2,7 @@
 
 import { ansi, colors, pad, trunc, vw, wrap, SPINNER } from '../../util/ansi.js'
 import { renderMarkdown } from '../../markdown.js'
-import { renderToolCard } from '../widgets/tool-card.js'
+import { renderToolCard, renderToolsPanel } from '../widgets/tool-card.js'
 import type { ChatMessage, ToolCall } from '../../types.js'
 
 export interface ChatViewState {
@@ -58,6 +58,7 @@ export function parseThoughts(content: string): ParsedThoughts {
 export class ChatView {
   state: ChatViewState
   thoughtHeaderRows: Map<number, string> = new Map() // terminal row -> message id
+  toolsHeaderRows: Map<number, string> = new Map() // terminal row -> message id/toolsKey
 
   constructor() {
     this.state = {
@@ -134,28 +135,36 @@ export class ChatView {
   buildBlocks(): { msgId: string; kind: 'user' | 'assistant' | 'system' | 'tool' | 'spacer'; hasThought: boolean; lines: string[] }[] {
     const blocks: { msgId: string; kind: 'user' | 'assistant' | 'system' | 'tool' | 'spacer'; hasThought: boolean; lines: string[] }[] = []
     const W = this.state.viewWidth
-    const inner = W - 4  // account for left indent + right padding
+    const inner = W - 8  // account for left/right borders and margins
 
     for (const m of this.state.messages) {
       if (m.role === 'system') continue
       if (m.role === 'tool') continue  // tool results are visualized in tool cards
       if (m.role === 'user') {
-        const wrapW = W - 6
+        const wrapW = W - 8
         const rendered = renderMarkdown(m.content, wrapW)
         const lines: string[] = []
-        const bgCode = ansi.bg(colors.bgLight)
-        const borderCode = `${ansi.fg(colors.borderHi)}│${ansi.reset}`
-        lines.push('') // spacing above
+        
+        const topBorder = `  ┌─ ${ansi.fg(colors.borderHi)}You${ansi.reset} ${'─'.repeat(Math.max(0, W - 12))}┐`
+        const bottomBorder = `  └${'─'.repeat(Math.max(0, W - 6))}┘`
+        const sideBorder = `${ansi.fg(colors.border)}│${ansi.reset}`
+
+        lines.push('', topBorder)
         for (const l of rendered) {
-          const paddedText = pad(l, wrapW, 'left')
-          lines.push(`  ${borderCode}${bgCode} ${paddedText} ${ansi.reset}`)
+          lines.push(`  ${sideBorder} ${pad(l, wrapW)} ${sideBorder}`)
         }
-        lines.push('') // spacing below
+        lines.push(bottomBorder)
         blocks.push({ msgId: m.id, kind: 'user', hasThought: false, lines })
       } else if (m.role === 'assistant') {
         const { thought, response, isThinking } = parseThoughts(m.content)
         const lines: string[] = []
         let hasThought = false
+
+        const topBorder = `  ┌─ ${ansi.fg(colors.asst)}Unit-01${ansi.reset} ${'─'.repeat(Math.max(0, W - 16))}┐`
+        const bottomBorder = `  └${'─'.repeat(Math.max(0, W - 6))}┘`
+        const sideBorder = `${ansi.fg(colors.border)}│${ansi.reset}`
+
+        lines.push('', topBorder)
 
         if (thought || isThinking) {
           hasThought = true
@@ -166,38 +175,39 @@ export class ChatView {
           let headerLine = ''
           if (isThinking) {
             const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
-            headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${durationStr}${ansi.reset}`
+            headerLine = `${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${durationStr}${ansi.reset}`
           } else {
             const sign = collapsed ? '+' : '–'
-            headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${sign} Thought: ${durationStr}${ansi.reset}`
+            headerLine = `${ansi.fg(colors.warn)}${ansi.bold}${sign} Thought: ${durationStr}${ansi.reset}`
           }
           
-          lines.push(headerLine)
+          lines.push(`  ${sideBorder} ${pad(headerLine, inner)} ${sideBorder}`)
           
           if (!collapsed) {
-            const renderedThought = renderMarkdown(thought, inner - 2)
+            const renderedThought = renderMarkdown(thought, W - 10)
             for (const l of renderedThought) {
-              lines.push(`    ${ansi.fg(colors.textDim)}${ansi.dim}${ansi.italic}${l}${ansi.reset}`)
+              lines.push(`  ${sideBorder} ${pad(`${ansi.fg(colors.textDim)}${ansi.dim}${ansi.italic}${l}${ansi.reset}`, inner)} ${sideBorder}`)
             }
-            lines.push('') // spacing
+            lines.push(`  ${sideBorder} ${pad('', inner)} ${sideBorder}`) // spacer
           }
         }
 
         if (response) {
           const rendered = renderMarkdown(response, inner)
           for (const l of rendered) {
-            lines.push(`  ${l}`)
+            lines.push(`  ${sideBorder} ${pad(l, inner)} ${sideBorder}`)
           }
         }
 
+        lines.push(bottomBorder)
         blocks.push({ msgId: m.id, kind: 'assistant', hasThought, lines })
 
         // tool call cards
         if (m.toolCalls && m.toolCalls.length > 0) {
-          for (const tc of m.toolCalls) {
-            const cardLines = renderToolCard(tc, this.state.collapsedTools.has(tc.id), W)
-            blocks.push({ msgId: tc.id, kind: 'tool', hasThought: false, lines: cardLines })
-          }
+          const toolsKey = `${m.id}-tools`
+          const isCollapsed = !this.state.collapsedTools.has(toolsKey)
+          const cardLines = renderToolsPanel(m.id, m.toolCalls, isCollapsed, W)
+          blocks.push({ msgId: toolsKey, kind: 'tool', hasThought: false, lines: cardLines })
         }
       }
     }
@@ -208,41 +218,46 @@ export class ChatView {
       const lines: string[] = []
       let hasThought = false
       
+      const topBorder = `  ┌─ ${ansi.fg(colors.asst)}Unit-01${ansi.reset} ${'─'.repeat(Math.max(0, W - 16))}┐`
+      const bottomBorder = `  └${'─'.repeat(Math.max(0, W - 6))}┘`
+      const sideBorder = `${ansi.fg(colors.border)}│${ansi.reset}`
+
+      lines.push('', topBorder)
+
       if (thought || isThinking) {
         hasThought = true
         const elapsed = (Date.now() - this.state.thoughtStartTime) / 1000
         const durationStr = formatDuration(elapsed)
         const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
-        const headerLine = `  ${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${durationStr}${ansi.reset}`
+        const headerLine = `${ansi.fg(colors.warn)}${ansi.bold}${spinner} Thought: ${durationStr}${ansi.reset}`
 
-        lines.push(headerLine)
+        lines.push(`  ${sideBorder} ${pad(headerLine, inner)} ${sideBorder}`)
         
         // Always expanded while thinking
-        const renderedThought = renderMarkdown(thought, inner - 2)
+        const renderedThought = renderMarkdown(thought, W - 10)
         for (const l of renderedThought) {
-          lines.push(`    ${ansi.fg(colors.textDim)}${ansi.dim}${ansi.italic}${l}${ansi.reset}`)
+          lines.push(`  ${sideBorder} ${pad(`${ansi.fg(colors.textDim)}${ansi.dim}${ansi.italic}${l}${ansi.reset}`, inner)} ${sideBorder}`)
         }
         if (!isThinking) {
-          lines.push('')
+          lines.push(`  ${sideBorder} ${pad('', inner)} ${sideBorder}`)
         }
       }
 
       if (response) {
         const rendered = renderMarkdown(response, inner)
         for (const l of rendered) {
-          lines.push(`  ${l}`)
+          lines.push(`  ${sideBorder} ${pad(l, inner)} ${sideBorder}`)
         }
       }
 
+      lines.push(bottomBorder)
       blocks.push({ msgId: 'streaming', kind: 'assistant', hasThought, lines })
     } else if (this.state.currentToolCalls.length > 0) {
       // Currently running tool calls
-      const lines: string[] = []
-      for (const tc of this.state.currentToolCalls) {
-        const cardLines = renderToolCard(tc, this.state.collapsedTools.has(tc.id), W)
-        lines.push(...cardLines)
-      }
-      blocks.push({ msgId: 'current-tools', kind: 'tool', hasThought: false, lines })
+      const toolsKey = 'current-tools'
+      const isCollapsed = this.state.collapsedTools.has(toolsKey)
+      const cardLines = renderToolsPanel('current', this.state.currentToolCalls, isCollapsed, W)
+      blocks.push({ msgId: toolsKey, kind: 'tool', hasThought: false, lines: cardLines })
     }
 
     return blocks
@@ -251,13 +266,14 @@ export class ChatView {
   render(): string[] {
     const blocks = this.buildBlocks()
     const allLines: string[] = []
-    const allMeta: { msgId?: string; isThoughtHeader?: boolean }[] = []
+    const allMeta: { msgId?: string; isThoughtHeader?: boolean; isToolsHeader?: boolean }[] = []
 
     for (const b of blocks) {
       for (let i = 0; i < b.lines.length; i++) {
         allLines.push(b.lines[i])
         const isHeader = b.kind === 'assistant' && b.hasThought && i === 0
-        allMeta.push({ msgId: b.msgId, isThoughtHeader: isHeader })
+        const isTools = b.kind === 'tool' && i === 1
+        allMeta.push({ msgId: b.msgId, isThoughtHeader: isHeader, isToolsHeader: isTools })
       }
       allLines.push('')
       allMeta.push({})
@@ -282,8 +298,13 @@ export class ChatView {
 
     for (let i = 0; i < visibleLines.length; i++) {
       const meta = visibleMeta[i]
-      if (meta && meta.isThoughtHeader && meta.msgId) {
-        this.thoughtHeaderRows.set(3 + i, meta.msgId)
+      if (meta) {
+        if (meta.isThoughtHeader && meta.msgId) {
+          this.thoughtHeaderRows.set(3 + i, meta.msgId)
+        }
+        if (meta.isToolsHeader && meta.msgId) {
+          this.toolsHeaderRows.set(3 + i, meta.msgId)
+        }
       }
     }
 

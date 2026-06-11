@@ -24,6 +24,7 @@ import { OllamaClient } from './llm/ollama.js'
 import { AgenticExecutor, type ToolEvent } from './llm/executor.js'
 import { loadSettings, saveSettings, loadProjectContext, loadHistory, saveHistoryItem, listSessions, loadSession, saveSession } from './config/store.js'
 import { matchCommands } from './commands/registry.js'
+import { mcpManager } from './mcp/client.js'
 
 export interface AppContext {
   state: AppState
@@ -67,6 +68,7 @@ const HELP_ITEMS: HelpMenuItem[] = [
   { category: 'Agent' },
   { name: 'Switch model', cmd: '/model', shortcut: '/model' },
   { name: 'Cycle mode', cmd: '/mode', shortcut: 'shift+tab' },
+  { name: 'Toggle thinking', cmd: '/thinking', shortcut: '/thinking' },
   { name: 'Rebuild index', cmd: '/index', shortcut: '/index' },
   { name: 'Find dependencies', cmd: '/deps', shortcut: '/deps' },
   { name: 'Impact analysis', cmd: '/impact', shortcut: '/impact' },
@@ -221,10 +223,11 @@ export class App {
     this.state.model = name
     this.state.view = 'chat'
     this.bootState = null
-    this.executor = this.makeExecutor()
+    const settings = loadSettings()
     try {
-      this.state.contextWindow = await this.ollama.getContextLength(name) || 8192
+      this.state.contextWindow = await this.ollama.getContextLength(name, settings.maxContext ?? undefined) || 8192
     } catch {}
+    this.executor = this.makeExecutor()
     saveSettings({ model: name, contextWindow: this.state.contextWindow })
     this.notify('success', `Model: ${name} (${fmtNumber(this.state.contextWindow)} ctx)`)
     this.scheduleRender()
@@ -240,23 +243,34 @@ Working directory: ${cwd}
 You have access to a set of tools for reading, writing, and analyzing code, and for running shell commands. Use them.
 
 # Working principles
-- **Investigate before acting.** Use read_file, search_code, find_files to understand existing code before changing it.
+- **Investigate before acting.** Use read_file, search_code, list_dir to understand existing code before changing it.
 - **Make minimal, targeted edits.** Prefer patch_file over write_file when modifying existing files. Use write_file only for new files or full rewrites.
-- **Check blast radius.** Before editing a shared module, call find_dependents or impact_analysis.
 - **Show your work.** Briefly state what you're doing and why.
-- **Verify.** After writes/patches, run relevant tests or commands via run_command.
+- **Verify.** After writes/patches, run linter or compiler tests/checks via diagnostics.
 
 # Tool use rules
 - Use read_file with start_line/end_line for large files to avoid loading everything.
-- search_code uses BM25; use specific, distinctive terms. semantic_search for concepts.
+- search_code uses BM25; use specific, distinctive terms.
 - patch_file requires the target text to appear EXACTLY ONCE in the file. If unsure, read the file first.
-- run_command runs in a kernel-isolated sandbox. Network is denied by default. Build/test/git commands are encouraged.
-- For multi-step tasks, plan briefly, then execute. Use run_command to verify.
+- run_command runs shell commands in a sandbox. Network is denied by default.
+- For multi-step tasks, plan briefly, then execute. Use diagnostics or run_command to verify.
 
-# Style
-- Be concise. Skip pleasantries.
-- Use markdown: \`code\`, **bold**, lists, code blocks.
-- If you don't know or the user needs to choose, ask. Don't guess.${projectContext}`
+# Vibe & Style (Vibecoder Persona)
+- Adopt a relaxed, street-smart, high-vibe programmer persona. Speak like a peer using casual slang like 'cuh', 'bet', 'aight', 'yo', 'cuz', 'finna'.
+- Skip corporate filler, warnings, and polite preambles. Keep comments punchy and code-focused.
+- If the user asks you to build or set up something open-ended (e.g. 'let's make a website', 'build an app', etc.), do NOT guess the stack, libraries, or design. Stop and ask a targeted clarifying question in character to align on specifications, tailoring it to the specific request (e.g., if they ask for a Go TUI, ask what TUI library they want to use and what features to include).
+- Use markdown for structure: \`code\`, **bold**, code blocks.
+- If you don't know something or need clarification, just ask.
+
+# Web App & Design Guidelines
+If writing HTML, CSS, or web components, you must build premium, modern, visually stunning user interfaces:
+- **Theme/Aesthetic**: Match the requested style. If not specified or for modern developer tools, prefer a premium dark mode (e.g., pure black \`#000000\` or very dark gray \`#0a0a0a\`/\`#0e0e10\`) with crisp white text and very clean, high-quality, professional accent colors (like neon purple, teal, or amber). Avoid generic, flat primary colors.
+- **Glassmorphism**: Use semi-transparent layers with backing blur (e.g. \`background: rgba(255, 255, 255, 0.03); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08);\`).
+- **Grid & Lines**: Use very subtle borders (\`1px solid rgba(255, 255, 255, 0.08)\` or \`#1f1f1f\`) and faint background grid patterns or light radial gradients to create depth.
+- **Typography**: Import and use premium fonts (e.g., Inter, Geist, Outfit, or Space Grotesk via Google Fonts). Set clean line-heights, letter-spacing, and responsive text sizing (\`clamp()\`).
+- **Layout**: Use Flexbox and CSS Grid to structure sections cleanly. Make sure layouts are fully responsive.
+- **Interactions**: Add smooth micro-interactions (e.g. \`transition: all 0.2s ease-in-out;\`) to hover and focus states of cards and buttons.
+- **Completeness**: Always write fully functional, complete CSS and HTML without placeholders.${projectContext ? `\n\n# Project Context\n${projectContext}` : ''}`
   }
 
   async start() {
@@ -293,10 +307,11 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
     this.state.workingDir = settings.workingDir
 
     // Ollama check
-    this.ollama = new OllamaClient(settings.ollamaUrl)
+    const llmUrl = settings.baseUrl || settings.ollamaUrl
+    this.ollama = new OllamaClient(llmUrl)
     this.bootState!.ollamaRunning = await this.ollama.checkConnection()
     if (!this.bootState!.ollamaRunning) {
-      this.notify('error', `Ollama not reachable at ${settings.ollamaUrl}. Start it with: ollama serve`)
+      this.notify('error', `LLM runtime not reachable at ${llmUrl}. Ensure your LLM server (Ollama/LM Studio/Jan) is running.`)
       this.render()
       
       const interval = setInterval(() => {
@@ -352,6 +367,17 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
       this.notify('error', `Daemon start failed: ${e?.message ?? e}`)
     }
 
+    // MCP initialization
+    try {
+      await mcpManager.init()
+      const mcpToolsCount = mcpManager.getTools().length
+      if (mcpToolsCount > 0) {
+        this.notify('success', `Loaded ${mcpToolsCount} MCP tools`)
+      }
+    } catch (e: any) {
+      this.notify('error', `MCP initialization failed: ${e?.message ?? e}`)
+    }
+
     // Project info
     try {
       const r = await this.indexer.glob('**/*', this.state.workingDir)
@@ -361,6 +387,11 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
     // Load saved model if available and valid
     if (settings.model && this.allModels.find(m => m.name === settings.model)) {
       this.state.model = settings.model
+      try {
+        this.state.contextWindow = await this.ollama.getContextLength(settings.model, settings.maxContext ?? undefined) || settings.contextWindow || 8192
+      } catch {
+        this.state.contextWindow = settings.contextWindow || 8192
+      }
     }
 
     this.state.view = 'chat'
@@ -602,6 +633,12 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
       const msgId = this.chatView.thoughtHeaderRows.get(y)
       if (msgId) {
         this.chatView.toggleThought(msgId)
+        this.scheduleRender()
+        return true
+      }
+      const toolsKey = this.chatView.toolsHeaderRows.get(y)
+      if (toolsKey) {
+        this.chatView.toggleCollapse(toolsKey)
         this.scheduleRender()
         return true
       }
@@ -893,19 +930,27 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
             const totalTokens = this.state.tokensIn + this.state.tokensOut
             const pctUsed = this.state.contextWindow > 0 ? Math.round((totalTokens / this.state.contextWindow) * 100) : 0
             
-            let currentThreshold = 0
-            if (pctUsed >= 90) currentThreshold = 90
-            else if (pctUsed >= 75) currentThreshold = 75
-
-            if (currentThreshold > this.lastWarnedThreshold) {
-              this.lastWarnedThreshold = currentThreshold
-              if (currentThreshold === 90) {
-                this.notify('error', `Context limit critical (${pctUsed}%). Run /compress now or start a /new session to prevent model failure.`)
-              } else if (currentThreshold === 75) {
-                this.notify('warn', `Context budget is getting full (${pctUsed}%). Consider running /compress to summarize history.`)
+            if (pctUsed >= 70) {
+              const numCompressed = await this.compress()
+              if (numCompressed > 0) {
+                this.notify('success', `Auto-compressed context: cleared ${numCompressed} oldest messages.`)
+                this.scheduleRender()
               }
-            } else if (currentThreshold < this.lastWarnedThreshold) {
-              this.lastWarnedThreshold = currentThreshold
+            } else {
+              let currentThreshold = 0
+              if (pctUsed >= 90) currentThreshold = 90
+              else if (pctUsed >= 75) currentThreshold = 75
+
+              if (currentThreshold > this.lastWarnedThreshold) {
+                this.lastWarnedThreshold = currentThreshold
+                if (currentThreshold === 90) {
+                  this.notify('error', `Context limit critical (${pctUsed}%). Run /compress now or start a /new session to prevent model failure.`)
+                } else if (currentThreshold === 75) {
+                  this.notify('warn', `Context budget is getting full (${pctUsed}%). Consider running /compress to summarize history.`)
+                }
+              } else if (currentThreshold < this.lastWarnedThreshold) {
+                this.lastWarnedThreshold = currentThreshold
+              }
             }
             break
           }
@@ -1369,6 +1414,7 @@ You have access to a set of tools for reading, writing, and analyzing code, and 
 
   cleanup() {
     this.tui.exit()
+    mcpManager.shutdown()
   }
 
   async run() {

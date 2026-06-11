@@ -27,9 +27,9 @@ export function renderStatusBar(state: AppState, width: number): string {
 
   const totalTokens = state.tokensIn + state.tokensOut
   const ctxPct = state.contextWindow > 0 ? Math.round((totalTokens / state.contextWindow) * 100) : 0
-  const ctxColor = ctxPct > 85 ? colors.error : ctxPct > 65 ? colors.warn : colors.ok
+  const ctxColor = ctxPct > 65 ? colors.error : ctxPct > 40 ? colors.warn : colors.ok
   const tokenStr = `${fmtNumber(state.tokensIn)}↑${fmtNumber(state.tokensOut)}↓ ${ctxPct}%`
-  segs.push({ s: `${ansi.fg(colors.textDim)}${tokenStr}${ansi.reset}`, w: vw(tokenStr), pri: 1 })
+  segs.push({ s: `${ansi.fg(ctxColor)}${tokenStr}${ansi.reset}`, w: vw(tokenStr), pri: 1 })
 
   // Separator width
   const sepW = vw(`${ansi.fg(colors.border)}│${ansi.reset}`)

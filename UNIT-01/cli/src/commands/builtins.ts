@@ -4,7 +4,7 @@ import { existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { AppContext } from '../app.js'
 import { registerCommands } from './registry.js'
-import { listSessions } from '../config/store.js'
+import { listSessions, loadSettings, saveSettings } from '../config/store.js'
 import { MODES } from '../modes/mode.js'
 import type { PermissionMode } from '../types.js'
 
@@ -72,6 +72,27 @@ A short description of the project.
       },
     },
     {
+      name: '/thinking',
+      description: 'toggle or set model thinking/thoughts (on/off)',
+      run: (ctx, args) => {
+        const settings = loadSettings()
+        let next: boolean
+        const arg = args.trim().toLowerCase()
+        if (arg === 'on' || arg === 'true' || arg === 'yes') {
+          next = true
+        } else if (arg === 'off' || arg === 'false' || arg === 'no') {
+          next = false
+        } else if (arg === '') {
+          next = !settings.think
+        } else {
+          ctx.notify('error', `Usage: /thinking [on|off]. Current: ${settings.think ? 'on' : 'off'}`)
+          return
+        }
+        saveSettings({ think: next })
+        ctx.notify('success', `Thinking → ${next ? 'on' : 'off'}`)
+      },
+    },
+    {
       name: '/doctor',
       description: 'show status of indexer, sandbox, and model',
       run: async (ctx) => {
@@ -127,49 +148,6 @@ A short description of the project.
           ctx.notify('success', `Rollback: ${r.status}`)
         } catch (e: any) {
           ctx.notify('error', `Rollback failed: ${e?.message ?? e}`)
-        }
-      },
-    },
-    {
-      name: '/deps',
-      description: 'find dependents and dependencies of a file',
-      run: async (ctx, args) => {
-        let file = args.trim()
-        if (!file) {
-          const asked = await ctx.promptForFile()
-          if (!asked) return
-          file = asked
-        }
-        try {
-          const [deps, dependents] = await Promise.all([
-            ctx.indexer.dependencies(file),
-            ctx.indexer.dependents(file),
-          ])
-          ctx.notify('info', `${file}`)
-          ctx.notify('dim', `  dependencies (${deps.dependencies.length}):`)
-          for (const d of deps.dependencies) ctx.notify('dim', `    → ${d}`)
-          ctx.notify('dim', `  dependents (${dependents.dependents.length}):`)
-          for (const d of dependents.dependents) ctx.notify('dim', `    ← ${d}`)
-        } catch (e: any) {
-          ctx.notify('error', `Deps failed: ${e?.message ?? e}`)
-        }
-      },
-    },
-    {
-      name: '/impact',
-      description: 'transitive impact analysis of a file',
-      run: async (ctx, args) => {
-        let file = args.trim()
-        if (!file) {
-          const asked = await ctx.promptForFile()
-          if (!asked) return
-          file = asked
-        }
-        try {
-          const r = await ctx.indexer.impact(file)
-          ctx.notify('info', r.impact || 'No impact.')
-        } catch (e: any) {
-          ctx.notify('error', `Impact failed: ${e?.message ?? e}`)
         }
       },
     },

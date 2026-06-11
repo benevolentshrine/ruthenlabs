@@ -28,8 +28,11 @@ export interface Settings {
   workingDir: string
   contextWindow: number
   ollamaUrl: string
+  baseUrl?: string
+  maxContext?: number | null
   theme: 'default' | 'matrix' | 'nord' | 'mono'
   commandRules: CommandRule[]
+  think?: boolean
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -38,7 +41,10 @@ const DEFAULT_SETTINGS: Settings = {
   workingDir: process.cwd(),
   contextWindow: 8192,
   ollamaUrl: 'http://localhost:11434',
+  baseUrl: 'http://localhost:11434/v1',
+  maxContext: null,
   theme: 'default',
+  think: false,
   commandRules: [
     { pattern: "^git (status|diff|log|show|branch|tag)( .*)?$", action: "allow" },
     { pattern: "^(npm|bun|yarn|pnpm) (test|run test)( .*)?$", action: "allow" },

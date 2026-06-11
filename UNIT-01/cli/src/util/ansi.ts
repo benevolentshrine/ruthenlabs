@@ -59,9 +59,9 @@ export const colors = {
   asst:    110,  // Steel Blue (for assistant messages)
   sys:     67,   // Original Steel Blue/Slate
   tool:    242,  // Slate Grey
-  error:   110,  // Steel Blue
-  warn:    110,  // Steel Blue
-  ok:      110,  // Steel Blue
+  error:   203,  // Vibrant Soft Red
+  warn:    214,  // Amber/Orange
+  ok:      120,  // Soft Emerald Green
   // UI
   border:  60,   // Original Deep Slate Blue-Grey
   borderHi: 110, // Steel Blue
@@ -74,13 +74,13 @@ export const colors = {
   bgPanel: 233,  // Darker than bg but not pure black
   // Semantic
   read:    242,  // Slate Grey
-  write:   110,  // Steel Blue
-  exec:    110,  // Steel Blue
+  write:   208,  // Orange/Amber (for writes)
+  exec:    203,  // Red (for executions/danger)
   analyze: 242,  // Slate Grey
   // Status
-  ok2:     110,  // Steel Blue
-  err:     240,  // Slate Grey
-  idle:    240,  // Slate Grey
+  ok2:     120,  // Soft Emerald Green
+  err:     203,  // Vibrant Soft Red
+  idle:    244,  // Light Slate Grey
 }
 
 export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']

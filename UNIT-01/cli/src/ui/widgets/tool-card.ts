@@ -24,10 +24,13 @@ export function renderToolCard(tc: ToolCall, collapsed = false, width = 80): str
   const argsSummary = summarizeArgs(tc.args)
   const durationStr = tc.durationMs !== undefined ? `${(tc.durationMs / 1000).toFixed(1)}s` : ''
 
-  // Header line
-  const header = `  ${ansi.fg(status.color)}${status.icon}${ansi.reset} ${ansi.fg(colors.text)}${ansi.bold}${tc.name}${ansi.reset} ${ansi.fg(colors.textMuted)}· ${argsSummary}${durationStr ? ` · ${durationStr}` : ''}${ansi.reset}`
+  // Draw a beautiful boxed card
+  const title = `Tool: ${tc.name}`
+  const topBorder = `  ┌─ ${ansi.fg(status.color)}${status.icon} ${ansi.bold}${title}${ansi.reset} ${'─'.repeat(Math.max(0, width - 10 - title.length - durationStr.length))} ${durationStr ? durationStr + ' ' : ''}┐`
+  const bottomBorder = `  └${'─'.repeat(Math.max(0, width - 6))}┘`
+  const sideBorder = `${ansi.fg(colors.border)}│${ansi.reset}`
 
-  const lines: string[] = [header]
+  const lines: string[] = ['', topBorder]
 
   if (!collapsed) {
     const bodyLines: string[] = []
@@ -111,19 +114,167 @@ export function renderToolCard(tc: ToolCall, collapsed = false, width = 80): str
       bodyLines.push(`${ansi.fg(colors.error)}✗ ${tc.error}${ansi.reset}`)
     }
 
-    if (bodyLines.length > 0) {
-      const panelWidth = width - 4
-      const bgCode = ansi.bg(colors.bgLight)
-
-      lines.push(`${bgCode}${' '.repeat(panelWidth)}${ansi.reset}`)
-      for (const bl of bodyLines) {
-        const indented = `  ${bl}`
-        lines.push(`${bgCode}${pad(indented, panelWidth)}${ansi.reset}`)
-      }
-      lines.push(`${bgCode}${' '.repeat(panelWidth)}${ansi.reset}`)
+    for (const bl of bodyLines) {
+      lines.push(`  ${sideBorder} ${pad(bl, width - 8)} ${sideBorder}`)
     }
+  } else {
+    lines.push(`  ${sideBorder} ${pad(argsSummary, width - 8)} ${sideBorder}`)
   }
 
+  lines.push(bottomBorder)
+  return lines
+}
+
+export function renderToolsPanel(
+  msgId: string,
+  toolCalls: ToolCall[],
+  collapsed: boolean,
+  width = 80
+): string[] {
+  const count = toolCalls.length
+  if (count === 0) return []
+
+  const statusList = toolCalls.map(tc => tc.status)
+  // Determine overall status icon and color
+  let overallColor = colors.textMuted
+  let overallIcon = '◌'
+  
+  if (statusList.includes('running')) {
+    overallIcon = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
+    overallColor = colors.warn
+  } else if (statusList.includes('error')) {
+    overallIcon = '⃠'
+    overallColor = colors.error
+  } else if (statusList.includes('denied')) {
+    overallIcon = '⊘'
+    overallColor = colors.textMuted
+  } else if (statusList.every(s => s === 'done')) {
+    overallIcon = '▣'
+    overallColor = colors.ok
+  } else if (statusList.includes('approved')) {
+    overallIcon = '◓'
+    overallColor = colors.warn
+  }
+
+  const sign = collapsed ? '+' : '–'
+  const title = `Tools (${count} call${count > 1 ? 's' : ''})`
+  const headerText = `${sign} ${title}`
+  const topBorder = `  ┌─ ${ansi.fg(overallColor)}${overallIcon}${ansi.reset} ${ansi.bold}${headerText}${ansi.reset} ${'─'.repeat(Math.max(0, width - 12 - headerText.length))}┐`
+  const bottomBorder = `  └${'─'.repeat(Math.max(0, width - 6))}┘`
+  const sideBorder = `${ansi.fg(colors.border)}│${ansi.reset}`
+
+  const lines: string[] = ['', topBorder]
+
+  if (!collapsed) {
+    const inner = width - 8
+    
+    for (let idx = 0; idx < toolCalls.length; idx++) {
+      const tc = toolCalls[idx]
+      const tcStatus = STATUS_ICON[tc.status] ?? { icon: '◌', color: colors.textMuted }
+      let tcIcon = tcStatus.icon
+      if (tc.status === 'running') {
+        tcIcon = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
+      }
+
+      const durationStr = tc.durationMs !== undefined ? `${(tc.durationMs / 1000).toFixed(1)}s` : ''
+      const durationSuffix = durationStr ? ` (${durationStr})` : ''
+      const argsSummary = summarizeArgs(tc.args)
+      
+      // Sub-header for this specific tool call
+      const subHeader = `${ansi.fg(tcStatus.color)}${tcIcon}${ansi.reset} ${ansi.bold}${tc.name}${ansi.reset} ${ansi.fg(colors.textMuted)}${argsSummary}${durationSuffix}${ansi.reset}`
+      lines.push(`  ${sideBorder} ${pad(subHeader, inner)} ${sideBorder}`)
+
+      // Tool Call Details/Output
+      const bodyLines: string[] = []
+      
+      if (tc.name === 'write_file' || tc.name === 'patch_file' || tc.name === 'patch_file_blocks') {
+        const original = tc.originalContent ?? ''
+        let updated = ''
+        if (tc.name === 'write_file') {
+          updated = tc.args.content as string ?? ''
+        } else if (tc.name === 'patch_file') {
+          updated = original.includes(tc.args.target as string) ? original.replace(tc.args.target as string, tc.args.replacement as string) : original
+        } else if (tc.name === 'patch_file_blocks') {
+          updated = '[diff patching applied]'
+        }
+
+        if (original === '' && tc.name === 'write_file') {
+          const path = tc.args.path as string
+          const ext = path ? path.split('.').pop() ?? '' : ''
+          const lang = ext || 'text'
+          const markdownContent = `\`\`\`${lang}\n${updated}\n\`\`\``
+          const rendered = renderMarkdown(markdownContent, width - 12)
+          bodyLines.push(...rendered)
+        } else {
+          // just show path
+          bodyLines.push(`${ansi.fg(colors.textDim)}Modified file: ${tc.args.path}${ansi.reset}`)
+        }
+      } else if (tc.name === 'read_file' && tc.result) {
+        const path = tc.args.path as string
+        const ext = path ? path.split('.').pop() ?? '' : ''
+        const lang = ext || 'text'
+        const markdownContent = `\`\`\`${lang}\n${tc.result}\n\`\`\``
+        const rendered = renderMarkdown(markdownContent, width - 12)
+        bodyLines.push(...rendered)
+      } else if (tc.name === 'web_search' && tc.result) {
+        try {
+          const results = JSON.parse(tc.result) as { title: string; url: string; content: string }[]
+          const topResults = results.slice(0, 3)
+          for (let i = 0; i < topResults.length; i++) {
+            const r = topResults[i]
+            const titleLine = `${ansi.bold}${ansi.fg(colors.unit)}${r.title || 'No Title'}${ansi.reset}`
+            const urlLine = r.url ? ` ${ansi.fg(colors.textDim)}${r.url}${ansi.reset}` : ''
+            bodyLines.push(titleLine + urlLine)
+            
+            if (r.content) {
+              const wrappedContent = wrap(r.content, width - 14)
+              const linesToShow = wrappedContent.slice(0, 2)
+              for (const line of linesToShow) {
+                bodyLines.push(`  ${ansi.fg(colors.textDim)}${line}${ansi.reset}`)
+              }
+            }
+            if (i < topResults.length - 1) bodyLines.push('')
+          }
+        } catch {
+          bodyLines.push(tc.result)
+        }
+      } else {
+        // Args
+        const argsStr = JSON.stringify(tc.args, null, 2)
+        if (argsStr.length < 500) {
+          bodyLines.push(...argsStr.split('\n').slice(0, 6).map(l => `${ansi.fg(colors.textDim)}${trunc(l, width - 12)}${ansi.reset}`))
+        }
+
+        // Result
+        if (tc.result) {
+          const preview = tc.result.length > 300 ? tc.result.slice(0, 300) + '…' : tc.result
+          const resultLines = preview.split('\n').slice(0, 8)
+          bodyLines.push(`${ansi.fg(colors.textMuted)}→ result:${ansi.reset}`)
+          bodyLines.push(...resultLines.map(l => `${ansi.fg(colors.textDim)}${trunc(l, width - 12)}${ansi.reset}`))
+        }
+      }
+
+      if (tc.error) {
+        bodyLines.push(`${ansi.fg(colors.error)}✗ ${tc.error}${ansi.reset}`)
+      }
+
+      for (const bl of bodyLines) {
+        lines.push(`  ${sideBorder}   ${pad(bl, inner - 4)} ${sideBorder}`)
+      }
+
+      // Add a separator between tools in the panel
+      if (idx < toolCalls.length - 1) {
+        lines.push(`  ${sideBorder} ${ansi.fg(colors.textMuted)}${'-'.repeat(inner - 2)}${ansi.reset} ${sideBorder}`)
+      }
+    }
+  } else {
+    // Collapsed: show a summary of tools
+    const inner = width - 8
+    const toolSummary = toolCalls.map(tc => tc.name).join(', ')
+    lines.push(`  ${sideBorder} ${pad(`${ansi.fg(colors.textDim)}${toolSummary}${ansi.reset}`, inner)} ${sideBorder}`)
+  }
+
+  lines.push(bottomBorder)
   return lines
 }
 
@@ -138,7 +289,7 @@ function summarizeArgs(args: Record<string, unknown>): string {
     if (pk in args && args[pk] !== undefined) {
       const v = args[pk]
       const s = typeof v === 'string' ? v : JSON.stringify(v)
-      return trunc(`${pk}=${s}`, 60)
+      return trunc(` ${pk}=${s}`, 60)
     }
   }
 
@@ -153,9 +304,9 @@ function summarizeArgs(args: Record<string, unknown>): string {
   if (filteredEntries.length === 1) {
     const [k, v] = filteredEntries[0]
     const s = typeof v === 'string' ? v : JSON.stringify(v)
-    return trunc(`${k}=${s}`, 60)
+    return trunc(` ${k}=${s}`, 60)
   }
-  return trunc(filteredEntries.map(([k, v]) => {
+  return trunc(' ' + filteredEntries.map(([k, v]) => {
     const s = typeof v === 'string' ? v : JSON.stringify(v)
     return `${k}=${trunc(s, 20)}`
   }).join(' '), 60)

@@ -29,6 +29,7 @@ export function renderHelp(width: number, height: number): string[] {
         ['/init',         'create UNIT.md project context'],
         ['/model',        'switch model'],
         ['/mode [name]',  'set permission mode (plan|ask|auto-edit|auto|yolo)'],
+        ['/thinking',     'toggle thinking (on/off)'],
         ['/doctor',       'daemon + token status'],
         ['/index',        'rebuild index'],
         ['/shadow',       'list shadow backups'],
