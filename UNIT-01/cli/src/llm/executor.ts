@@ -8,6 +8,8 @@ import { LocalSandbox as SandboxClient } from '../sandbox/runner.js'
 import { uid } from '../util/ansi.js'
 import { loadSettings } from '../config/store.js'
 import { mcpManager } from '../mcp/client.js'
+import { toolRegistry } from './tools/registry.js'
+import { applySearchReplaceBlocks } from './tools/file.js'
 
 export type ToolEvent =
   | { type: 'tool_start'; tool: ToolCall }
@@ -401,7 +403,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
             } else if (req.function.name === 'patch_file') {
               updated = this.applyPatch(original, toolCall.args.target as string, toolCall.args.replacement as string)
             } else if (req.function.name === 'patch_file_blocks') {
-              updated = this.applySearchReplaceBlocks(original, toolCall.args.blocks as string)
+              updated = applySearchReplaceBlocks(original, toolCall.args.blocks as string)
             }
             const pending: PendingDiff = {
               filePath: toolCall.args.path as string,
@@ -522,79 +524,6 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     return original.replace(target, replacement)
   }
 
-  private applySearchReplaceBlocks(content: string, blocksStr: string): string {
-    const lines = blocksStr.split('\n')
-    const blocks: { search: string; replace: string }[] = []
-    
-    let currentSearch: string[] = []
-    let currentReplace: string[] = []
-    let inSearch = false
-    let inReplace = false
-    
-    for (const line of lines) {
-      if (line.startsWith('<<<<<<< SEARCH')) {
-        inSearch = true
-        inReplace = false
-        currentSearch = []
-      } else if (line.startsWith('=======')) {
-        inSearch = false
-        inReplace = true
-        currentReplace = []
-      } else if (line.startsWith('>>>>>>> REPLACE')) {
-        inSearch = false
-        inReplace = false
-        blocks.push({
-          search: currentSearch.join('\n'),
-          replace: currentReplace.join('\n'),
-        })
-      } else {
-        if (inSearch) {
-          currentSearch.push(line)
-        } else if (inReplace) {
-          currentReplace.push(line)
-        }
-      }
-    }
-    
-    if (blocks.length === 0) {
-      throw new Error("No valid SEARCH/REPLACE blocks found in the input. Format must use <<<<<<< SEARCH, =======, and >>>>>>> REPLACE.")
-    }
-    
-    let updated = content
-    for (const block of blocks) {
-      if (!block.search.trim()) {
-        throw new Error("Empty SEARCH block is not allowed.")
-      }
-      
-      const index = updated.indexOf(block.search)
-      if (index === -1) {
-        const normalizedSearch = block.search.replace(/\r\n/g, '\n')
-        const normalizedContent = updated.replace(/\r\n/g, '\n')
-        const normIndex = normalizedContent.indexOf(normalizedSearch)
-        
-        if (normIndex === -1) {
-          throw new Error(`Could not find the SEARCH block in the file. Indentation and whitespace must match exactly:\n${block.search}`)
-        }
-        
-        const firstIndex = normalizedContent.indexOf(normalizedSearch)
-        const lastIndex = normalizedContent.lastIndexOf(normalizedSearch)
-        if (firstIndex !== lastIndex) {
-          throw new Error("The SEARCH block matches multiple places in the file. Please provide more context lines to make it unique.")
-        }
-        
-        updated = normalizedContent.slice(0, normIndex) + block.replace + normalizedContent.slice(normIndex + normalizedSearch.length)
-      } else {
-        const lastIndex = updated.lastIndexOf(block.search)
-        if (index !== lastIndex) {
-          throw new Error("The SEARCH block matches multiple places in the file. Please provide more context lines to make it unique.")
-        }
-        updated = updated.slice(0, index) + block.replace + updated.slice(index + block.search.length)
-      }
-    }
-    
-    return updated
-  }
-
   private async executeTool(req: ToolCallRequest, onProgress?: (progressResult: string) => void): Promise<string> {
     const { name, arguments: args } = req.function
     let parsedArgs = args
@@ -611,221 +540,17 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       if (mcpManager.hasTool(name)) {
         return await mcpManager.callTool(name, safeArgs)
       }
-      switch (name) {
-        case 'read_file': {
-          const path = safeArgs.path as string
-          const start = safeArgs.start_line as number | undefined
-          const end = safeArgs.end_line as number | undefined
-          
-          const r = await this.indexer.read(path)
-          const lines = r.content.split('\n')
-          const totalLines = lines.length
-          
-          let startIdx = 0
-          let endIdx = Math.min(200, totalLines)
-          
-          if (start !== undefined) {
-            startIdx = Math.max(0, start - 1)
-          }
-          if (end !== undefined) {
-            endIdx = Math.min(totalLines, end)
-          } else if (start !== undefined) {
-            endIdx = Math.min(totalLines, startIdx + 200)
-          }
-          
-          if (endIdx - startIdx > 200) {
-            endIdx = startIdx + 200
-          }
-          
-          const sliced = lines.slice(startIdx, endIdx).join('\n')
-          let suffix = ''
-          if (endIdx < totalLines) {
-            suffix = `\n\n[... Truncated: showing lines ${startIdx + 1}-${endIdx} of ${totalLines} total lines. Use start_line/end_line to read specific ranges ...]`
-          }
-          return sliced + suffix
-        }
-        case 'write_file': {
-          await this.indexer.write(safeArgs.path as string, safeArgs.content as string)
-          return `Wrote ${(safeArgs.content as string).length} bytes to ${safeArgs.path}. Shadow backup created.`
-        }
-        case 'patch_file': {
-          const path = safeArgs.path as string
-          const target = safeArgs.target as string
-          const replacement = safeArgs.replacement as string
-          const r = await this.indexer.read(path)
-          const original = r.content
-          
-          const firstIdx = original.indexOf(target)
-          if (firstIdx === -1) {
-            return `Error: target text not found in ${path}. The target text must match EXACTLY.`
-          }
-          const lastIdx = original.lastIndexOf(target)
-          if (firstIdx !== lastIdx) {
-            return `Error: target text matches multiple times in ${path}. The target text must be unique to avoid patching the wrong location.`
-          }
-          
-          await this.indexer.patch(path, target, replacement)
-          return `Patched ${path}. Shadow backup created.`
-        }
-        case 'patch_file_blocks': {
-          const path = safeArgs.path as string
-          const blocks = safeArgs.blocks as string
-          const r = await this.indexer.read(path)
-          const original = r.content
-          const updated = this.applySearchReplaceBlocks(original, blocks)
-          await this.indexer.write(path, updated)
-          return `Patched ${path} using SEARCH/REPLACE blocks. Shadow backup created.`
-        }
-        case 'run_command': {
-          const cmd = (safeArgs.command as string).trim()
-          
-          // Blacklist check
-          if (cmd.match(/\brm\s+-rf\s+(\/|\*|~\/|~|\$HOME|(?:\.\.\/)+)$/) || cmd.match(/curl\s+.*\s*\|\s*(sh|bash)/) || cmd.match(/wget\s+.*\s*\|\s*(sh|bash)/)) {
-            return `Error: Dangerous command blacklisted by sandbox policy.`
-          }
-          
-          try {
-            const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Command timed out after 30 seconds')), 30000))
-            const isPkgCmd = /^(go|cargo|npm|bun|pip|yarn|pnpm)\b/.test(cmd)
-            let accumulated = ''
-            const executionPromise = this.sandbox.execute(cmd, {
-              allow_network: isPkgCmd,
-              onOutput: (chunk) => {
-                accumulated += chunk
-                if (onProgress) {
-                  let out = accumulated
-                  if (out.length > 2000) {
-                    out = out.slice(0, 2000) + '\n\n[... Truncated: command output exceeded 2000 characters ...]'
-                  }
-                  onProgress(out)
-                }
-              }
-            })
-            
-            const r = await Promise.race([executionPromise, timeoutPromise])
-            
-            // Cap output to 2000 chars
-            let out = r.verdict || ''
-            if (out.length > 2000) {
-              out = out.slice(0, 2000) + '\n\n[... Truncated: command output exceeded 2000 characters ...]'
-            }
-            return out
-          } catch (e: any) {
-            let msg = e?.message ?? String(e)
-            if (msg.includes('Filesystem write blocked') || msg.includes('Landlock blocked')) {
-              const cwd = process.cwd()
-              msg += `\n\n[Actionable Advice] Keep all file operations inside the active workspace directory: "${cwd}". Do not write or read outside this tree. If writing scratch or temporary files, place them in "./tmp/" inside the workspace.`
-            } else if (msg.includes('Seccomp blocked') || msg.includes('syscall')) {
-              msg += `\n\n[Actionable Advice] This command used a system call restricted by the kernel sandbox. Try using standard shell commands, check your syntax, or ask the user to elevate permissions if this is necessary.`
-            }
-            return `Error: ${msg}`
-          }
-        }
-        case 'search_code': {
-          const r = await this.indexer.search(safeArgs.query as string, { limit: 10 })
-          if (r.results.length === 0) return 'No matches found.'
-          return r.results.slice(0, 10).map(res =>
-            `${res.path}:${res.line ?? '?'}\n  ${res.content.trim().slice(0, 200)}`
-          ).join('\n\n')
-        }
-        case 'list_dir': {
-          const path = (safeArgs.path as string) || '.'
-          try {
-            const { readdirSync, statSync } = await import('fs')
-            const { join } = await import('path')
-            const files = readdirSync(path)
-            if (files.length === 0) return 'Directory is empty.'
-            const sliced = files.slice(0, 100)
-            const lines = sliced.map(f => {
-              try {
-                const stat = statSync(join(path, f))
-                return `${stat.isDirectory() ? '[DIR]' : '[FILE]'} ${f}`
-              } catch {
-                return `[FILE] ${f}`
-              }
-            })
-            if (files.length > 100) {
-              lines.push(`\n[... Truncated: ${files.length - 100} more entries. Directory listing capped at 100 entries ...]`)
-            }
-            return lines.join('\n')
-          } catch (e: any) {
-            return `Error listing directory: ${e?.message ?? e}`
-          }
-        }
-        case 'git_status': {
-          try {
-            const branchProc = Bun.spawn(['git', 'branch', '--show-current'], { stdout: 'pipe' })
-            const branch = (await new Response(branchProc.stdout).text()).trim()
-            
-            const statusProc = Bun.spawn(['git', 'status', '--porcelain'], { stdout: 'pipe' })
-            const statusText = (await new Response(statusProc.stdout).text()).trim()
-            
-            const lines = statusText ? statusText.split('\n') : []
-            const modified: string[] = []
-            const untracked: string[] = []
-            const deleted: string[] = []
-            const added: string[] = []
-            
-            for (const line of lines) {
-              const code = line.slice(0, 2)
-              const file = line.slice(3)
-              if (code.includes('M')) {
-                modified.push(file)
-              } else if (code.includes('?')) {
-                untracked.push(file)
-              } else if (code.includes('D')) {
-                deleted.push(file)
-              } else if (code.includes('A')) {
-                added.push(file)
-              }
-            }
-            
-            return JSON.stringify({
-              branch,
-              modified,
-              untracked,
-              deleted,
-              added
-            }, null, 2)
-          } catch (e: any) {
-            return `Error running git status: ${e?.message ?? e}`
-          }
-        }
-        case 'diagnostics': {
-          try {
-            const { existsSync } = await import('fs')
-            const { join } = await import('path')
-            const cwd = process.cwd()
-            
-            if (existsSync(join(cwd, 'Cargo.toml'))) {
-              const proc = Bun.spawn(['cargo', 'check'], { stderr: 'pipe', stdout: 'pipe' })
-              const stdout = await new Response(proc.stdout).text()
-              const stderr = await new Response(proc.stderr).text()
-              return `cargo check output:\nSTDOUT:\n${stdout.slice(0, 1000)}\nSTDERR:\n${stderr.slice(0, 1000)}`
-            }
-            
-            if (existsSync(join(cwd, 'package.json'))) {
-              if (existsSync(join(cwd, 'tsconfig.json'))) {
-                const proc = Bun.spawn(['npx', 'tsc', '--noEmit'], { stderr: 'pipe', stdout: 'pipe' })
-                const stdout = await new Response(proc.stdout).text()
-                const stderr = await new Response(proc.stderr).text()
-                if (!stdout && !stderr) return 'No TS diagnostics errors found.'
-                return `tsconfig.json found, running tsc --noEmit:\nSTDOUT:\n${stdout.slice(0, 1000)}\nSTDERR:\n${stderr.slice(0, 1000)}`
-              }
-              const proc = Bun.spawn(['bun', 'test'], { stderr: 'pipe', stdout: 'pipe' })
-              const stdout = await new Response(proc.stdout).text()
-              const stderr = await new Response(proc.stderr).text()
-              return `bun test output:\nSTDOUT:\n${stdout.slice(0, 1000)}\nSTDERR:\n${stderr.slice(0, 1000)}`
-            }
-            
-            return 'No standard project configuration (Cargo.toml, package.json) found to run diagnostics.'
-          } catch (e: any) {
-            return `Error running diagnostics: ${e?.message ?? e}`
-          }
-        }
-        default:
-          return `Unknown tool: ${name}`
+
+      const runner = toolRegistry[name]
+      if (!runner) {
+        return `Unknown tool: ${name}`
       }
+
+      return await runner.execute(safeArgs, {
+        indexer: this.indexer,
+        sandbox: this.sandbox,
+        onProgress,
+      })
     } catch (e: any) {
       return `Error: ${e?.message ?? String(e)}`
     }

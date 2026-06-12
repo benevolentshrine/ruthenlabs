@@ -1,0 +1,56 @@
+{
+  "forbidden": [
+    {
+      "name": "no-circular",
+      "severity": "error",
+      "comment": "Circular dependencies are not allowed.",
+      "from": {},
+      "to": {
+        "circular": true
+      }
+    },
+    {
+      "name": "no-ui-to-llm",
+      "severity": "error",
+      "comment": "UI and TUI modules must not import LLM execution logic directly.",
+      "from": {
+        "path": "^src/ui"
+      },
+      "to": {
+        "path": "^src/llm"
+      }
+    },
+    {
+      "name": "no-indexer-to-llm",
+      "severity": "error",
+      "comment": "The local indexer must not depend on LLM logic.",
+      "from": {
+        "path": "^src/indexer"
+      },
+      "to": {
+        "path": "^src/llm"
+      }
+    },
+    {
+      "name": "no-cross-tool-dependencies",
+      "severity": "error",
+      "comment": "Individual tool runners in src/llm/tools must not import other tool runners directly to avoid tight coupling.",
+      "from": {
+        "path": "^src/llm/tools/([^/]+)\\.ts",
+        "pathNot": "^src/llm/tools/registry\\.ts$"
+      },
+      "to": {
+        "path": "^src/llm/tools/([^/]+)\\.ts",
+        "pathNot": "^src/llm/tools/types\\.ts$|^src/llm/tools/file\\.ts$"
+      }
+    }
+  ],
+  "options": {
+    "doNotFollow": {
+      "path": "node_modules"
+    },
+    "tsConfig": {
+      "fileName": "tsconfig.json"
+    }
+  }
+}

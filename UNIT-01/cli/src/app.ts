@@ -15,6 +15,8 @@ import { renderBootView, type BootViewState } from './ui/views/boot.js'
 import { renderFiglet } from './ui/widgets/logo.js'
 import { ChatView } from './ui/views/chat.js'
 import { InputField } from './ui/widgets/input.js'
+import { MenuController } from './ui/menu/controller.js'
+import { TabCompleter } from './ui/autocomplete/completer.js'
 import type {
   AppState, ChatMessage, ToolCall, PermissionMode, ModelInfo,
   PendingPermission, PermissionDecision, PendingDiff, DaemonState
@@ -124,10 +126,8 @@ export class App {
   currentStreamAbort: AbortController | null = null
   bootState: BootViewState | null = null
   allModels: ModelInfo[] = []
-  // Slash commands dropdown menu state (on onboarding screen)
-  activeMenu: 'commands' | 'model' | 'mode' | 'resume' | 'help' | null = null
-  menuIndex = 0
-  menuOptions: any[] = []
+  menuController: MenuController
+  tabCompleter: TabCompleter
   running = true
   doctorInfo: string[] | null = null
   private lastWarnedThreshold = 0
@@ -164,6 +164,8 @@ export class App {
       onHistoryUp: () => this.historyPrev(),
       onHistoryDown: () => this.historyNext(),
     })
+    this.menuController = new MenuController()
+    this.tabCompleter = new TabCompleter(() => this.indexer, this.input)
     this.input.setPlaceholder('Ask anything... "What is the tech stack of this project?"')
     this.context = {
       state: this.state,
@@ -409,9 +411,9 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
   }
 
   returnToSlashMenu() {
-    this.activeMenu = 'commands'
-    this.menuOptions = matchCommands('/')
-    this.menuIndex = 0
+    this.menuController.activeMenu = 'commands'
+    this.menuController.menuOptions = matchCommands('/')
+    this.menuController.menuIndex = 0
     this.input.setValue('/')
     this.scheduleRender()
   }
@@ -549,39 +551,9 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     // Chat view
     if (this.state.view === 'chat') {
       // Dropdown menu key handling
-      if (this.activeMenu !== null) {
-        if (key.name === 'up') {
-          if (this.menuOptions.length > 0) {
-            const startIdx = this.menuIndex
-            do {
-              this.menuIndex = (this.menuIndex - 1 + this.menuOptions.length) % this.menuOptions.length
-            } while (this.menuOptions[this.menuIndex].category !== undefined && this.menuIndex !== startIdx)
-          }
+      if (this.menuController.isActive()) {
+        if (await this.menuController.handleKey(key, this.context, this.input, this.allModels, (c) => this.onSlashCommand(c))) {
           this.scheduleRender()
-          return true
-        }
-        if (key.name === 'down') {
-          if (this.menuOptions.length > 0) {
-            const startIdx = this.menuIndex
-            do {
-              this.menuIndex = (this.menuIndex + 1) % this.menuOptions.length
-            } while (this.menuOptions[this.menuIndex].category !== undefined && this.menuIndex !== startIdx)
-          }
-          this.scheduleRender()
-          return true
-        }
-        if (key.name === 'enter') {
-          void this.selectMenuItem()
-          return true
-        }
-        if (key.name === 'escape') {
-          if (this.activeMenu !== 'commands') {
-            this.returnToSlashMenu()
-          } else {
-            this.activeMenu = null
-            this.input.setValue('')
-            this.scheduleRender()
-          }
           return true
         }
       }
@@ -699,175 +671,15 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     this.scheduleRender()
     
     if (this.state.view !== 'chat') {
-      this.activeMenu = null
+      this.menuController.clear()
       return
     }
     
-    if (!text.startsWith('/')) {
-      this.activeMenu = null
-      return
-    }
-    
-    const firstSpace = text.indexOf(' ')
-    if (firstSpace === -1) {
-      this.activeMenu = 'commands'
-      this.menuOptions = matchCommands(text)
-      if (this.menuIndex >= this.menuOptions.length) {
-        this.menuIndex = 0
-      }
-    } else {
-      const cmd = text.slice(0, firstSpace)
-      if (cmd === '/model') {
-        this.activeMenu = 'model'
-        const q = text.slice(firstSpace + 1).toLowerCase()
-        this.menuOptions = this.allModels.filter(m => m.name.toLowerCase().includes(q))
-        if (this.menuIndex >= this.menuOptions.length) {
-          this.menuIndex = 0
-        }
-      } else if (cmd === '/mode') {
-        this.activeMenu = 'mode'
-        const q = text.slice(firstSpace + 1).toLowerCase()
-        const allModes = ['plan', 'ask', 'auto-edit', 'auto', 'yolo']
-        this.menuOptions = allModes.filter(m => m.includes(q))
-        if (this.menuIndex >= this.menuOptions.length) {
-          this.menuIndex = 0
-        }
-      } else if (cmd === '/resume' || cmd === '/session' || cmd === '/sessions') {
-        this.activeMenu = 'resume'
-        const q = text.slice(firstSpace + 1).toLowerCase()
-        this.menuOptions = listSessions().filter(s => s.name.toLowerCase().includes(q))
-        if (this.menuIndex >= this.menuOptions.length) {
-          this.menuIndex = 0
-        }
-      } else if (cmd === '/help') {
-        this.activeMenu = 'help'
-        const q = text.slice(firstSpace + 1).toLowerCase()
-        this.menuOptions = getFilteredHelpItems(q)
-        this.menuIndex = this.menuOptions.findIndex(item => item.category === undefined)
-        if (this.menuIndex === -1) this.menuIndex = 0
-      } else {
-        this.activeMenu = null
-      }
-    }
-  }
-
-  async selectMenuItem() {
-    if (!this.activeMenu || this.menuOptions.length === 0) return
-    
-    const option = this.menuOptions[this.menuIndex]
-    
-    if (this.activeMenu === 'commands') {
-      const cmd = option.name
-      if (cmd === '/model') {
-        this.input.setValue('/model ')
-        this.activeMenu = 'model'
-        this.menuOptions = this.allModels
-        this.menuIndex = 0
-      } else if (cmd === '/mode') {
-        this.input.setValue('/mode ')
-        this.activeMenu = 'mode'
-        this.menuOptions = ['plan', 'ask', 'auto-edit', 'auto', 'yolo']
-        this.menuIndex = 0
-      } else if (cmd === '/resume' || cmd === '/session' || cmd === '/sessions') {
-        this.input.setValue('/resume ')
-        this.activeMenu = 'resume'
-        this.menuOptions = listSessions()
-        this.menuIndex = 0
-      } else if (cmd === '/help') {
-        this.input.setValue('/help ')
-        this.activeMenu = 'help'
-        this.menuOptions = HELP_ITEMS
-        this.menuIndex = this.menuOptions.findIndex(item => item.category === undefined)
-        if (this.menuIndex === -1) this.menuIndex = 0
-      } else {
-        this.input.clear()
-        this.activeMenu = null
-        await this.onSlashCommand(cmd)
-      }
-    } else if (this.activeMenu === 'model') {
-      const modelName = typeof option === 'string' ? option : option.name
-      this.input.clear()
-      this.activeMenu = null
-      await this.setModelAndEnter(modelName)
-    } else if (this.activeMenu === 'mode') {
-      this.input.clear()
-      this.activeMenu = null
-      this.context.setMode(option)
-      this.notify('success', `Mode → ${option}`)
-    } else if (this.activeMenu === 'resume') {
-      this.input.clear()
-      this.activeMenu = null
-      const sessionName = option.name
-      if (this.context.resumeSession(sessionName)) {
-        this.notify('success', `Resumed session: ${sessionName}`)
-      } else {
-        this.notify('error', `Session not found: ${sessionName}`)
-      }
-    } else if (this.activeMenu === 'help') {
-      const cmd = option.cmd
-      if (cmd === '/model') {
-        this.input.setValue('/model ')
-        this.activeMenu = 'model'
-        this.menuOptions = this.allModels
-        this.menuIndex = 0
-      } else if (cmd === '/mode') {
-        this.input.setValue('/mode ')
-        this.activeMenu = 'mode'
-        this.menuOptions = ['plan', 'ask', 'auto-edit', 'auto', 'yolo']
-        this.menuIndex = 0
-      } else if (cmd === '/resume' || cmd === '/session' || cmd === '/sessions') {
-        this.input.setValue('/resume ')
-        this.activeMenu = 'resume'
-        this.menuOptions = listSessions()
-        this.menuIndex = 0
-      } else if (cmd === '/help') {
-        this.input.setValue('/help ')
-        this.activeMenu = 'help'
-        this.menuOptions = HELP_ITEMS
-        this.menuIndex = this.menuOptions.findIndex(item => item.category === undefined)
-        if (this.menuIndex === -1) this.menuIndex = 0
-      } else {
-        this.input.clear()
-        this.activeMenu = null
-        await this.onSlashCommand(cmd)
-      }
-    }
-    this.scheduleRender()
+    this.menuController.onInputChange(text, this.allModels)
   }
 
   async onTab(text: string, cursor: number): Promise<{ items: string[]; apply: (s: string) => void } | null> {
-    // / command completion
-    if (text.startsWith('/')) {
-      const matches = matchCommands(text)
-      if (matches.length === 0) return null
-      return {
-        items: matches.map(m => m.name),
-        apply: (current) => {
-          // Just take the first match's full name
-          this.input.setValue(matches[0].name)
-        },
-      }
-    }
-    // @ file completion
-    const at = text.lastIndexOf('@', cursor - 1)
-    if (at >= 0) {
-      const prefix = text.slice(at + 1, cursor)
-      try {
-        const r = await this.indexer.glob(`**/${prefix}*`)
-        const items = r.files.slice(0, 10).map(f => f.replace(/.*\//, ''))
-        return {
-          items,
-          apply: (current) => {
-            // Apply first match
-            if (items.length === 0) return
-            const first = items[0]
-            const newText = text.slice(0, at + 1) + first + text.slice(cursor)
-            this.input.setValue(newText)
-          },
-        }
-      } catch {}
-    }
-    return null
+    return await this.tabCompleter.onTab(text, cursor)
   }
 
   historyPrev(): string | null {
@@ -1341,7 +1153,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         const isFocused = !this.state.pendingPermission &&
                           !this.state.pendingDiff &&
                           !this.state.modelPicker &&
-                          !this.activeMenu &&
+                          !this.menuController.isActive() &&
                           !this.doctorInfo &&
                           !this.state.helpOpen;
         if (isFocused) {
@@ -1419,8 +1231,8 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     if (this.state.modelPicker) {
       overlays.push(...renderModelPicker(this.allModels, this.state.modelPicker.index, cols, rows))
     }
-    if (this.activeMenu !== null && this.menuOptions.length > 0) {
-      overlays.push(...renderMenuModal(this.activeMenu, this.menuOptions, this.menuIndex, cols, rows))
+    if (this.menuController.isActive() && this.menuController.menuOptions.length > 0) {
+      overlays.push(...renderMenuModal(this.menuController.activeMenu!, this.menuController.menuOptions, this.menuController.menuIndex, cols, rows))
     }
     if (this.doctorInfo !== null) {
       overlays.push(...renderDoctorModal(this.doctorInfo, cols, rows))
