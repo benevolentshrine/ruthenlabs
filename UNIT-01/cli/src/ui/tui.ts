@@ -33,22 +33,15 @@ export class TUI {
     try {
       this.stdin.setRawMode(true)
     } catch (e) {
-      // Not a TTY (e.g. piped input) — TUI will be read-only
+      // Not a TTY (e.g. piped input)
       this.rawMode = false
       return
     }
     this.stdin.resume()
     this.stdin.setEncoding('utf8')
 
-    this.stdout.write(ansi.enterAltScreen)
-    // Force dark grey default background so the TUI looks the same regardless of
-    // the host terminal's color scheme. OSC 11 sets the default background.
-    this.stdout.write('\x1b]11;#080808\x07')
-    this.stdout.write(ansi.enableMouse)
     this.stdout.write(ansi.enableBracketedPaste)
-    this.stdout.write(ansi.hideCursor)
-    this.stdout.write(ansi.clearScreen)
-    this.altScreen = true
+    this.stdout.write(ansi.showCursor)
 
     this.stdin.on('data', this.handleData)
     process.stdout.on('resize', this.handleResize)
@@ -57,13 +50,7 @@ export class TUI {
   exit() {
     if (!this.rawMode) return
     this.rawMode = false
-    this.stdout.write(ansi.showCursor)
-    // Reset default background to terminal default
-    this.stdout.write('\x1b]111\x07')
-    this.stdout.write(ansi.disableMouse)
     this.stdout.write(ansi.disableBracketedPaste)
-    this.stdout.write(ansi.exitAltScreen)
-    this.altScreen = false
     this.stdin.setRawMode(false)
     this.stdin.pause()
     this.stdin.off('data', this.handleData)
@@ -71,49 +58,7 @@ export class TUI {
   }
 
   writeFrame(lines: string[], overlays: string[] = []) {
-    let out = ansi.moveTo(1, 1)
-    const bgCode = `\x1b[48;5;${colors.bg}m` // Solid dark grey background
-    const dimFgCode = '\x1b[38;5;237m' // Very dark grey for blurred background text
-    const hasOverlay = overlays.length > 0
-
-    for (let i = 0; i < lines.length; i++) {
-      if (i > 0) out += '\r\n'
-      const line = lines[i] ?? ''
-      
-      let escaped: string
-      if (hasOverlay) {
-        // Blur/dim effect: strip ANSI styles and render in uniform dark grey
-        const clean = stripAnsi(line)
-        escaped = `${dimFgCode}${clean}`
-      } else {
-        // Escape resets to preserve the solid background color
-        escaped = line.replace(/\x1b\[0m/g, `\x1b[0m${bgCode}`)
-      }
-      out += `${bgCode}${escaped}\x1b[K`
-    }
-
-    // If the new frame is shorter than the previous one, clear the leftover rows
-    const rows = this.size.rows
-    const written = Math.min(lines.length, rows)
-    if (this.lastFrameRows > written) {
-      for (let i = written; i < this.lastFrameRows; i++) {
-        out += `\r\n${bgCode}\x1b[K`
-      }
-    }
-
-    // Write overlays (they have their own moveTo positioning)
-    const overlayBg = `\x1b[48;5;${colors.bgLight}m`
-    for (const overlay of overlays) {
-      const escaped = overlay.replace(/\x1b\[0m/g, `\x1b[0m${overlayBg}`)
-      out += escaped
-    }
-
-    // Reset all attributes so style state doesn't leak
-    out += ansi.reset
-
-    this.lastFrameRows = written
-    this.lastFrameWidth = this.size.cols
-    this.stdout.write(out)
+    // Stub: no-op in scroll-based main buffer mode
   }
 
   reset() {
@@ -147,6 +92,43 @@ export class TUI {
       return
     }
 
+    // Bracketed paste detection
+    if (s.startsWith('\x1b[200~')) {
+      const endIdx = s.indexOf('\x1b[201~')
+      if (endIdx !== -1) {
+        const pastedText = s.slice(8, endIdx)
+        const keyEvent: KeyEvent = {
+          ctrl: false,
+          meta: false,
+          shift: false,
+          name: 'paste',
+          sequence: pastedText,
+          raw: s
+        }
+        for (const h of this.keyHandlers) {
+          if (h(keyEvent) === true) return
+        }
+        return
+      }
+    }
+
+    // Raw paste / fast typed multi-char printable string
+    const hasControlChars = /[\x00-\x08\x0b-\x1f\x7f]/.test(s)
+    if (s.length > 1 && !s.includes('\x1b') && !hasControlChars) {
+      const keyEvent: KeyEvent = {
+        ctrl: false,
+        meta: false,
+        shift: false,
+        name: 'paste',
+        sequence: s,
+        raw: s
+      }
+      for (const h of this.keyHandlers) {
+        if (h(keyEvent) === true) return
+      }
+      return
+    }
+
     // Parse key
     const key = parseKey(s)
     if (key) {
@@ -169,6 +151,9 @@ export function parseKey(s: string): KeyEvent | null {
   if (s === '\r' || s === '\n') name = 'enter'
   else if (s === '\t') name = 'tab'
   else if (s === '\x7f' || s === '\b') name = 'backspace'
+  else if (s === '\x1b\x7f' || s === '\x1b\x08') {
+    return { ctrl: false, meta: true, shift: false, name: 'backspace', sequence: s, raw: s }
+  }
   else if (s === '\x1b') name = 'escape'
   else if (s === ' ') name = 'space'
   else if (isCtrlChar) {

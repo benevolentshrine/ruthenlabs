@@ -1,6 +1,25 @@
 import pc from 'picocolors'
 import { vw, wrap, pad } from './util/ansi.js'
 
+const colorKeyword = '\x1b[38;5;141m' // Lavender/Purple
+const colorBuiltin = '\x1b[38;5;81m'  // Light Electric Blue
+const colorString = '\x1b[38;5;150m'   // Sage/Pastel Green
+const colorNumber = '\x1b[38;5;208m'   // Pastel Orange
+const colorComment = '\x1b[38;5;244m'  // Slate Grey
+const colorTag = '\x1b[38;5;203m'      // Vibrant Pinkish-Red
+const colorAttr = '\x1b[38;5;110m'     // Pastel Light Blue
+const colorPunc = '\x1b[38;5;246m'     // Gray
+const colorReset = '\x1b[0m'
+
+const wrapKeyword = (s: string) => `${colorKeyword}${s}${colorReset}`
+const wrapBuiltin = (s: string) => `${colorBuiltin}${s}${colorReset}`
+const wrapString = (s: string) => `${colorString}${s}${colorReset}`
+const wrapNumber = (s: string) => `${colorNumber}${s}${colorReset}`
+const wrapComment = (s: string) => `${colorComment}${s}${colorReset}`
+const wrapTag = (s: string) => `${colorTag}${s}${colorReset}`
+const wrapAttr = (s: string) => `${colorAttr}${s}${colorReset}`
+const wrapPunc = (s: string) => `${colorPunc}${s}${colorReset}`
+
 interface LangSyntax {
   keywords: Set<string>
   builtins: Set<string>
@@ -546,11 +565,11 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
     if (state.inBlockComment) {
       const endIdx = line.indexOf(BLOCK_COMMENT_START, i)
       if (endIdx === -1) {
-        result.push(pc.dim(line.slice(i)))
+        result.push(wrapComment(line.slice(i)))
         i = len
         break
       }
-      result.push(pc.dim(line.slice(i, endIdx + 2)))
+      result.push(wrapComment(line.slice(i, endIdx + 2)))
       i = endIdx + 2
       state.inBlockComment = false
       continue
@@ -559,12 +578,12 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
     if (hasBlockComments(lang) && line.slice(i, i + 2) === BLOCK_COMMENT_START) {
       const endIdx = line.indexOf(BLOCK_COMMENT_END, i + 2)
       if (endIdx === -1) {
-        result.push(pc.dim(line.slice(i)))
+        result.push(wrapComment(line.slice(i)))
         state.inBlockComment = true
         i = len
         break
       }
-      result.push(pc.dim(line.slice(i, endIdx + 2)))
+      result.push(wrapComment(line.slice(i, endIdx + 2)))
       i = endIdx + 2
       continue
     }
@@ -572,7 +591,7 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
     let matchedComment = false
     for (const prefix of commentPrefixes) {
       if (line.slice(i, i + prefix.length) === prefix) {
-        result.push(pc.dim(line.slice(i)))
+        result.push(wrapComment(line.slice(i)))
         i = len
         matchedComment = true
         break
@@ -594,7 +613,7 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
             j++
           }
         }
-        result.push(pc.green(line.slice(i, j)))
+        result.push(wrapString(line.slice(i, j)))
         i = j
         matchedString = true
         break
@@ -605,7 +624,7 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
     if (/\d/.test(line[i]) && (i === 0 || !/[a-zA-Z_]/.test(line[i - 1]))) {
       let j = i + 1
       while (j < len && /[\d.]/.test(line[j])) j++
-      result.push(pc.magenta(line.slice(i, j)))
+      result.push(wrapNumber(line.slice(i, j)))
       i = j
       continue
     }
@@ -616,9 +635,9 @@ export function highlightCodeLine(line: string, lang: string, state: HighlightSt
       const word = line.slice(i, j)
 
       if (keywords.has(word)) {
-        result.push(pc.yellow(word))
+        result.push(wrapKeyword(word))
       } else if (builtins.has(word)) {
-        result.push(pc.cyan(word))
+        result.push(wrapBuiltin(word))
       } else {
         result.push(word)
       }
@@ -643,10 +662,10 @@ function highlightHtml(line: string): string {
     if (line.slice(i, i + 4) === '<!--') {
       const endIdx = line.indexOf('-->', i + 4)
       if (endIdx === -1) {
-        result += pc.dim(line.slice(i))
+        result += wrapComment(line.slice(i))
         break
       } else {
-        result += pc.dim(line.slice(i, endIdx + 3))
+        result += wrapComment(line.slice(i, endIdx + 3))
         i = endIdx + 3
         continue
       }
@@ -687,7 +706,7 @@ function highlightHtml(line: string): string {
 }
 
 function highlightTag(tag: string): string {
-  let result = pc.gray('<')
+  let result = wrapPunc('<')
   let content = tag.slice(1)
   if (content.endsWith('>')) {
     content = content.slice(0, -1)
@@ -696,14 +715,14 @@ function highlightTag(tag: string): string {
   let isClosing = false
   if (content.startsWith('/')) {
     isClosing = true
-    result += pc.gray('/')
+    result += wrapPunc('/')
     content = content.slice(1)
   }
   
   const match = content.match(/^([a-zA-Z0-9:-]+)/)
   if (match) {
     const tagName = match[1]
-    result += pc.red(tagName)
+    result += wrapTag(tagName)
     content = content.slice(tagName.length)
   }
   
@@ -719,11 +738,11 @@ function highlightTag(tag: string): string {
     const attrMatch = content.slice(i).match(/^([a-zA-Z0-9:-]+)/)
     if (attrMatch) {
       const attrName = attrMatch[1]
-      result += pc.yellow(attrName)
+      result += wrapAttr(attrName)
       i += attrName.length
       
       if (content[i] === '=') {
-        result += pc.gray('=')
+        result += wrapPunc('=')
         i++
         
         if (content[i] === '"' || content[i] === "'") {
@@ -734,12 +753,12 @@ function highlightTag(tag: string): string {
             else j++
           }
           if (j < len) j++
-          result += pc.cyan(content.slice(i, j))
+          result += wrapString(content.slice(i, j))
           i = j
         } else {
           let j = i
           while (j < len && !/\s/.test(content[j]) && content[j] !== '>') j++
-          result += pc.cyan(content.slice(i, j))
+          result += wrapString(content.slice(i, j))
           i = j
         }
       }
@@ -751,7 +770,7 @@ function highlightTag(tag: string): string {
   }
   
   if (tag.endsWith('>')) {
-    result += pc.gray('>')
+    result += wrapPunc('>')
   }
   return result
 }
@@ -941,11 +960,9 @@ export function renderMarkdown(text: string, maxWidth?: number): string[] {
         highlighted = raw
       }
 
-      const linePrefix = pc.dim(String(codeLineIndex).padStart(2, ' ') + ' ')
-      const lineIndent = pc.dim('   ')
-      const wrapped = wrapAnsi(highlighted, width - 6)
-      wrapped.forEach((line, idx) => {
-        result.push('  ' + (idx === 0 ? linePrefix : lineIndent) + line)
+      const wrapped = wrapAnsi(highlighted, width - 4)
+      wrapped.forEach((line) => {
+        result.push('  ' + line)
       })
       codeLineIndex++
       lineIdx++

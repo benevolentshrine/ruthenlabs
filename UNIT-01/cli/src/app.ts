@@ -3,17 +3,17 @@
 import { existsSync, readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { TUI } from './ui/tui.js'
-import { ansi, colors, uid, vw, pad, trunc, stripAnsi } from './util/ansi.js'
+import { ansi, colors, uid, vw, pad, trunc, stripAnsi, SPINNER } from './util/ansi.js'
 import { fmtBytes, fmtNumber } from './util/format.js'
 import { renderStatusBar, renderHeader } from './ui/widgets/status-bar.js'
 import { renderPermissionModal } from './ui/widgets/permission.js'
+import { renderToolsPanel } from './ui/widgets/tool-card.js'
 import { renderDiffModal } from './ui/widgets/diff-modal.js'
 import { renderHelp } from './ui/views/help.js'
-import { renderModelPicker } from './ui/views/model-picker.js'
 import { renderMenuModal, renderDoctorModal } from './ui/views/slash-menu.js'
 import { renderBootView, type BootViewState } from './ui/views/boot.js'
 import { renderFiglet } from './ui/widgets/logo.js'
-import { ChatView } from './ui/views/chat.js'
+import { ChatView, parseThoughts, formatDuration } from './ui/views/chat.js'
 import { InputField } from './ui/widgets/input.js'
 import { MenuController } from './ui/menu/controller.js'
 import { TabCompleter } from './ui/autocomplete/completer.js'
@@ -131,6 +131,8 @@ export class App {
   running = true
   doctorInfo: string[] | null = null
   private lastWarnedThreshold = 0
+  private lastMenuLinesCount = 0
+  private lastCursorRow = 0
 
   constructor() {
     this.tui = new TUI()
@@ -280,11 +282,11 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     this.tui.onRender(() => this.render())
     this.tui.onResize(() => this.render())
     this.tui.onKey((k) => { void this.onKey(k) })
-    this.tui.onMouse((b, x, y) => this.onMouse(b, x, y))
 
     this.history = loadHistory()
 
     // Boot
+    this.state.view = 'chat'
     this.bootState = {
       models: [],
       index: 0,
@@ -296,6 +298,14 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       loading: true,
       model: this.state.model,
     }
+
+    // Print welcome mascot panel once at startup
+    const welcomeBlock = this.chatView.buildWelcomeBlock(this.tui.getSize().cols)
+    for (const l of welcomeBlock.lines) {
+      process.stdout.write(l + '\n')
+    }
+    process.stdout.write('\n')
+
     this.scheduleRender()
 
     // Initialize in parallel
@@ -581,6 +591,29 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         this.scheduleRender()
         return true
       }
+      if (key.ctrl && key.name === 'o') {
+        if (this.state.streaming && this.state.streamingText) {
+          const { thought, isThinking } = parseThoughts(this.state.streamingText)
+          if (thought && !isThinking) {
+            this.chatView.toggleThought('streaming')
+            this.scheduleRender()
+            return true
+          }
+        }
+        const messages = this.chatView.state.messages
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i]
+          if (m.role === 'assistant') {
+            const { thought } = parseThoughts(m.content)
+            if (thought) {
+              this.chatView.toggleThought(m.id)
+              this.scheduleRender()
+              return true
+            }
+          }
+        }
+        return true
+      }
       if (key.name === 'up' && this.input.getValue() === '' && this.chatView.canScrollUp) {
         this.chatView.scrollUp(1)
         this.scheduleRender()
@@ -627,6 +660,16 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
 
     this.input.setPlaceholder('')
 
+    // Clear active input / menu from screen
+    if (this.lastCursorRow > 0) {
+      process.stdout.write(ansi.cursorUp(this.lastCursorRow))
+    }
+    process.stdout.write('\r' + ansi.clearLineDown)
+    this.lastCursorRow = 0
+
+    // Print permanent prompt
+    process.stdout.write(`  ${ansi.fg(colors.asst)}❯${ansi.reset} ${text}\n\n`)
+
     const userMsg: ChatMessage = {
       id: uid('msg'),
       role: 'user',
@@ -635,7 +678,6 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     }
     this.state.messages.push(userMsg)
     this.chatView.appendMessage(userMsg)
-    this.scheduleRender()
 
     if (!this.executor || !this.state.model) {
       this.notify('error', 'No model selected. Use /model.')
@@ -698,14 +740,30 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     return ''
   }
 
-  // ── Agentic loop driver ──────────────────────────────────────
   async runAgenticLoop() {
     if (!this.executor) return
     this.state.streaming = true
     this.state.streamingText = ''
     this.state.currentToolCalls = []
     this.chatView.state.thoughtStartTime = Date.now()
-    this.scheduleRender()
+    
+    let wasThinking = false
+    let prefixPrinted = false
+    let lastToolLinesCount = 0
+
+    const animInterval = setInterval(() => {
+      if (!this.state.streaming) {
+        clearInterval(animInterval)
+        return
+      }
+      const { isThinking } = parseThoughts(this.state.streamingText)
+      if (isThinking) {
+        const elapsed = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
+        const durationStr = formatDuration(elapsed)
+        const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
+        process.stdout.write(`\r\x1b[K  ${ansi.fg(colors.warn)}${spinner}${ansi.reset} ${ansi.fg(colors.textDim)}${ansi.dim}Thinking (${durationStr})...${ansi.reset}`)
+      }
+    }, 80)
 
     this.currentStreamAbort = new AbortController()
 
@@ -716,15 +774,42 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         async (pending) => this.requestDiff(pending),
         (tool) => {
           this.updateToolCall(tool)
-          this.scheduleRender()
         }
       )
       for await (const ev of stream) {
         if (this.currentStreamAbort.signal.aborted) break
         switch (ev.type) {
-          case 'tool_text':
+          case 'tool_text': {
             this.state.streamingText += ev.text
+            const { thought, response, isThinking } = parseThoughts(this.state.streamingText)
+            if (isThinking) {
+              wasThinking = true
+              const elapsed = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
+              const durationStr = formatDuration(elapsed)
+              const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
+              process.stdout.write(`\r\x1b[K  ${ansi.fg(colors.warn)}${spinner}${ansi.reset} ${ansi.fg(colors.textDim)}${ansi.dim}Thinking (${durationStr})...${ansi.reset}`)
+            } else {
+              if (wasThinking) {
+                wasThinking = false
+                process.stdout.write('\r\x1b[K')
+                const elapsed = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
+                const durationStr = formatDuration(elapsed)
+                process.stdout.write(`  ${ansi.fg(colors.textDim)}${ansi.dim}Thought for ${durationStr} (ctrl+o to expand)${ansi.reset}\n\n`)
+                process.stdout.write(`  ${ansi.fg(colors.asst)}●${ansi.reset} `)
+                prefixPrinted = true
+                if (response) {
+                  process.stdout.write(response)
+                }
+              } else {
+                if (!prefixPrinted) {
+                  process.stdout.write(`  ${ansi.fg(colors.asst)}●${ansi.reset} `)
+                  prefixPrinted = true
+                }
+                process.stdout.write(ev.text)
+              }
+            }
             break
+          }
           case 'tool_calls': {
             // Aggregate into the current assistant message
             const last = [...this.state.messages].reverse().find(m => m.role === 'assistant')
@@ -733,12 +818,36 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
             }
             break;
           }
-          case 'tool_start':
+          case 'tool_start': {
+            if (lastToolLinesCount > 0) {
+              process.stdout.write(ansi.cursorUp(lastToolLinesCount) + '\r' + ansi.clearLineDown)
+            }
             this.state.currentToolCalls.push(ev.tool)
+            const cols = this.tui.getSize().cols
+            const cardLines = renderToolsPanel('current', this.state.currentToolCalls, false, cols)
+            process.stdout.write(cardLines.join('\n') + '\n')
+            lastToolLinesCount = cardLines.length
             break
-          case 'tool_done':
+          }
+          case 'tool_done': {
             this.updateToolCall(ev.tool)
+            if (lastToolLinesCount > 0) {
+              process.stdout.write(ansi.cursorUp(lastToolLinesCount) + '\r' + ansi.clearLineDown)
+            }
+            const cols = this.tui.getSize().cols
+            const cardLines = renderToolsPanel('current', this.state.currentToolCalls, false, cols)
+            process.stdout.write(cardLines.join('\n') + '\n')
+            
+            const allFinished = this.state.currentToolCalls.every(tc => tc.status !== 'running' && tc.status !== 'pending')
+            if (allFinished) {
+              lastToolLinesCount = 0
+              this.state.currentToolCalls = []
+              process.stdout.write('\n')
+            } else {
+              lastToolLinesCount = cardLines.length
+            }
             break
+          }
           case 'tokens': {
             this.state.tokensIn = ev.prompt
             this.state.tokensOut = ev.eval
@@ -750,7 +859,6 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
               const numCompressed = await this.compress()
               if (numCompressed > 0) {
                 this.notify('success', `Auto-compressed context: cleared ${numCompressed} oldest messages.`)
-                this.scheduleRender()
               }
             } else {
               let currentThreshold = 0
@@ -771,20 +879,29 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
             break
           }
           case 'done':
+            if (wasThinking) {
+              wasThinking = false
+              process.stdout.write('\r\x1b[K')
+            }
             this.commitAssistantMessage(this.state.streamingText, this.state.currentToolCalls)
             this.state.streamingText = ''
             this.state.currentToolCalls = []
+            process.stdout.write('\n\n')
             break
           case 'aborted':
+            if (wasThinking) {
+              wasThinking = false
+              process.stdout.write('\r\x1b[K')
+            }
             this.commitAssistantMessage(this.state.streamingText + '\n\n[aborted]', this.state.currentToolCalls)
             this.state.streamingText = ''
             this.state.currentToolCalls = []
+            process.stdout.write('\n\n[aborted]\n\n')
             break
           case 'tool_error':
             this.notify('error', ev.error)
             break
         }
-        this.scheduleRender()
       }
     } catch (e: any) {
       this.notify('error', `Stream error: ${e?.message ?? e}`)
@@ -825,6 +942,9 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       const i = last.toolCalls.findIndex(t => t.id === tc.id)
       if (i >= 0) last.toolCalls[i] = tc
     }
+    const idx = this.state.currentToolCalls.findIndex(t => t.id === tc.id)
+    if (idx >= 0) this.state.currentToolCalls[idx] = tc
+    
     this.chatView.updateToolCall(tc)
   }
 
@@ -838,6 +958,24 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
 
   resolvePermission(d: PermissionDecision) {
     if (!this.state.pendingPermission) return
+
+    // Clear active permission block from screen
+    if (this.lastCursorRow > 0) {
+      process.stdout.write(ansi.cursorUp(this.lastCursorRow) + '\r' + ansi.clearLineDown)
+    } else {
+      process.stdout.write('\r' + ansi.clearLineDown)
+    }
+    this.lastCursorRow = 0
+
+    const p = this.state.pendingPermission
+    if (d === 'allow') {
+      process.stdout.write(`  ${ansi.fg(colors.ok)}✓${ansi.reset} Permission allowed for tool: ${ansi.bold}${p.toolName}${ansi.reset}\n\n`)
+    } else if (d === 'always') {
+      process.stdout.write(`  ${ansi.fg(colors.ok)}✓${ansi.reset} Permission always allowed for tool: ${ansi.bold}${p.toolName}${ansi.reset}\n\n`)
+    } else {
+      process.stdout.write(`  ${ansi.fg(colors.error)}✗${ansi.reset} Permission denied for tool: ${ansi.bold}${p.toolName}${ansi.reset}\n\n`)
+    }
+
     this.state.pendingPermission.resolve(d)
     this.state.pendingPermission = null
     this.scheduleRender()
@@ -852,6 +990,22 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
 
   resolveDiff(d: 'accept' | 'reject' | 'edit') {
     if (!this.state.pendingDiff) return
+
+    // Clear active diff block from screen
+    if (this.lastCursorRow > 0) {
+      process.stdout.write(ansi.cursorUp(this.lastCursorRow) + '\r' + ansi.clearLineDown)
+    } else {
+      process.stdout.write('\r' + ansi.clearLineDown)
+    }
+    this.lastCursorRow = 0
+
+    const p = this.state.pendingDiff
+    if (d === 'accept') {
+      process.stdout.write(`  ${ansi.fg(colors.ok)}✓${ansi.reset} Changes accepted for file: ${ansi.bold}${p.filePath}${ansi.reset}\n\n`)
+    } else {
+      process.stdout.write(`  ${ansi.fg(colors.error)}✗${ansi.reset} Changes rejected for file: ${ansi.bold}${p.filePath}${ansi.reset}\n\n`)
+    }
+
     this.state.pendingDiff.resolve(d)
     this.state.pendingDiff = null
     this.scheduleRender()
@@ -868,7 +1022,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       tool:    `${ansi.fg(colors.tool)}⚙${ansi.reset}`,
     }
     const line = `${map[level]} ${message}`
-    // Add as a system message in chat (or as status log)
+    
     const sysMsg: ChatMessage = {
       id: uid('msg'),
       role: 'system',
@@ -876,6 +1030,17 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       timestamp: Date.now(),
     }
     this.state.messages.push(sysMsg)
+
+    // Clear active input / menu from screen
+    const hadCursorRow = this.lastCursorRow
+    if (hadCursorRow > 0) {
+      process.stdout.write(ansi.cursorUp(hadCursorRow))
+    }
+    process.stdout.write('\r' + ansi.clearLineDown)
+    this.lastCursorRow = 0
+
+    process.stdout.write(`  ${line}\n\n`)
+
     this.scheduleRender()
   }
 
@@ -1100,145 +1265,99 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     const { cols, rows } = this.tui.getSize()
     if (rows <= 0 || cols <= 0) return
 
-    // If we are in the boot screen:
-    if (this.state.view === 'boot' && this.bootState) {
-      const lines: string[] = []
-      const boot = renderBootView(this.bootState, cols, rows)
-      for (const l of boot) lines.push(l)
-      while (lines.length < rows) lines.push('')
-      this.tui.writeFrame(lines, [])
-      return
+    // Clear previous inline block from stdout
+    if (this.lastCursorRow > 0) {
+      process.stdout.write(ansi.cursorUp(this.lastCursorRow) + '\r' + ansi.clearLineDown)
+      this.lastCursorRow = 0
+    } else {
+      process.stdout.write('\r' + ansi.clearLineDown)
     }
 
     // Determine layout widths
-    const hasMessages = this.state.messages.some(m => m.role === 'user')
-    const showSidebar = cols >= 75 && hasMessages
-    const sidebarW = 24
-    const chatW = showSidebar ? (cols - sidebarW - 1) : cols
-
-    const chatLines: string[] = []
-
-    if (this.state.view === 'chat') {
-      if (!this.state.messages.some(m => m.role === 'user')) {
-        // Render Onboarding inside chatW width
-        const onboarding = this.renderOnboarding(chatW, rows)
-        for (const l of onboarding) chatLines.push(l)
-      } else {
-        // Layout: header(1) + spacer(1) + chat(chat_h) + divider(1) + input(3)
-        const inputH = 3
-        const headerH = 1
-        const chatH = Math.max(5, rows - inputH - headerH - 2)
-        this.chatView.setSize(chatW, chatH)
-        this.chatView.state.messages = this.state.messages
-        this.chatView.state.streamingText = this.state.streamingText
-        this.chatView.state.currentToolCalls = this.state.currentToolCalls
-
-        // Header
-        chatLines.push(renderHeader(this.state, chatW))
-        chatLines.push('')
-
-        // Chat
-        const visibleChat = this.chatView.render()
-        for (const l of visibleChat) chatLines.push(l)
-
-        // Pad chat area to align input at the bottom
-        const targetBeforeInput = rows - inputH - 1
-        while (chatLines.length < targetBeforeInput) chatLines.push('')
-        if (chatLines.length > targetBeforeInput) chatLines.length = targetBeforeInput
-
-        // Subtle Divider above input box
-        chatLines.push(`${ansi.fg(237)}${'─'.repeat(chatW)}${ansi.reset}`)
-
-        // Render premium 3-line input box inside chatW width
-        const isFocused = !this.state.pendingPermission &&
-                          !this.state.pendingDiff &&
-                          !this.state.modelPicker &&
-                          !this.menuController.isActive() &&
-                          !this.doctorInfo &&
-                          !this.state.helpOpen;
-        if (isFocused) {
-          this.input.focus()
-        } else {
-          this.input.blur()
-        }
-        const rawInputLines = this.input.renderRaw() // Get raw input line (with cursor, etc.)
-        const inputLine = rawInputLines[0] ?? ''
-
-        // Format premium input box
-        const modeStr = this.state.mode.toUpperCase()
-        const modelStr = this.state.model ? trunc(this.state.model, 25) : 'no model'
-        
-        // Assemble 3 lines
-        const boxL1 = `  ▌ ${inputLine}`
-        
-        const totalTokens = this.state.tokensIn + this.state.tokensOut
-        const pctUsed = this.state.contextWindow > 0 ? Math.round((totalTokens / this.state.contextWindow) * 100) : 0
-        let boxL2 = `  `
-        if (pctUsed >= 90) {
-          boxL2 = `  ${ansi.fg(colors.error)}⚠️ Context critical: ${pctUsed}%! Run /compress now or /new.${ansi.reset}`
-        } else if (pctUsed >= 75) {
-          boxL2 = `  ${ansi.fg(colors.warn)}⚠️ Context full: ${pctUsed}%! Consider running /compress.${ansi.reset}`
-        }
-        
-        const boxL3 = `  ${modeStr} · ${modelStr} · Unit-01 Zen`
-
-        // Wrap with light bg and pad to chatW
-        const bgCode = ansi.bg(colors.bgLight)
-        chatLines.push(`${bgCode}${pad(boxL1, chatW)}${ansi.reset}`)
-        chatLines.push(`${bgCode}${pad(boxL2, chatW)}${ansi.reset}`)
-        chatLines.push(`${bgCode}${pad(boxL3, chatW)}${ansi.reset}`)
-      }
+    const isFocused = !this.state.pendingPermission &&
+                      !this.state.pendingDiff &&
+                      !this.state.modelPicker &&
+                      !this.menuController.isActive() &&
+                      !this.doctorInfo &&
+                      !this.state.helpOpen;
+    if (isFocused) {
+      this.input.focus()
+    } else {
+      this.input.blur()
     }
 
-    // Pad/truncate chatLines to rows
-    while (chatLines.length < rows) chatLines.push('')
-    if (chatLines.length > rows) chatLines.length = rows
+    const rawInputLines = this.input.render(cols)
 
-    // Ensure all chatLines are exactly chatW width
-    for (let i = 0; i < chatLines.length; i++) {
-      if (vw(chatLines[i]) > chatW) {
-        chatLines[i] = trunc(stripAnsi(chatLines[i]), chatW)
+    // Generate the divider/highlight bar line
+    let barColor = colors.unit
+    let modeText = this.state.mode.toUpperCase()
+    
+    if (this.state.streaming) {
+      const { isThinking } = parseThoughts(this.state.streamingText)
+      if (isThinking) {
+        barColor = colors.warn
+        modeText = 'THINKING'
+      } else if (this.state.currentToolCalls.length > 0) {
+        barColor = colors.warn
+        modeText = 'RUNNING TOOL'
       } else {
-        chatLines[i] = pad(chatLines[i], chatW)
-      }
-    }
-
-    // Now, combine with Sidebar if visible
-    const finalLines: string[] = []
-    if (showSidebar) {
-      const sidebarLines = this.renderSidebar(sidebarW, rows)
-      const divChar = `${ansi.fg(colors.border)}│${ansi.reset}`
-      for (let i = 0; i < rows; i++) {
-        finalLines.push(chatLines[i] + divChar + sidebarLines[i])
+        barColor = colors.asst
+        modeText = 'RESPONDING'
       }
     } else {
-      for (let i = 0; i < rows; i++) {
-        finalLines.push(chatLines[i])
-      }
+      if (this.state.mode === 'plan') barColor = colors.textDim
+      else if (this.state.mode === 'ask') barColor = colors.unit
+      else if (this.state.mode === 'auto-edit') barColor = colors.ok
+      else if (this.state.mode === 'auto') barColor = colors.warn
+      else if (this.state.mode === 'yolo') barColor = colors.error
     }
+
+    const modelName = this.state.model ? this.state.model.split('/').pop() || this.state.model : 'no model'
+    const totalTokens = this.state.tokensIn + this.state.tokensOut
+    const pctUsed = this.state.contextWindow > 0 ? Math.round((totalTokens / this.state.contextWindow) * 100) : 0
+    const ctxText = `${pctUsed}% ctx`
+    
+    const leftPart = `── ${ansi.bold}${ansi.fg(barColor)}${modeText}${ansi.reset} ── ${ansi.bold}${modelName}${ansi.reset} ── ${ctxText} `
+    const rawLeftLen = `── ${modeText} ── ${modelName} ── ${ctxText} `.length
+    const rightDashesCount = Math.max(0, cols - rawLeftLen)
+    const dividerBar = `${ansi.fg(colors.border)}${leftPart}${'─'.repeat(rightDashesCount)}${ansi.reset}`
+
+    const inputLines = [dividerBar, ...rawInputLines]
 
     // Overlays (modals)
-    const overlays: string[] = []
+    let overlayLines: string[] = []
     if (this.state.helpOpen) {
-      overlays.push(...renderHelp(cols, rows))
-    }
-    if (this.state.pendingPermission) {
-      overlays.push(...renderPermissionModal(this.state.pendingPermission, cols, rows))
-    }
-    if (this.state.pendingDiff) {
-      overlays.push(...renderDiffModal(this.state.pendingDiff, cols, rows))
-    }
-    if (this.state.modelPicker) {
-      overlays.push(...renderModelPicker(this.allModels, this.state.modelPicker.index, cols, rows))
-    }
-    if (this.menuController.isActive() && this.menuController.menuOptions.length > 0) {
-      overlays.push(...renderMenuModal(this.menuController.activeMenu!, this.menuController.menuOptions, this.menuController.menuIndex, cols, rows))
-    }
-    if (this.doctorInfo !== null) {
-      overlays.push(...renderDoctorModal(this.doctorInfo, cols, rows))
+      overlayLines = renderHelp(cols, rows)
+    } else if (this.doctorInfo !== null) {
+      overlayLines = renderDoctorModal(this.doctorInfo, cols, rows)
+    } else if (this.state.pendingPermission) {
+      overlayLines = renderPermissionModal(this.state.pendingPermission, cols, rows)
+    } else if (this.state.pendingDiff) {
+      overlayLines = renderDiffModal(this.state.pendingDiff, cols, rows)
+    } else if (this.state.modelPicker) {
+      overlayLines = renderMenuModal('model', this.allModels, this.state.modelPicker.index, cols, rows)
+    } else if (this.menuController.isActive() && this.menuController.menuOptions.length > 0) {
+      overlayLines = renderMenuModal(this.menuController.activeMenu!, this.menuController.menuOptions, this.menuController.menuIndex, cols, rows)
     }
 
-    this.tui.writeFrame(finalLines, overlays)
+    const totalLines = [...inputLines, ...overlayLines]
+    process.stdout.write(totalLines.join('\n'))
+
+    // Position cursor
+    if (isFocused) {
+      process.stdout.write(ansi.showCursor)
+      const { row, col } = this.input.getCursorPos()
+      // Adjust row offset by +1 because of dividerBar at index 0 of inputLines
+      const moveUpCount = (totalLines.length - 1) - (row + 1)
+      if (moveUpCount > 0) {
+        process.stdout.write(ansi.cursorUp(moveUpCount))
+      }
+      process.stdout.write(`\r\x1b[${col + 1}G`)
+      this.lastCursorRow = row + 1
+    } else {
+      process.stdout.write(ansi.hideCursor)
+      this.lastCursorRow = totalLines.length - 1
+    }
   }
 
   cleanup() {

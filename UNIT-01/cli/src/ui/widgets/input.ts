@@ -27,6 +27,7 @@ export class InputField {
 
   setPlaceholder(p: string) { this.placeholder = p }
   getValue() { return this.value }
+  getCursor() { return this.cursor }
   setValue(v: string, cursorAt?: number) {
     this.value = v
     this.cursor = cursorAt ?? v.length
@@ -72,8 +73,7 @@ export class InputField {
 
   // Returns lines for rendering at given width
   render(width: number, ghost = ''): string[] {
-    if (!this.focused) return []
-    const prompt = `${ansi.fg(colors.unit)}${ansi.bold}▌${ansi.reset}`
+    const prompt = `${ansi.fg(colors.asst)}❯${ansi.reset}`
     const indent = '  '
 
     const raw = this.renderRaw(ghost)
@@ -92,6 +92,23 @@ export class InputField {
     const last = lines[lines.length - 1]
     const col = (row === 0 ? 3 : 2) + vw(last)
     return { row, col }
+  }
+
+  deleteWordBeforeCursor() {
+    if (this.cursor === 0) return
+    let i = this.cursor - 1
+    // Skip trailing spaces
+    while (i >= 0 && /\s/.test(this.value[i])) {
+      i--
+    }
+    // Skip word characters
+    while (i >= 0 && !/\s/.test(this.value[i])) {
+      i--
+    }
+    const newCursor = i + 1
+    this.value = this.value.slice(0, newCursor) + this.value.slice(this.cursor)
+    this.cursor = newCursor
+    this.cbs.onChange?.(this.value)
   }
 
   async handleKey(key: KeyEvent): Promise<boolean> {
@@ -118,11 +135,27 @@ export class InputField {
         return true
       }
       case 'backspace': {
+        if (key.ctrl || key.meta) {
+          this.deleteWordBeforeCursor()
+          return true
+        }
         if (this.cursor > 0) {
           this.value = this.value.slice(0, this.cursor - 1) + this.value.slice(this.cursor)
           this.cursor--
           this.cbs.onChange?.(this.value)
         }
+        return true
+      }
+      case 'w': {
+        if (key.ctrl) {
+          this.deleteWordBeforeCursor()
+          return true
+        }
+        break
+      }
+      case 'paste': {
+        const sanitized = key.sequence.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+        this.insert(sanitized)
         return true
       }
       case 'delete': {
@@ -161,6 +194,7 @@ export class InputField {
       }
       default: return false
     }
+    return false
   }
 
   private insert(text: string) {
