@@ -6,6 +6,7 @@ import { registerBuiltinCommands } from './commands/builtins.js'
 import { ensureDaemons, IndexerClient, SandboxClient } from './daemons/lifecycle.js'
 import { OllamaClient } from './llm/ollama.js'
 import { mcpManager } from './mcp/client.js'
+import { uid } from './util/ansi.js'
 
 // Register slash commands
 registerBuiltinCommands()
@@ -89,9 +90,35 @@ async function runNonInteractive(prompt: string, args: string[]) {
     await mcpManager.init()
   } catch {}
 
-  const { loadProjectContext } = await import('./config/store.js')
+  const { loadProjectContext, loadSession, saveSession } = await import('./config/store.js')
   const cwd = settings.workingDir || process.cwd()
   const projectContext = loadProjectContext(cwd)
+  
+  // Resolve session if specified
+  const sessionIdx = args.indexOf('--session')
+  let sessionName: string | null = null
+  if (sessionIdx !== -1) {
+    sessionName = args[sessionIdx + 1] || null
+  }
+  
+
+  let messages: any[] = []
+  if (sessionName) {
+    const session = loadSession(sessionName)
+    if (session) {
+      messages = [...session.messages]
+    }
+  }
+
+  // Create new user message
+  const userMsg = {
+    id: uid('msg'),
+    role: 'user' as const,
+    content: prompt,
+    timestamp: Date.now(),
+  }
+  messages.push(userMsg)
+
   const systemPrompt = `You are UNIT-01, a local code assistant running on the user's machine.
 
 Working directory: ${cwd}
@@ -140,8 +167,6 @@ ${projectContext ? `# Project Context\n${projectContext}` : ''}`
     contextWindow: ctx,
   })
 
-  const messages = [{ id: 'p1', role: 'user' as const, content: prompt, timestamp: Date.now() }]
-
   for await (const ev of executor.run(
     messages,
     async () => 'allow',
@@ -151,6 +176,12 @@ ${projectContext ? `# Project Context\n${projectContext}` : ''}`
     if (ev.type === 'tool_error') console.error('\n[error]', ev.error)
     if (ev.type === 'done') process.stdout.write('\n')
   }
+  
+  // Save session if specified
+  if (sessionName) {
+    saveSession(sessionName, messages)
+  }
+
   mcpManager.shutdown()
 }
 

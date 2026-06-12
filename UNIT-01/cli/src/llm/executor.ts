@@ -164,7 +164,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
   ): AsyncGenerator<ToolEvent> {
     this.abortController = new AbortController()
     const signal = this.abortController.signal
-    let workingMessages = [...messages]
+    let workingMessages = messages
     const executedCalls = new Set<string>()
 
     // Loop until the LLM stops calling tools

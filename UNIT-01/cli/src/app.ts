@@ -983,7 +983,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     if (!text && tools.length === 0) return
     const last = this.state.messages[this.state.messages.length - 1]
     const finalDuration = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
-    if (last && last.role === 'assistant' && last.toolCalls && last.toolCalls.length > 0) {
+    if (last && last.role === 'assistant') {
       // Update the existing assistant message (it was created by executor)
       last.content = text
       last.toolCalls = tools.length > 0 ? tools : last.toolCalls
