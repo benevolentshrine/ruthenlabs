@@ -40,7 +40,7 @@ export class InputField {
     if (!this.value && this.placeholder) {
       const ph = `${ansi.fg(colors.textMuted)}${this.placeholder}${ansi.reset}`
       const gh = ghost ? `${ansi.fg(colors.textMuted)}${ansi.dim}${ghost}${ansi.reset}` : ''
-      const cursorChar = `${ansi.inverse} ${ansi.reset}`
+      const cursorChar = this.focused ? `${ansi.inverse} ${ansi.reset}` : ' '
       return [`${cursorChar}${ph}${gh}`]
     }
 
@@ -58,7 +58,7 @@ export class InputField {
         const before = line.slice(0, idx)
         const after = line.slice(idx)
         const charAtCursor = after[0] || ' '
-        const cursorStr = `${ansi.inverse}${charAtCursor}${ansi.reset}`
+        const cursorStr = this.focused ? `${ansi.inverse}${charAtCursor}${ansi.reset}` : charAtCursor
         const rest = after.slice(1)
         const gh = (this.cursor === lineEnd && ghost) ? `${ansi.fg(colors.textMuted)}${ansi.dim}${ghost}${ansi.reset}` : ''
         renderedLine = before + cursorStr + rest + gh

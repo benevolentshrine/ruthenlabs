@@ -17,62 +17,14 @@ interface ShadowEntry {
   original_path: string;
 }
 
-// ── Deterministic Term-Hashing Embedder (Matching Rust HashEmbedder) ─────────
-const EMBEDDING_DIM = 256;
 
-function getFnv1aHash(str: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < str.length; i++) {
-    hash ^= str.charCodeAt(i);
-    hash = Math.imul(hash, 16777619) >>> 0;
-  }
-  return hash;
-}
-
-export function embedHash(text: string): number[] {
-  const vec = new Array(EMBEDDING_DIM).fill(0);
-  const terms = text
-    .split(/[^a-zA-Z0-9]/)
-    .filter(t => t.length > 1);
-
-  for (const term of terms) {
-    const hash = getFnv1aHash(term.toLowerCase());
-    const idx = hash % EMBEDDING_DIM;
-    vec[idx] += 1.0;
-  }
-
-  for (let i = 0; i < terms.length - 1; i++) {
-    const bigram = (terms[i] + ' ' + terms[i + 1]).toLowerCase();
-    const hash = getFnv1aHash(bigram);
-    const idx = hash % EMBEDDING_DIM;
-    vec[idx] += 0.5;
-  }
-
-  const sumSq = vec.reduce((sum, val) => sum + val * val, 0);
-  const magnitude = Math.sqrt(sumSq);
-  if (magnitude > 0) {
-    for (let i = 0; i < EMBEDDING_DIM; i++) {
-      vec[i] /= magnitude;
-    }
-  }
-  return vec;
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) {
-    sum += a[i] * b[i];
-  }
-  return sum;
-}
 
 
 
 // ── Local Indexer Class ──────────────────────────────────────────────────────
 export class LocalIndexer {
   private db: Database;
-  private rootDir: string = process.cwd();
+  public rootDir: string = process.cwd();
 
   constructor() {
     const home = process.env.HOME || '/tmp';
@@ -209,7 +161,6 @@ export class LocalIndexer {
 
           const chunks = chunkFile(content, file, rel, lang);
           for (const chunk of chunks) {
-            const embedding = embedHash(chunk.content);
             this.db.prepare(`
               INSERT OR REPLACE INTO chunks (id, filepath, relpath, language, start_line, end_line, content, chunk_type, name, embedding)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -223,7 +174,7 @@ export class LocalIndexer {
               chunk.content,
               chunk.chunk_type,
               chunk.name,
-              JSON.stringify(embedding)
+              null
             );
           }
 
@@ -248,13 +199,7 @@ export class LocalIndexer {
     return { indexed: indexedCount, nodes: totalNodes };
   }
 
-  status() {
-    return { status: 'running' };
-  }
 
-  stop() {
-    return { status: 'stopping' };
-  }
 
   // FTS5 Full Text Search
   search(query: string, opts: { limit?: number; lang?: string; path?: string } = {}) {
@@ -299,36 +244,7 @@ export class LocalIndexer {
     return { results, count: results.length };
   }
 
-  // Linear scan vector similarity lookup
-  semanticSearch(query: string, limit = 10) {
-    const qEmbed = embedHash(query);
-    const rows = this.db.prepare('SELECT id, filepath, relpath, content, language, embedding FROM chunks WHERE embedding IS NOT NULL').all() as any[];
 
-    const results: (SearchResult & { rawScore: number })[] = [];
-
-    for (const r of rows) {
-      try {
-        const embedding = JSON.parse(r.embedding) as number[];
-        const score = cosineSimilarity(qEmbed, embedding);
-        if (score > 0) {
-          const parts = r.id.split(':');
-          const startLine = parts.length >= 3 ? parseInt(parts[parts.length - 2], 10) + 1 : 1;
-          results.push({
-            path: r.filepath,
-            line: startLine,
-            content: r.content,
-            score,
-            rawScore: score,
-            language: r.language
-          });
-        }
-      } catch {}
-    }
-
-    results.sort((a, b) => b.rawScore - a.rawScore);
-    const sliced = results.slice(0, limit);
-    return { results: sliced, count: sliced.length };
-  }
 
   glob(pattern: string, base = '.') {
     // Basic file list filter matching glob pattern
@@ -349,25 +265,7 @@ export class LocalIndexer {
     return { files };
   }
 
-  find(name: string, root = '.') {
-    const absoluteRoot = resolve(root);
-    const rows = this.db.prepare('SELECT path FROM files WHERE path LIKE ?').all(`%${name}%`) as any[];
-    const files = rows
-      .map(r => r.path)
-      .filter(p => p.startsWith(absoluteRoot))
-      .map(p => p.slice(this.rootDir.length + 1));
-    return { files };
-  }
 
-  fileInfo(path: string) {
-    const absolute = resolve(path);
-    const stat = statSync(absolute);
-    return {
-      size: stat.size,
-      is_dir: stat.isDirectory(),
-      modified: Math.floor(stat.mtimeMs / 1000)
-    };
-  }
 
   read(path: string) {
     const absolute = resolve(path);
@@ -375,17 +273,7 @@ export class LocalIndexer {
     return { content };
   }
 
-  async readLines(path: string, start: number, end: number) {
-    const absolute = resolve(path);
-    const content = readFileSync(absolute, 'utf-8');
-    const lines = content.split('\n');
-    const from = Math.max(0, start - 1);
-    const to = Math.min(lines.length, end);
-    return {
-      content: lines.slice(from, to).join('\n'),
-      total: lines.length
-    };
-  }
+
 
   write(path: string, content: string) {
     const absolute = resolve(path);

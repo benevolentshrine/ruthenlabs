@@ -118,11 +118,4 @@ export async function ensureDaemons(): Promise<{ indexer: IndexerClient; sandbox
   return { indexer, sandbox }
 }
 
-export async function stopDaemons(): Promise<void> {
-  try {
-    const c = new IndexerClient()
-    await c.stop()
-  } catch {}
-}
-
 export { IndexerClient, SandboxClient }

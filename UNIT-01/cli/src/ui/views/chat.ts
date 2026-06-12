@@ -2,7 +2,7 @@
 
 import { ansi, colors, pad, trunc, vw, wrap, SPINNER } from '../../util/ansi.js'
 import { renderMarkdown } from '../../markdown.js'
-import { renderToolCard, renderToolsPanel } from '../widgets/tool-card.js'
+import { renderToolsPanel } from '../widgets/tool-card.js'
 import type { ChatMessage, ToolCall } from '../../types.js'
 
 export interface ChatViewState {

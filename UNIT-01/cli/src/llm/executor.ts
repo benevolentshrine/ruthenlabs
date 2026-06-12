@@ -115,6 +115,15 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       sysPrompt += `\n\n# Codebase Signatures Map\n${repoMap}`
     }
 
+    // Inject dynamic Git Status context
+    try {
+      const gitResult = Bun.spawnSync(['git', 'status', '--porcelain'], { cwd: this.indexer.rootDir })
+      const gitOutput = gitResult.stdout.toString().trim()
+      if (gitOutput) {
+        sysPrompt += `\n\n# Active Modified Files (Git Status)\n${gitOutput}`
+      }
+    } catch {}
+
     const out: OllamaMessage[] = [{ role: 'system', content: sysPrompt }]
     
     // Trim history for small models to prevent context looping
@@ -161,6 +170,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     messages: ChatMessage[],
     requestPermission: ToolPermissionRequester,
     requestDiff: ToolDiffRequester,
+    onToolProgress?: (tool: ToolCall) => void,
   ): AsyncGenerator<ToolEvent> {
     this.abortController = new AbortController()
     const signal = this.abortController.signal
@@ -376,7 +386,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         }
 
         // 5. For write tools, show diff before applying
-        if (req.function.name === 'write_file' || req.function.name === 'patch_file') {
+        if (req.function.name === 'write_file' || req.function.name === 'patch_file' || req.function.name === 'patch_file_blocks') {
           let original = ''
           try {
             const r = await this.indexer.read(toolCall.args.path as string)
@@ -385,9 +395,14 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
           toolCall.originalContent = original
 
           if (this.mode === 'ask') {
-            const updated = req.function.name === 'write_file'
-              ? (toolCall.args.content as string)
-              : this.applyPatch(original, toolCall.args.target as string, toolCall.args.replacement as string)
+            let updated = ''
+            if (req.function.name === 'write_file') {
+              updated = toolCall.args.content as string
+            } else if (req.function.name === 'patch_file') {
+              updated = this.applyPatch(original, toolCall.args.target as string, toolCall.args.replacement as string)
+            } else if (req.function.name === 'patch_file_blocks') {
+              updated = this.applySearchReplaceBlocks(original, toolCall.args.blocks as string)
+            }
             const pending: PendingDiff = {
               filePath: toolCall.args.path as string,
               original,
@@ -417,7 +432,12 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         const start = Date.now()
         toolCall.status = 'running'
         try {
-          const result = await this.executeTool(req)
+          const result = await this.executeTool(req, (progressResult) => {
+            toolCall.result = progressResult
+            if (onToolProgress) {
+              onToolProgress(toolCall)
+            }
+          })
           const maskedResult = maskObservation(req.function.name, result)
           toolCall.status = 'done'
           toolCall.result = result
@@ -487,6 +507,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
       }
       case 'write_file': return `Write ${args.path} (${(args.content as string)?.length ?? 0} bytes)`
       case 'patch_file': return `Patch ${args.path}`
+      case 'patch_file_blocks': return `Patch blocks in ${args.path}`
       case 'run_command': return `Run: ${(args.command as string ?? '').slice(0, 80)}`
       case 'search_code': return `Search: "${args.query}"`
       case 'list_dir': return `List: ${args.path || '.'}`
@@ -501,7 +522,80 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
     return original.replace(target, replacement)
   }
 
-  private async executeTool(req: ToolCallRequest): Promise<string> {
+  private applySearchReplaceBlocks(content: string, blocksStr: string): string {
+    const lines = blocksStr.split('\n')
+    const blocks: { search: string; replace: string }[] = []
+    
+    let currentSearch: string[] = []
+    let currentReplace: string[] = []
+    let inSearch = false
+    let inReplace = false
+    
+    for (const line of lines) {
+      if (line.startsWith('<<<<<<< SEARCH')) {
+        inSearch = true
+        inReplace = false
+        currentSearch = []
+      } else if (line.startsWith('=======')) {
+        inSearch = false
+        inReplace = true
+        currentReplace = []
+      } else if (line.startsWith('>>>>>>> REPLACE')) {
+        inSearch = false
+        inReplace = false
+        blocks.push({
+          search: currentSearch.join('\n'),
+          replace: currentReplace.join('\n'),
+        })
+      } else {
+        if (inSearch) {
+          currentSearch.push(line)
+        } else if (inReplace) {
+          currentReplace.push(line)
+        }
+      }
+    }
+    
+    if (blocks.length === 0) {
+      throw new Error("No valid SEARCH/REPLACE blocks found in the input. Format must use <<<<<<< SEARCH, =======, and >>>>>>> REPLACE.")
+    }
+    
+    let updated = content
+    for (const block of blocks) {
+      if (!block.search.trim()) {
+        throw new Error("Empty SEARCH block is not allowed.")
+      }
+      
+      const index = updated.indexOf(block.search)
+      if (index === -1) {
+        const normalizedSearch = block.search.replace(/\r\n/g, '\n')
+        const normalizedContent = updated.replace(/\r\n/g, '\n')
+        const normIndex = normalizedContent.indexOf(normalizedSearch)
+        
+        if (normIndex === -1) {
+          throw new Error(`Could not find the SEARCH block in the file. Indentation and whitespace must match exactly:\n${block.search}`)
+        }
+        
+        const firstIndex = normalizedContent.indexOf(normalizedSearch)
+        const lastIndex = normalizedContent.lastIndexOf(normalizedSearch)
+        if (firstIndex !== lastIndex) {
+          throw new Error("The SEARCH block matches multiple places in the file. Please provide more context lines to make it unique.")
+        }
+        
+        updated = normalizedContent.slice(0, normIndex) + block.replace + normalizedContent.slice(normIndex + normalizedSearch.length)
+      } else {
+        const lastIndex = updated.lastIndexOf(block.search)
+        if (index !== lastIndex) {
+          throw new Error("The SEARCH block matches multiple places in the file. Please provide more context lines to make it unique.")
+        }
+        updated = updated.slice(0, index) + block.replace + updated.slice(index + block.search.length)
+      }
+    }
+    
+    return updated
+  }
+
+  private async executeTool(req: ToolCallRequest, onProgress?: (progressResult: string) => void): Promise<string> {
     const { name, arguments: args } = req.function
     let parsedArgs = args
     if (typeof parsedArgs === 'string') {
@@ -573,6 +667,15 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
           await this.indexer.patch(path, target, replacement)
           return `Patched ${path}. Shadow backup created.`
         }
+        case 'patch_file_blocks': {
+          const path = safeArgs.path as string
+          const blocks = safeArgs.blocks as string
+          const r = await this.indexer.read(path)
+          const original = r.content
+          const updated = this.applySearchReplaceBlocks(original, blocks)
+          await this.indexer.write(path, updated)
+          return `Patched ${path} using SEARCH/REPLACE blocks. Shadow backup created.`
+        }
         case 'run_command': {
           const cmd = (safeArgs.command as string).trim()
           
@@ -582,10 +685,22 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
           }
           
           try {
-            // Set 30s timeout by default
             const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Command timed out after 30 seconds')), 30000))
             const isPkgCmd = /^(go|cargo|npm|bun|pip|yarn|pnpm)\b/.test(cmd)
-            const executionPromise = this.sandbox.execute(cmd, { allow_network: isPkgCmd })
+            let accumulated = ''
+            const executionPromise = this.sandbox.execute(cmd, {
+              allow_network: isPkgCmd,
+              onOutput: (chunk) => {
+                accumulated += chunk
+                if (onProgress) {
+                  let out = accumulated
+                  if (out.length > 2000) {
+                    out = out.slice(0, 2000) + '\n\n[... Truncated: command output exceeded 2000 characters ...]'
+                  }
+                  onProgress(out)
+                }
+              }
+            })
             
             const r = await Promise.race([executionPromise, timeoutPromise])
             
@@ -753,90 +868,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
   }
 }
 
-interface SearchReplaceBlock {
-  search: string
-  replace: string
-}
 
-function parseSearchReplaceBlocks(blocksStr: string): SearchReplaceBlock[] {
-  const lines = blocksStr.split('\n')
-  const blocks: SearchReplaceBlock[] = []
-  
-  let currentSearch: string[] = []
-  let currentReplace: string[] = []
-  let inSearch = false
-  let inReplace = false
-  
-  for (const line of lines) {
-    if (line.startsWith('<<<<<<< SEARCH')) {
-      inSearch = true
-      inReplace = false
-      currentSearch = []
-    } else if (line.startsWith('=======')) {
-      inSearch = false
-      inReplace = true
-      currentReplace = []
-    } else if (line.startsWith('>>>>>>> REPLACE')) {
-      inSearch = false
-      inReplace = false
-      blocks.push({
-        search: currentSearch.join('\n'),
-        replace: currentReplace.join('\n'),
-      })
-    } else {
-      if (inSearch) {
-        currentSearch.push(line)
-      } else if (inReplace) {
-        currentReplace.push(line)
-      }
-    }
-  }
-  
-  if (blocks.length === 0) {
-    throw new Error("No valid SEARCH/REPLACE blocks found in the input. Format must use <<<<<<< SEARCH, =======, and >>>>>>> REPLACE.")
-  }
-  
-  return blocks
-}
-
-function applySearchReplaceBlocks(content: string, blocksStr: string): string {
-  const blocks = parseSearchReplaceBlocks(blocksStr)
-  let updated = content
-  
-  for (const block of blocks) {
-    const searchTrimmed = block.search.trim()
-    if (!searchTrimmed) {
-      throw new Error("Empty SEARCH block is not allowed.")
-    }
-    
-    const index = updated.indexOf(block.search)
-    if (index === -1) {
-      const normalizedSearch = block.search.replace(/\r\n/g, '\n')
-      const normalizedContent = updated.replace(/\r\n/g, '\n')
-      const normIndex = normalizedContent.indexOf(normalizedSearch)
-      
-      if (normIndex === -1) {
-        throw new Error(`Could not find the SEARCH block in the file. Make sure the code to find matches exactly, including indentation:\n${block.search}`)
-      }
-      
-      const firstIndex = normalizedContent.indexOf(normalizedSearch)
-      const lastIndex = normalizedContent.lastIndexOf(normalizedSearch)
-      if (firstIndex !== lastIndex) {
-        throw new Error("The SEARCH block matches multiple places in the file. Please provide more context lines to make it unique.")
-      }
-      
-      updated = normalizedContent.slice(0, normIndex) + block.replace + normalizedContent.slice(normIndex + normalizedSearch.length)
-    } else {
-      const lastIndex = updated.lastIndexOf(block.search)
-      if (index !== lastIndex) {
-        throw new Error("The SEARCH block matches multiple places in the file. Please provide more context lines to make it unique.")
-      }
-      updated = updated.slice(0, index) + block.replace + updated.slice(index + block.search.length)
-    }
-  }
-  
-  return updated
-}
 
 function maskObservation(toolName: string, output: string): string {
   if (!output) return output;

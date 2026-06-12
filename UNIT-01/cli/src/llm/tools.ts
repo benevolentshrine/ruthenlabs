@@ -53,6 +53,21 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'patch_file_blocks',
+      description: 'Safer multi-block patch edits. Replaces search block sections using standard <<<<<<< SEARCH, =======, and >>>>>>> REPLACE markers. Provide sufficient unique lines inside the SEARCH block so it matches exactly once.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'File path' },
+          blocks: { type: 'string', description: 'Search/Replace block diff text (containing SEARCH/REPLACE segments)' },
+        },
+        required: ['path', 'blocks'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description: 'Run a shell command in the sandbox. Cap output to 2000 chars. 30s timeout max.',
       parameters: {
@@ -122,6 +137,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
   read_file:     { risk: 'safe',      category: 'read',    description: 'Read file content (max 200 lines)' },
   write_file:    { risk: 'moderate',  category: 'write',   description: 'Write file content' },
   patch_file:    { risk: 'moderate',  category: 'write',   description: 'Patch file content' },
+  patch_file_blocks: { risk: 'moderate',  category: 'write',   description: 'Patch file using Search/Replace blocks' },
   run_command:   { risk: 'dangerous', category: 'execute', description: 'Run command in sandbox' },
   search_code:   { risk: 'safe',      category: 'read',    description: 'FTS5 search' },
   list_dir:      { risk: 'safe',      category: 'read',    description: 'List directory content (1 level)' },

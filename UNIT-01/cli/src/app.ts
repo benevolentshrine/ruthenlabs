@@ -902,6 +902,10 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         this.state.messages,
         async (pending) => this.requestPermission(pending),
         async (pending) => this.requestDiff(pending),
+        (tool) => {
+          this.updateToolCall(tool)
+          this.scheduleRender()
+        }
       )
       for await (const ev of stream) {
         if (this.currentStreamAbort.signal.aborted) break
@@ -1065,9 +1069,10 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
 
   async promptForFile(): Promise<string | null> {
     return new Promise((resolve) => {
-      this.input.setPlaceholder('file path...')
-      const oldOnSubmit = this.input
+      const oldInput = this.input
       const cb = (text: string) => {
+        this.input = oldInput
+        this.scheduleRender()
         resolve(text.trim() || null)
       }
       this.input = new InputField({
@@ -1077,6 +1082,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         onHistoryUp: () => null,
         onHistoryDown: () => null,
       })
+      this.input.setPlaceholder('file path...')
       this.scheduleRender()
     })
   }
@@ -1332,6 +1338,17 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         chatLines.push(`${ansi.fg(237)}${'─'.repeat(chatW)}${ansi.reset}`)
 
         // Render premium 3-line input box inside chatW width
+        const isFocused = !this.state.pendingPermission &&
+                          !this.state.pendingDiff &&
+                          !this.state.modelPicker &&
+                          !this.activeMenu &&
+                          !this.doctorInfo &&
+                          !this.state.helpOpen;
+        if (isFocused) {
+          this.input.focus()
+        } else {
+          this.input.blur()
+        }
         const rawInputLines = this.input.renderRaw() // Get raw input line (with cursor, etc.)
         const inputLine = rawInputLines[0] ?? ''
 

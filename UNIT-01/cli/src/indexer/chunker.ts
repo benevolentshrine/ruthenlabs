@@ -76,61 +76,9 @@ const LANGUAGES_PATTERNS: Record<string, Pattern[]> = {
     pat('^type\\s+\\w+\\s+struct', ChunkType.Class),
     pat('^type\\s+\\w+\\s+interface', ChunkType.Class),
   ],
-  Java: [
-    pat('^(public|private|protected)\\s+\\w+\\s+\\w+\\s*\\(', ChunkType.Function),
-    pat('^(public|private|protected)\\s+class\\s+\\w+', ChunkType.Class),
-    pat('^(public|private|protected)\\s+interface\\s+\\w+', ChunkType.Class),
-    pat('^(public|private|protected)\\s+enum\\s+\\w+', ChunkType.Class),
-    pat('@\\w+', ChunkType.Function),
-  ],
-  C: [
-    pat('^\\w+\\s+\\w+\\s*\\(', ChunkType.Function),
-    pat('^\\w+\\s+\\*\\s*\\w+\\s*\\(', ChunkType.Function),
-    pat('^struct\\s+\\w+', ChunkType.Class),
-  ],
-  'C++': [
-    pat('^\\w+\\s+\\w+\\s*\\(', ChunkType.Function),
-    pat('^\\w+\\s+\\*\\s*\\w+\\s*\\(', ChunkType.Function),
-    pat('^class\\s+\\w+', ChunkType.Class),
-    pat('^struct\\s+\\w+', ChunkType.Class),
-  ],
-  Ruby: [
-    pat('^def\\s+', ChunkType.Function),
-    pat('^class\\s+\\w+', ChunkType.Class),
-    pat('^module\\s+\\w+', ChunkType.Block),
-  ],
-  Kotlin: [
-    pat('^fun\\s+', ChunkType.Function),
-    pat('^class\\s+\\w+', ChunkType.Class),
-    pat('^interface\\s+\\w+', ChunkType.Class),
-    pat('^object\\s+\\w+', ChunkType.Class),
-  ],
-  Swift: [
-    pat('^func\\s+', ChunkType.Function),
-    pat('^class\\s+\\w+', ChunkType.Class),
-    pat('^struct\\s+\\w+', ChunkType.Class),
-    pat('^enum\\s+\\w+', ChunkType.Class),
-    pat('^protocol\\s+\\w+', ChunkType.Class),
-  ],
-  PHP: [
-    pat('^function\\s+', ChunkType.Function),
-    pat('^(public|private|protected)\\s+function\\s+', ChunkType.Function),
-    pat('^class\\s+\\w+', ChunkType.Class),
-    pat('^interface\\s+\\w+', ChunkType.Class),
-    pat('^trait\\s+\\w+', ChunkType.Class),
-  ],
   Shell: [
     pat('^\\w+\\s*\\(\\)\\s*\\{', ChunkType.Function),
     pat('^function\\s+\\w+\\s*\\{', ChunkType.Function),
-  ],
-  Lua: [
-    pat('^function\\s+', ChunkType.Function),
-    pat('^(local\\s+)?function\\s+', ChunkType.Function),
-  ],
-  Zig: [
-    pat('^fn\\s+', ChunkType.Function),
-    pat('^pub\\s+fn\\s+', ChunkType.Function),
-    pat('^const\\s+\\w+\\s*=\\s*struct', ChunkType.Class),
   ],
 };
 
@@ -219,24 +167,10 @@ export function languageFromExt(ext: string): string {
     case 'jsx': return 'JavaScript';
     case 'ts':
     case 'tsx': return 'TypeScript';
-    case 'java': return 'Java';
-    case 'c':
-    case 'h': return 'C';
-    case 'cpp':
-    case 'cc':
-    case 'cxx':
-    case 'hpp': return 'C++';
-    case 'rb': return 'Ruby';
-    case 'php': return 'PHP';
-    case 'swift': return 'Swift';
-    case 'kt':
-    case 'kts': return 'Kotlin';
     case 'sh':
     case 'bash':
     case 'zsh':
     case 'fish': return 'Shell';
-    case 'lua': return 'Lua';
-    case 'zig': return 'Zig';
     default: return 'Unknown';
   }
 }

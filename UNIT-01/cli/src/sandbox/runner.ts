@@ -322,7 +322,7 @@ export class LocalSandbox {
     return bwrapArgs;
   }
 
-  async execute(cmd: string, opts: { allow_network?: boolean; timeout_ms?: number } = {}) {
+  async execute(cmd: string, opts: { allow_network?: boolean; timeout_ms?: number; onOutput?: (chunk: string) => void } = {}) {
     const isMac = process.platform === 'darwin';
     const isLinux = process.platform === 'linux';
 
@@ -388,11 +388,19 @@ Please run it outside the sandbox or request elevated privileges.`
       let stderr = '';
 
       child.stdout.on('data', (data) => {
-        stdout += data.toString();
+        const chunk = data.toString();
+        stdout += chunk;
+        if (opts.onOutput) {
+          opts.onOutput(chunk);
+        }
       });
 
       child.stderr.on('data', (data) => {
-        stderr += data.toString();
+        const chunk = data.toString();
+        stderr += chunk;
+        if (opts.onOutput) {
+          opts.onOutput(chunk);
+        }
       });
 
       const timeout = setTimeout(() => {
