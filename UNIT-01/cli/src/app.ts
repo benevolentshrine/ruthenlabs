@@ -911,11 +911,11 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
             break
           case 'tool_calls': {
             // Aggregate into the current assistant message
-            const last = this.state.messages[this.state.messages.length - 1]
+            const last = [...this.state.messages].reverse().find(m => m.role === 'assistant')
             if (last?.role === 'assistant' && last.toolCalls) {
               // Already pushed by executor
             }
-            break
+            break;
           }
           case 'tool_start':
             this.state.currentToolCalls.push(ev.tool)
@@ -981,7 +981,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
 
   commitAssistantMessage(text: string, tools: ToolCall[]) {
     if (!text && tools.length === 0) return
-    const last = this.state.messages[this.state.messages.length - 1]
+    const last = [...this.state.messages].reverse().find(m => m.role === 'assistant')
     const finalDuration = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
     if (last && last.role === 'assistant') {
       // Update the existing assistant message (it was created by executor)
@@ -1004,7 +1004,7 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
 
   updateToolCall(tc: ToolCall) {
     // Update the last assistant message's tool calls
-    const last = this.state.messages[this.state.messages.length - 1]
+    const last = [...this.state.messages].reverse().find(m => m.role === 'assistant')
     if (last?.role === 'assistant' && last.toolCalls) {
       const i = last.toolCalls.findIndex(t => t.id === tc.id)
       if (i >= 0) last.toolCalls[i] = tc
