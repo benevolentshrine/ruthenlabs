@@ -111,6 +111,24 @@ function getFilteredHelpItems(q: string): HelpMenuItem[] {
   return filtered
 }
 
+const QUIRKY_THINKING_PHRASES = [
+  'Thinking',
+  'Consulting the oracle',
+  'Analyzing the matrix',
+  'Generating brainwaves',
+  'Pondering the meaning of life',
+  'Sipping digital coffee',
+  'Reticulating splines',
+  'Refactoring reality',
+  'Summoning code spirits',
+  'Deciphering ancient scrolls',
+  'Aligning prompt vectors',
+  'Warming up CPU cores',
+  'Asking the codebase gods',
+  'Staring into the void',
+  'Optimizing quantum state'
+]
+
 export class App {
   tui: TUI
   state: AppState
@@ -761,7 +779,9 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
         const elapsed = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
         const durationStr = formatDuration(elapsed)
         const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
-        process.stdout.write(`\r\x1b[K  ${ansi.fg(colors.warn)}${spinner}${ansi.reset} ${ansi.fg(colors.textDim)}${ansi.dim}Thinking (${durationStr})...${ansi.reset}`)
+        const phraseIdx = Math.floor(elapsed / 2.5) % QUIRKY_THINKING_PHRASES.length
+        const phrase = QUIRKY_THINKING_PHRASES[phraseIdx]
+        process.stdout.write(`\r\x1b[K  ${ansi.fg(colors.warn)}${spinner}${ansi.reset} ${ansi.fg(colors.textDim)}${ansi.dim}${phrase} (${durationStr})...${ansi.reset}`)
       }
     }, 80)
 
@@ -787,7 +807,9 @@ If writing HTML, CSS, or web components, you must build premium, modern, visuall
               const elapsed = (Date.now() - this.chatView.state.thoughtStartTime) / 1000
               const durationStr = formatDuration(elapsed)
               const spinner = SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]
-              process.stdout.write(`\r\x1b[K  ${ansi.fg(colors.warn)}${spinner}${ansi.reset} ${ansi.fg(colors.textDim)}${ansi.dim}Thinking (${durationStr})...${ansi.reset}`)
+              const phraseIdx = Math.floor(elapsed / 2.5) % QUIRKY_THINKING_PHRASES.length
+              const phrase = QUIRKY_THINKING_PHRASES[phraseIdx]
+              process.stdout.write(`\r\x1b[K  ${ansi.fg(colors.warn)}${spinner}${ansi.reset} ${ansi.fg(colors.textDim)}${ansi.dim}${phrase} (${durationStr})...${ansi.reset}`)
             } else {
               if (wasThinking) {
                 wasThinking = false
