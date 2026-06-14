@@ -315,6 +315,36 @@ function isPathInside(parent: string, child: string): boolean {
 }
 
 
+function cleanContentFences(content: string): string {
+  const trimmed = content.trim();
+  const fenceRegex = /^`{3,}[\w\-]*\r?\n([\s\S]*?)\r?\n`{3,}$/;
+  const match = fenceRegex.exec(trimmed);
+  if (match) {
+    return match[1];
+  }
+  return content;
+}
+
+const HALLUCINATED_TAGS = new Set([
+  'delete_file', 'move_file', 'remove_file', 'create_file', 'copy_file', 'rename_file', 'list_files',
+  'read_directory', 'list_directory', 'create_directory', 'make_directory', 'delete_directory',
+  'delete_folder', 'move_folder', 'create_folder', 'rename_folder', 'list_folder',
+  'run_script', 'exec_command', 'execute_command', 'execute_script',
+  'mkdir', 'rm', 'mv', 'cp', 'ls', 'cd', 'pwd', 'file_write', 'file_read', 'file_delete',
+  'write_directory', 'patch_file', 'edit_file', 'modify_file'
+]);
+
+function isHallocinatedTool(tagName: string): boolean {
+  const clean = tagName.toLowerCase().replace(/^\//, ''); // strip leading slash for closing tags
+  if (HALLUCINATED_TAGS.has(clean)) return true;
+  if (clean.endsWith('_file') || clean.endsWith('_dir') || clean.endsWith('_directory') || clean.endsWith('_folder') || clean.endsWith('_command') || clean.endsWith('_path')) {
+    // Exclude allowed tags
+    const allowed = new Set(['run_command', 'read_file', 'write_file', 'search_code', 'think']);
+    return !allowed.has(clean);
+  }
+  return false;
+}
+
 function parseWriteFile(text: string): { filePath: string; content: string } | null {
   // Try matching path attribute: <write_file path="src/index.ts">content</write_file>
   // or unclosed: <write_file path="src/index.ts">content (to end of text)
@@ -322,7 +352,7 @@ function parseWriteFile(text: string): { filePath: string; content: string } | n
   if (attrMatch) {
     return {
       filePath: cleanFilePath(attrMatch[1]),
-      content: attrMatch[2]
+      content: cleanContentFences(attrMatch[2])
     };
   }
 
@@ -335,7 +365,7 @@ function parseWriteFile(text: string): { filePath: string; content: string } | n
     if (firstNewline !== -1) {
       const filePath = cleanFilePath(inner.slice(0, firstNewline));
       const content = inner.slice(firstNewline + 1);
-      return { filePath, content };
+      return { filePath, content: cleanContentFences(content) };
     }
   }
 
@@ -686,6 +716,22 @@ async function handleToolCalls(
   indexer: DirectiveIndexer,
   rl: readline.Interface
 ): Promise<{ toolRun: boolean; nextPrompt: string; consoleOutput: string }> {
+  // Check for hallucinated tool calls
+  const tagRegex = /<(\/?[a-zA-Z_][a-zA-Z0-9_\-]*)(?:\s+[^>]*)*>/g;
+  let tagMatch;
+  while ((tagMatch = tagRegex.exec(text))) {
+    const tagName = tagMatch[1];
+    if (isHallocinatedTool(tagName)) {
+      const cleanTagName = tagName.replace(/^\//, '');
+      console.log(`\n  ${chalk.red('✗')} tool call ${chalk.yellow(`<${cleanTagName}>`)} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n[UNIT-01 SYSTEM] Unknown tool: <${cleanTagName}>.\nSupported tools: run_command, read_file, write_file, search_code.\nTo delete files use: <run_command>rm path/to/file</run_command>\nTo rename/move use: <run_command>mv old new</run_command>\n</tool_output>`,
+        consoleOutput: `\n[Hallucinated tool blocked: <${cleanTagName}>]`
+      };
+    }
+  }
+
   const runRegex = /<run_command>([\s\S]*?)(?:<\/run_command>|$)/;
   const readRegex = /<read_file>([\s\S]*?)(?:<\/read_file>|$)/;
   const searchRegex = /<search_code>([\s\S]*?)(?:<\/search_code>|$)/;
