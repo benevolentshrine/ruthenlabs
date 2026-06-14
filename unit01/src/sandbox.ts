@@ -215,11 +215,10 @@ export class DirectiveSandbox {
     }
 
     // 4. Set up resource limit ulimit prefix
-    // Limits: 2GB RAM (ulimit -v, Linux only), 64 processes (ulimit -u, Linux only), 256 FDs (ulimit -n)
-    const isLinux = process.platform === 'linux';
-    const ulimitPrefix = isLinux
-      ? 'ulimit -v 2097152 && ulimit -u 64 && ulimit -n 256'
-      : 'ulimit -n 256';
+    // Increase file descriptor limit to 2048. Avoid ulimit -v (virtual memory) and ulimit -u (user processes)
+    // on Linux because modern runtimes (Node/Bun/V8) require larger virtual memory mapping and setting ulimit -u
+    // restricts total user processes globally, causing shell forks to fail.
+    const ulimitPrefix = 'ulimit -n 2048';
     const innerCommand = `${ulimitPrefix} && ${trimmedCommand}`;
 
     // 5. Setup sandboxing engine wrapping command
