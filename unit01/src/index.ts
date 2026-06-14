@@ -308,6 +308,12 @@ function cleanFilePath(p: string): string {
   return cleaned.trim();
 }
 
+function isPathInside(parent: string, child: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+
 function parseWriteFile(text: string): { filePath: string; content: string } | null {
   // Try matching path attribute: <write_file path="src/index.ts">content</write_file>
   // or unclosed: <write_file path="src/index.ts">content (to end of text)
@@ -715,6 +721,16 @@ async function handleToolCalls(
     const filePath = writeResult.filePath;
     const content = writeResult.content;
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    
+    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('write')} ${filePath} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: Path traversal detected. Writing files outside the workspace is denied.\n</tool_output>`,
+        consoleOutput: `\n[Write blocked (out of workspace): ${filePath}]`
+      };
+    }
+
     const fileExists = fs.existsSync(absPath);
     const original = fileExists ? fs.readFileSync(absPath, 'utf-8') : null;
     
@@ -796,6 +812,16 @@ async function handleToolCalls(
     const rawPath = match[1].trim();
     const filePath = cleanFilePath(rawPath);
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    
+    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('read')} ${filePath} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: Path traversal detected. Reading files outside the workspace is denied.\n</tool_output>`,
+        consoleOutput: `\n[Read blocked (out of workspace): ${filePath}]`
+      };
+    }
+
     process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('read')} ${filePath} ...`);
     
     let content = '';

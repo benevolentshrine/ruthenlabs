@@ -235,15 +235,14 @@ export class DirectiveSandbox {
       tempSeatbeltProfile = path.join(os.tmpdir(), `seatbelt-${crypto.randomBytes(8).toString('hex')}.sb`);
       const profileContent = `(version 1)
 (allow default)
-(deny file-write*
-  (subpath "/System")
-  (subpath "/usr")
-  (subpath "/bin")
-  (subpath "/sbin")
-  (subpath "/private/etc")
-  (subpath "/etc")
-  (subpath "/var/root")
-  (subpath "/private/var/db")
+(deny file-write*)
+(allow file-write*
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (subpath "/dev")
+  (subpath "/private/tmp")
+  (subpath "/tmp")
+  (subpath "${this.workspaceRoot}")
 )
 `;
       fs.writeFileSync(tempSeatbeltProfile, profileContent, 'utf-8');
