@@ -1,0 +1,202 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
+import chalk from 'chalk';
+import { IndexerDB, ChunkRecord } from './db.js';
+
+const themeGreen = chalk.hex('#22C55E');
+import { chunkFile } from './chunker.js';
+import { buildRepoMap } from './repomap.js';
+import { FileWatcher } from './watcher.js';
+import { DiffTracker } from './difftracker.js';
+import { ShadowBackupManager } from './backup.js';
+
+const IGNORE_PATTERNS = [
+  'node_modules',
+  '.git',
+  'dist',
+  'target',
+  '__pycache__',
+  '.next',
+  '.svelte-kit',
+  '.ruthen'
+];
+
+const BINARY_EXTS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.pdf', '.zip', '.tar', '.gz',
+  '.mp4', '.mp3', '.wav', '.mov', '.avi', '.exe', '.dll', '.so', '.dylib', '.node',
+  '.woff', '.woff2', '.eot', '.ttf', '.otf', '.db', '.sqlite', '.sqlite3'
+]);
+
+function computeHash(content: string): string {
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+
+export class DirectiveIndexer {
+  private db: IndexerDB;
+  private watcher: FileWatcher | null = null;
+  private workspaceRoot: string;
+  private diffTracker: DiffTracker;
+  private backupManager: ShadowBackupManager;
+  private currentRepoMap: string = '';
+
+  constructor(workspaceRoot: string) {
+    this.workspaceRoot = path.resolve(workspaceRoot);
+    this.db = new IndexerDB(this.workspaceRoot);
+    this.diffTracker = new DiffTracker();
+    this.backupManager = new ShadowBackupManager(this.db);
+  }
+
+  /**
+   * Run initial codebase scan, prune deleted files, generate initial repo map, and start background watcher.
+   */
+  public async initialize() {
+    console.log(`  ${themeGreen('index')} workspace: ${this.workspaceRoot}`);
+    
+    const scannedFiles = new Set<string>();
+
+    const walk = (currentDir: string) => {
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      } catch (err) {
+        console.error(`Failed to read directory ${currentDir}:`, err);
+        return;
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        
+        // Skip ignored directories/files
+        if (IGNORE_PATTERNS.includes(entry.name)) {
+          continue;
+        }
+
+        if (entry.isDirectory()) {
+          walk(fullPath);
+        } else if (entry.isFile()) {
+          // Skip binary files and files > 5MB
+          const ext = path.extname(entry.name).toLowerCase();
+          if (BINARY_EXTS.has(ext)) {
+            continue;
+          }
+
+          try {
+            const stat = fs.statSync(fullPath);
+            if (stat.size > 5 * 1024 * 1024) {
+              continue; // Skip files > 5MB
+            }
+
+            scannedFiles.add(fullPath);
+            this.processFileOnStartup(fullPath, stat);
+          } catch (err) {
+            console.error(`Failed to process file ${fullPath}:`, err);
+          }
+        }
+      }
+    };
+
+    // Run the recursive walk
+    if (fs.existsSync(this.workspaceRoot)) {
+      walk(this.workspaceRoot);
+    }
+
+    // Prune deleted files that were in DB but are no longer on disk
+    const allDbFiles = this.db.getAllFiles();
+    for (const dbFile of allDbFiles) {
+      if (!scannedFiles.has(dbFile.path)) {
+        console.log(`  ${themeGreen('index')} Pruning: ${dbFile.path}`);
+        this.db.removeFile(dbFile.path);
+      }
+    }
+
+    // Build initial Repo Map
+    this.currentRepoMap = buildRepoMap(this.db);
+
+    // Start file watcher for real-time updates
+    this.watcher = new FileWatcher(
+      this.workspaceRoot,
+      this.db,
+      this.diffTracker,
+      () => {
+        // Callback runs when watcher updates a file
+        this.currentRepoMap = buildRepoMap(this.db);
+      }
+    );
+    this.watcher.start();
+    console.log(`  ${themeGreen('index')} Initial scan complete and background watcher started.`);
+  }
+
+  private processFileOnStartup(filePath: string, stat: fs.Stats) {
+    const relpath = path.relative(this.workspaceRoot, filePath);
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const hash = computeHash(content);
+      const existing = this.db.getFile(filePath);
+
+      // Skip re-chunking if hash is identical
+      if (existing && existing.hash === hash) {
+        return;
+      }
+
+      console.log(`  ${themeGreen('index')} Indexing: ${relpath}`);
+      const chunks = chunkFile(filePath, relpath, content);
+      
+      this.db.upsertFile({
+        path: filePath,
+        hash,
+        size: stat.size,
+        modified: stat.mtimeMs
+      });
+      this.db.removeChunksForFile(filePath);
+      this.db.insertChunks(chunks);
+    } catch (err) {
+      console.error(`Failed to index file ${filePath}:`, err);
+    }
+  }
+
+  /**
+   * Retrieve the current repository map (max 1500 tokens).
+   */
+  public getRepoMap(): string {
+    return this.currentRepoMap;
+  }
+
+  /**
+   * Retrieve the recent changes log (max 10 lines).
+   */
+  public getRecentChanges(): string {
+    return this.diffTracker.formatRecentChanges();
+  }
+
+  /**
+   * Create a shadow backup of a file before a write or patch.
+   */
+  public backupBeforeWrite(absolutePath: string) {
+    this.backupManager.backupFile(absolutePath);
+  }
+
+  /**
+   * Revert the latest change on a file via /undo.
+   */
+  public undoWrite(absolutePath: string): boolean {
+    return this.backupManager.restoreBackup(absolutePath);
+  }
+
+  /**
+   * Search chunks in the codebase using FTS5 keyword matching.
+   */
+  public search(query: string): (ChunkRecord & { rank: number })[] {
+    return this.db.searchChunks(query);
+  }
+
+  /**
+   * Clean up background watcher and close DB connection.
+   */
+  public close() {
+    if (this.watcher) {
+      this.watcher.stop();
+    }
+    this.db.close();
+  }
+}
