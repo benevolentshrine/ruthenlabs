@@ -726,7 +726,7 @@ async function handleToolCalls(
       console.log(`\n  ${chalk.red('✗')} tool call ${chalk.yellow(`<${cleanTagName}>`)} (blocked)`);
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\n[UNIT-01 SYSTEM] Unknown tool: <${cleanTagName}>.\nSupported tools: run_command, read_file, write_file, search_code.\nTo delete files use: <run_command>rm path/to/file</run_command>\nTo rename/move use: <run_command>mv old new</run_command>\n</tool_output>`,
+        nextPrompt: `<tool_output>\n[UNIT-01 SYSTEM] Unknown tool: <${cleanTagName}>.\nSupported tools: run_command, read_file, write_file, search_code.\nTo list files/folders use: <run_command>ls -la</run_command>\nTo delete files use: <run_command>rm path/to/file</run_command>\nTo rename/move use: <run_command>mv old new</run_command>\n</tool_output>`,
         consoleOutput: `\n[Hallucinated tool blocked: <${cleanTagName}>]`
       };
     }
@@ -918,6 +918,15 @@ async function handleToolCalls(
 
   if ((match = searchRegex.exec(text))) {
     const query = match[1].trim();
+    if (!query) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('search')} complete: blocked (empty query)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: Search query cannot be empty. Please provide specific keywords to search the codebase.\n</tool_output>`,
+        consoleOutput: `\n[Search blocked: empty query]`
+      };
+    }
+    
     process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('search')} index for "${query}" ...`);
     const results = indexer.search(query);
     
@@ -1160,7 +1169,14 @@ async function startCli() {
       conversationHistory.push({ role: 'user', content: trimmed });
 
       // Run recursive LLM agent generation loop
+      let loopDepth = 0;
       const runAgentLoop = async () => {
+        loopDepth++;
+        if (loopDepth > 15) {
+          console.log(chalk.red(`\n⚠️  [System Guard] Maximum tool iteration depth (15) reached. Stopping loop to prevent resource drain.`));
+          askQuestion();
+          return;
+        }
         const currentRepoMap = indexer.getRepoMap();
         const currentChanges = indexer.getRecentChanges();
         
