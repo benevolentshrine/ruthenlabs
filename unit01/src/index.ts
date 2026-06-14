@@ -310,7 +310,8 @@ function cleanFilePath(p: string): string {
 
 function isPathInside(parent: string, child: string): boolean {
   const relative = path.relative(path.resolve(parent), path.resolve(child));
-  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+  if (relative === '') return true;
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 
@@ -783,29 +784,40 @@ async function handleToolCalls(
     }
     
     process.stdout.write(`  ${themeOrange('⠋')} ${themeGreen('write')} ${filePath} ...`);
-    indexer.backupBeforeWrite(absPath);
-    
-    fs.mkdirSync(path.dirname(absPath), { recursive: true });
-    fs.writeFileSync(absPath, content, 'utf-8');
-    
-    // Clear sandbox loop history since file modification changes workspace state
-    sandbox.clearLoopHistory();
-    
-    // Re-index
     try {
-      const stat = fs.statSync(absPath);
-      indexer['processFileOnStartup'](absPath, stat);
-      indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
-    } catch (e) {}
-    
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
-    console.log(`  ${themeGreen('✓')} ${themeGreen('write')} ${filePath} (completed)`);
-    return {
-      toolRun: true,
-      nextPrompt: `<tool_output>\nFile successfully written and indexed at ${filePath}\n</tool_output>`,
-      consoleOutput: `\n[File written: ${filePath}]`
-    };
+      indexer.backupBeforeWrite(absPath);
+      
+      fs.mkdirSync(path.dirname(absPath), { recursive: true });
+      fs.writeFileSync(absPath, content, 'utf-8');
+      
+      // Clear sandbox loop history since file modification changes workspace state
+      sandbox.clearLoopHistory();
+      
+      // Re-index
+      try {
+        const stat = fs.statSync(absPath);
+        indexer['processFileOnStartup'](absPath, stat);
+        indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
+      } catch (e) {}
+      
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('write')} ${filePath} (completed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nFile successfully written and indexed at ${filePath}\n</tool_output>`,
+        consoleOutput: `\n[File written: ${filePath}]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('write')} ${filePath} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError writing file: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[File write failed: ${filePath}]`
+      };
+    }
   }
 
   if ((match = readRegex.exec(text))) {
@@ -826,11 +838,20 @@ async function handleToolCalls(
     
     let content = '';
     let success = false;
-    if (fs.existsSync(absPath)) {
-      content = fs.readFileSync(absPath, 'utf-8');
-      success = true;
-    } else {
-      content = `Error: File not found at ${filePath}`;
+    try {
+      if (fs.existsSync(absPath)) {
+        const stat = fs.statSync(absPath);
+        if (stat.isDirectory()) {
+          content = `Error: ${filePath} is a directory. Use run_command with shell commands like 'ls' or 'find' to inspect its contents.`;
+        } else {
+          content = fs.readFileSync(absPath, 'utf-8');
+          success = true;
+        }
+      } else {
+        content = `Error: File not found at ${filePath}`;
+      }
+    } catch (err: any) {
+      content = `Error: ${err.message}`;
     }
     
     readline.clearLine(process.stdout, 0);
