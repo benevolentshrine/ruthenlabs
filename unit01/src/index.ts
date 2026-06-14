@@ -756,9 +756,10 @@ async function handleToolCalls(
     }
 
     console.log(`  ${themeGreen('✓')} ${themePrimary('run')} ${cmd} (completed)`);
+    const outputResult = output.trim() || 'Command executed successfully with no output.';
     return {
       toolRun: true,
-      nextPrompt: `<tool_output>\n${output}\n</tool_output>`,
+      nextPrompt: `<tool_output>\n${outputResult}\n</tool_output>`,
       consoleOutput: `\n[Sandbox output executed: ${cmd}]`
     };
   }
