@@ -42,6 +42,35 @@ function countVisualLines(text: string, cols: number): number {
   return totalLines;
 }
 
+// Helper to detect if the streamed text contains a repetition loop
+function hasRepetitionLoop(text: string): boolean {
+  const len = text.length;
+  // Look for repeating suffixes of length 10 to 200 characters
+  // A repeat loop exists if s1 === s2 && s2 === s3
+  const maxChunkSize = Math.min(200, Math.floor(len / 3));
+  for (let size = 10; size <= maxChunkSize; size++) {
+    const chunk3 = text.slice(-size);
+    const chunk2 = text.slice(-2 * size, -size);
+    const chunk1 = text.slice(-3 * size, -2 * size);
+    if (chunk1 === chunk2 && chunk2 === chunk3) {
+      return true;
+    }
+  }
+
+  // Also check if the last 4 non-empty lines are identical
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+  if (lines.length >= 4) {
+    const last4 = lines.slice(-4);
+    if (last4[0] === last4[1] && last4[1] === last4[2] && last4[2] === last4[3]) {
+      if (last4[0].length >= 3) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 class ThinkingSpinner {
   private words: string[];
   private intervalId: NodeJS.Timeout | null = null;
@@ -2499,6 +2528,9 @@ async function startCli() {
             contextLimit,
             (chunk) => {
               streamAccumulator += chunk;
+              if (hasRepetitionLoop(streamAccumulator)) {
+                throw new Error('REPETITION_LOOP');
+              }
               const elapsed = Date.now() - spinnerStartTime;
               if (elapsed < minDelay) {
                 bufferedText += chunk;
@@ -2585,6 +2617,27 @@ async function startCli() {
           }
         } catch (err: any) {
           spinner.stop();
+          if (err.message === 'REPETITION_LOOP') {
+            if (toolSpinnerLinePrinted) {
+              readline.clearLine(process.stdout, 0);
+              readline.cursorTo(process.stdout, 0);
+              readline.moveCursor(process.stdout, 0, -1);
+            }
+            const cols = process.stdout.columns || 80;
+            const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
+            if (linesToClear > 0) {
+              readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
+              readline.cursorTo(process.stdout, 0);
+              readline.clearScreenDown(process.stdout);
+            }
+            console.log(themeRed('\n✗ [System Guard] Generation aborted: text repetition loop detected.'));
+            conversationHistory.push({
+              role: 'system',
+              content: '[SYSTEM] Generation aborted due to repeating text. Please generate your response concisely without repetitions.'
+            });
+            await runAgentLoop();
+            return;
+          }
           console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
           askQuestion();
           return;

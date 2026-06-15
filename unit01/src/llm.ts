@@ -102,34 +102,45 @@ export class OllamaClient {
       throw new Error('Could not get response stream reader');
     }
 
-    const decoder = new TextDecoder();
-    let fullText = '';
-    let buffer = '';
+    try {
+      const decoder = new TextDecoder();
+      let fullText = '';
+      let buffer = '';
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
 
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const json = JSON.parse(line) as { message?: { content: string }; done?: boolean };
-          if (json.message?.content) {
-            const chunk = json.message.content;
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let chunk: string | undefined;
+          try {
+            const json = JSON.parse(line) as { message?: { content: string }; done?: boolean };
+            if (json.message?.content) {
+              chunk = json.message.content;
+            }
+          } catch (e) {
+            // ignore parsing error for malformed lines
+          }
+
+          if (chunk !== undefined) {
             fullText += chunk;
             onChunk(chunk);
           }
-        } catch (e) {
-          // ignore parsing error for malformed lines
         }
       }
-    }
 
-    return fullText;
+      return fullText;
+    } catch (err) {
+      try {
+        await reader.cancel();
+      } catch (_) {}
+      throw err;
+    }
   }
 }
 export const ollama = new OllamaClient();
