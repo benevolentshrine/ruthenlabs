@@ -1,8 +1,19 @@
-import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { homedir } from 'os';
+
+// @ts-ignore
+let DatabaseSync: any;
+if (typeof (process.versions as any).bun !== 'undefined') {
+  // @ts-ignore
+  const sqlite = await import('bun:sqlite');
+  DatabaseSync = sqlite.Database;
+} else {
+  // @ts-ignore
+  const sqlite = await import('node:sqlite');
+  DatabaseSync = sqlite.DatabaseSync;
+}
 
 export interface FileRecord {
   path: string;
@@ -31,7 +42,7 @@ export interface ShadowBackupRecord {
 }
 
 export class IndexerDB {
-  private db: DatabaseSync;
+  private db: any;
   public workspaceRoot: string;
 
   constructor(workspaceRoot: string) {
@@ -133,17 +144,17 @@ export class IndexerDB {
   public upsertFile(file: FileRecord) {
     this.db.prepare(`
       INSERT INTO files (path, hash, size, modified)
-      VALUES ($path, $hash, $size, $modified)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(path) DO UPDATE SET
         hash = excluded.hash,
         size = excluded.size,
         modified = excluded.modified
-    `).run({
-      path: file.path,
-      hash: file.hash,
-      size: file.size,
-      modified: file.modified
-    });
+    `).run(
+      file.path,
+      file.hash,
+      file.size,
+      file.modified
+    );
   }
 
   public removeFile(filePath: string) {
@@ -162,7 +173,7 @@ export class IndexerDB {
     if (chunks.length === 0) return;
     const insert = this.db.prepare(`
       INSERT INTO chunks (id, filepath, relpath, language, start_line, end_line, content, chunk_type, name)
-      VALUES ($id, $filepath, $relpath, $language, $start_line, $end_line, $content, $chunk_type, $name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         content = excluded.content,
         start_line = excluded.start_line,
@@ -173,17 +184,17 @@ export class IndexerDB {
 
     this.runInTransaction(() => {
       for (const record of chunks) {
-        insert.run({
-          id: record.id,
-          filepath: record.filepath,
-          relpath: record.relpath,
-          language: record.language,
-          start_line: record.start_line,
-          end_line: record.end_line,
-          content: record.content,
-          chunk_type: record.chunk_type,
-          name: record.name
-        });
+        insert.run(
+          record.id,
+          record.filepath,
+          record.relpath,
+          record.language,
+          record.start_line,
+          record.end_line,
+          record.content,
+          record.chunk_type,
+          record.name
+        );
       }
     });
   }
@@ -220,14 +231,14 @@ export class IndexerDB {
   public upsertBackup(backup: ShadowBackupRecord) {
     this.db.prepare(`
       INSERT INTO shadow_backups (path_hash, original_path, content)
-      VALUES ($path_hash, $original_path, $content)
+      VALUES (?, ?, ?)
       ON CONFLICT(path_hash) DO UPDATE SET
         content = excluded.content
-    `).run({
-      path_hash: backup.path_hash,
-      original_path: backup.original_path,
-      content: backup.content
-    });
+    `).run(
+      backup.path_hash,
+      backup.original_path,
+      backup.content
+    );
   }
 
   public removeBackup(pathHash: string) {

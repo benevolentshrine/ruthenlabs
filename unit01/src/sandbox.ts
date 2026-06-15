@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import chalk from 'chalk';
 import { EgressProxy, TIER1_DOMAINS, detectTier2Domains } from './proxy.js';
+import { AllowedPath } from './types.js';
 
 const themePrimary = chalk.hex('#9333EA');
 
@@ -270,10 +271,61 @@ export class DirectiveSandbox {
   private proxyPort: number = 0;
   private writtenFiles = new Set<string>();
   private sessionStartTime: number;
+  private allowedPaths: AllowedPath[] = [];
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, allowedPaths: AllowedPath[] = []) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.sessionStartTime = Date.now();
+    this.allowedPaths = allowedPaths;
+  }
+
+  public updateAllowedPaths(allowedPaths: AllowedPath[]) {
+    this.allowedPaths = allowedPaths;
+  }
+
+  public isPathAllowed(child: string): boolean {
+    const absParent = path.resolve(this.workspaceRoot);
+    const absChild = path.resolve(child);
+    
+    // Check workspace root
+    const relativeToParent = path.relative(absParent, absChild);
+    if (relativeToParent === '' || (!relativeToParent.startsWith('..') && !path.isAbsolute(relativeToParent))) {
+      return true;
+    }
+    
+    // Check allowed paths
+    for (const allowed of this.allowedPaths) {
+      const absAllowed = path.resolve(allowed.path);
+      const relativeToAllowed = path.relative(absAllowed, absChild);
+      if (relativeToAllowed === '' || (!relativeToAllowed.startsWith('..') && !path.isAbsolute(relativeToAllowed))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  public isPathWriteAllowed(child: string): boolean {
+    const absParent = path.resolve(this.workspaceRoot);
+    const absChild = path.resolve(child);
+    
+    // Check workspace root
+    const relativeToParent = path.relative(absParent, absChild);
+    if (relativeToParent === '' || (!relativeToParent.startsWith('..') && !path.isAbsolute(relativeToParent))) {
+      return true;
+    }
+    
+    // Check allowed paths
+    for (const allowed of this.allowedPaths) {
+      if (allowed.mode !== 'rw') continue;
+      const absAllowed = path.resolve(allowed.path);
+      const relativeToAllowed = path.relative(absAllowed, absChild);
+      if (relativeToAllowed === '' || (!relativeToAllowed.startsWith('..') && !path.isAbsolute(relativeToAllowed))) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   public recordWrittenFile(filePath: string) {
@@ -302,7 +354,7 @@ export class DirectiveSandbox {
 
       const firstToken = tokens[startIndex];
       const cmdName = path.basename(firstToken);
-      const isCmdInsideWorkspace = isTokenAPath(firstToken) && isPathInside(this.workspaceRoot, firstToken);
+      const isCmdInsideWorkspace = isTokenAPath(firstToken) && this.isPathAllowed(firstToken);
 
       if (isCmdInsideWorkspace) {
         fileToExecute = path.resolve(this.workspaceRoot, firstToken);
@@ -315,7 +367,7 @@ export class DirectiveSandbox {
             const token = tokens[i];
             if (token.startsWith('-')) continue;
             const absTokenPath = path.resolve(this.workspaceRoot, token);
-            if (isTokenAPath(token) && isPathInside(this.workspaceRoot, absTokenPath)) {
+            if (isTokenAPath(token) && this.isPathAllowed(absTokenPath)) {
               const ext = path.extname(absTokenPath).toLowerCase();
               const isScriptExt = SCRIPT_EXTS.has(ext);
               const isDirectExec = token.startsWith('.') || token.startsWith('/');
@@ -491,6 +543,22 @@ export class DirectiveSandbox {
     if (hasSeatbelt) {
       // macOS Seatbelt sandbox
       tempSeatbeltProfile = path.join(os.tmpdir(), `seatbelt-${crypto.randomBytes(8).toString('hex')}.sb`);
+      
+      let seatbeltMounts = '';
+      for (const entry of this.allowedPaths) {
+        const absPath = path.resolve(entry.path);
+        if (!fs.existsSync(absPath)) {
+          console.warn(`⚠ Warning: allowed path ${absPath} does not exist, skipping mount.`);
+          continue;
+        }
+        if (entry.mode === 'rw') {
+          seatbeltMounts += `  (allow file-write* (subpath "${absPath}"))\n`;
+          seatbeltMounts += `  (allow file-read* (subpath "${absPath}"))\n`;
+        } else {
+          seatbeltMounts += `  (allow file-read* (subpath "${absPath}"))\n`;
+        }
+      }
+
       const profileContent = `(version 1)
 (allow default)
 (deny file-write*)
@@ -502,18 +570,33 @@ export class DirectiveSandbox {
   (subpath "/tmp")
   (subpath "${this.workspaceRoot}")
 )
-`;
+${seatbeltMounts}`;
       fs.writeFileSync(tempSeatbeltProfile, profileContent, 'utf-8');
       
       execCommand = 'sandbox-exec';
       execArgs = ['-f', tempSeatbeltProfile, '/bin/sh', '-c', innerCommand];
     } else if (hasBubblewrap) {
       // Linux bubblewrap sandbox
+      const mountArgs: string[] = [];
+      for (const entry of this.allowedPaths) {
+        const absPath = path.resolve(entry.path);
+        if (!fs.existsSync(absPath)) {
+          console.warn(`⚠ Warning: allowed path ${absPath} does not exist, skipping mount.`);
+          continue;
+        }
+        if (entry.mode === 'rw') {
+          mountArgs.push('--bind', absPath, absPath);
+        } else {
+          mountArgs.push('--ro-bind', absPath, absPath);
+        }
+      }
+
       execCommand = 'bwrap';
       execArgs = [
         '--ro-bind', '/', '/',
         '--bind', '/tmp', '/tmp',
         '--bind', this.workspaceRoot, this.workspaceRoot,
+        ...mountArgs,
         '--dev-bind', '/dev', '/dev',
         '--proc', '/proc',
         '--unshare-all',

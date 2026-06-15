@@ -78,7 +78,7 @@ export class OllamaClient {
     messages: { role: string; content: string }[],
     contextLimit: number,
     onChunk: (text: string) => void
-  ): Promise<string> {
+  ): Promise<{ content: string; usage: { input_tokens: number; output_tokens: number } }> {
     const res = await fetch(`${this.host}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -102,6 +102,9 @@ export class OllamaClient {
       throw new Error('Could not get response stream reader');
     }
 
+    let input_tokens = 0;
+    let output_tokens = 0;
+
     try {
       const decoder = new TextDecoder();
       let fullText = '';
@@ -119,9 +122,20 @@ export class OllamaClient {
           if (!line.trim()) continue;
           let chunk: string | undefined;
           try {
-            const json = JSON.parse(line) as { message?: { content: string }; done?: boolean };
+            const json = JSON.parse(line) as {
+              message?: { content: string };
+              done?: boolean;
+              prompt_eval_count?: number;
+              eval_count?: number;
+            };
             if (json.message?.content) {
               chunk = json.message.content;
+            }
+            if (json.prompt_eval_count !== undefined) {
+              input_tokens = json.prompt_eval_count;
+            }
+            if (json.eval_count !== undefined) {
+              output_tokens = json.eval_count;
             }
           } catch (e) {
             // ignore parsing error for malformed lines
@@ -134,7 +148,13 @@ export class OllamaClient {
         }
       }
 
-      return fullText;
+      return {
+        content: fullText,
+        usage: {
+          input_tokens,
+          output_tokens
+        }
+      };
     } catch (err) {
       try {
         await reader.cancel();

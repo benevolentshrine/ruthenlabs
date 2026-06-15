@@ -1,6 +1,7 @@
 import * as readline from 'readline';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
@@ -9,8 +10,13 @@ import { DirectiveSandbox } from './sandbox.js';
 import { ollama } from './llm.js';
 import { buildRepoMap } from './repomap.js';
 import { marked } from 'marked';
+// @ts-ignore
 import { markedTerminal } from 'marked-terminal';
 import { highlight as highlightCli } from 'cli-highlight';
+import { AllowedPath } from './types.js';
+
+let activeAllowedPaths: AllowedPath[] = [];
+let isNonInteractive = false;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -318,6 +324,7 @@ You can execute tools by wrapping commands in specific XML tags. Here are concre
 - To view structured git status: <git_status />
 - To run project compilation/linter diagnostics: <diagnostics /> or <diagnostics command="npm run lint" />
 - To rename or move a file: <move_file source_path="old.py" destination_path="new.py" />
+- To ask the developer a question or request path permission (substitute the target path dynamically): <question question="I need access to /path/to/directory to complete this task. Grant access?" options="Allow read-write, Allow read-only, Deny" />
 
 Rules:
 1. Execute only ONE tool at a time.
@@ -330,11 +337,14 @@ Rules:
    - Use patch_file for simple, single exact replacements.
    - Use write_file only when creating new files. Never write_file on an existing file.
    - Use move_file to rename or move files. Never use cp + rm or mv in run_command.
+   - Use the question tool to request path access if you need to access files outside the workspace.
 7. Complex Task / New Project Workflow:
    - When asked to create a new application, website, game, or implement a large feature, DO NOT write files immediately.
    - First, present a clear architectural plan detailing the files you plan to create/modify and libraries you need. Wait for user approval or feedback.
    - After approval, implement the code incrementally—write or edit only ONE file per turn, starting with the base configuration and core logic.
    - Keep code modular and clean. Separate concerns (e.g., separate UI rendering from core logic) to prevent massive single-file dumps.
+8. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="/home/zenK" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and request access using the question tool.
+9. When using the <question> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "/home/zenK").
 `;
 
 let lastWrittenFile: {
@@ -448,6 +458,10 @@ const TOOL_SIGNATURES: Record<string, { desc: string; args: string }> = {
     desc: "Renames/moves a file and updates indexing, backups, and sandbox tracking.",
     args: "source_path (string, required), destination_path (string, required)"
   },
+  'question': {
+    desc: "Asks the developer a question or requests access permission to a directory path outside the workspace.",
+    args: "question (string, required), options (string, comma-separated, optional)"
+  },
   'sandbox_exec': {
     desc: "Executes code in a sandboxed environment.",
     args: "code (string), language (string), timeout_ms (number, optional)"
@@ -468,7 +482,7 @@ function validateToolCall(tagName: string, attributesStr: string): string | null
   const attrs = parseAttributes(attributesStr);
   const attrKeys = Object.keys(attrs);
 
-  const isAllowed = new Set(['run_command', 'read_file', 'write_file', 'search_code', 'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics', 'move_file', 'think']).has(tagName);
+  const isAllowed = new Set(['run_command', 'read_file', 'write_file', 'search_code', 'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics', 'move_file', 'think', 'question', 'path_question']).has(tagName);
 
   if (!isAllowed) {
     const sig = TOOL_SIGNATURES[tagName];
@@ -567,6 +581,14 @@ function validateToolCall(tagName: string, attributesStr: string): string | null
     if (invalid.length > 0) {
       return JSON.stringify({
         error: `Tool 'move_file' called with invalid argument '${invalid[0]}'. Valid arguments are: source_path (string, required), destination_path (string, required).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'question' || tagName === 'path_question') {
+    const invalid = attrKeys.filter(k => k !== 'question' && k !== 'options');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool '${tagName}' called with invalid argument '${invalid[0]}'. Valid arguments are: question (string, required), options (string, optional).`,
         code: "INVALID_TOOL_ARGUMENT"
       });
     }
@@ -902,6 +924,38 @@ function parseSearchCode(text: string): string | null {
   const tagMatch = /<search_code\s*>([\s\S]*?)(?:<\/search_code>|$)/.exec(text);
   if (tagMatch) {
     return tagMatch[1].trim();
+  }
+  return null;
+}
+
+function extractPathFromQuestion(question: string): string | null {
+  const regex = new RegExp("(?:^|\\s|['\"`])(\\/[^'\"\\s]+|~\\/[^'\"\\s]+|~)");
+  const match = question.match(regex);
+  if (match) {
+    let p = match[1];
+    while (p && /[?.!,;]$/.test(p)) {
+      p = p.slice(0, -1);
+    }
+    return p;
+  }
+  return null;
+}
+
+function parseQuestion(text: string): { question: string; options: string[] } | null {
+  const matchAttr = /<(?:path_)?question\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    const questionVal = attrs.question;
+    const optionsVal = attrs.options;
+    if (questionVal) {
+      const options = optionsVal
+        ? optionsVal.split(',').map(o => o.trim())
+        : ['Yes', 'No'];
+      return {
+        question: questionVal,
+        options
+      };
+    }
   }
   return null;
 }
@@ -1333,7 +1387,7 @@ async function handleToolCalls(
     const attributesStr = match[2];
     
     const isTool = tagName === 'run_command' || tagName === 'read_file' || tagName === 'write_file' || tagName === 'search_code' ||
-                   tagName === 'sandbox_exec' || HALLUCINATED_TAGS.has(tagName.toLowerCase()) || tagName.endsWith('_file') || tagName.endsWith('_dir');
+                   tagName === 'sandbox_exec' || HALLUCINATED_TAGS.has(tagName.toLowerCase()) || tagName.endsWith('_file') || tagName.endsWith('_dir') || tagName === 'question' || tagName === 'path_question';
     
     if (isTool) {
       const errorMsg = validateToolCall(tagName, attributesStr);
@@ -1399,12 +1453,16 @@ async function handleToolCalls(
     const content = writeResult.content;
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
     
-    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+    if (!sandbox.isPathWriteAllowed(absPath)) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('write')} ${filePath} (blocked)`);
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\nError: Path traversal detected. Writing files outside the workspace is denied.\n</tool_output>`,
-        consoleOutput: `\n[Write blocked (out of workspace): ${filePath}]`
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Write blocked (not allowed): ${filePath}]`
       };
     }
 
@@ -1504,12 +1562,16 @@ async function handleToolCalls(
     const filePath = readPath;
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
     
-    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+    if (!sandbox.isPathAllowed(absPath)) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('read')} ${filePath} (blocked)`);
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\nError: Path traversal detected. Reading files outside the workspace is denied.\n</tool_output>`,
-        consoleOutput: `\n[Read blocked (out of workspace): ${filePath}]`
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Read blocked (not allowed): ${filePath}]`
       };
     }
 
@@ -1582,12 +1644,16 @@ async function handleToolCalls(
     const { filePath, search, replace } = patchResult;
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
 
-    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+    if (!sandbox.isPathWriteAllowed(absPath)) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (blocked)`);
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\nError: Path traversal detected. Patching files outside the workspace is denied.\n</tool_output>`,
-        consoleOutput: `\n[Patch blocked (out of workspace): ${filePath}]`
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Patch blocked (not allowed): ${filePath}]`
       };
     }
 
@@ -1669,12 +1735,16 @@ async function handleToolCalls(
     const { filePath, diff } = patchBlocksResult;
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
 
-    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+    if (!sandbox.isPathWriteAllowed(absPath)) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (blocked)`);
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\nError: Path traversal detected. Patching files outside the workspace is denied.\n</tool_output>`,
-        consoleOutput: `\n[Patch blocks blocked (out of workspace): ${filePath}]`
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Patch blocks blocked (not allowed): ${filePath}]`
       };
     }
 
@@ -1759,17 +1829,16 @@ async function handleToolCalls(
     const { pathVal, recursive } = listDirResult;
     const absPath = path.resolve(sandbox['workspaceRoot'], pathVal);
 
-    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+    if (!sandbox.isPathAllowed(absPath)) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (blocked)`);
-      const errObj = {
-        error: "Error: Path traversal detected. Accessing directories outside the workspace is denied.",
-        code: "PATH_OUTSIDE_WORKSPACE",
-        path: pathVal
-      };
       return {
         toolRun: true,
-        nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
-        consoleOutput: `\n[List dir blocked (out of workspace): ${pathVal}]`
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[List dir blocked (not allowed): ${pathVal}]`
       };
     }
 
@@ -1980,17 +2049,29 @@ async function handleToolCalls(
     const absSource = path.resolve(sandbox['workspaceRoot'], sourcePath);
     const absDest = path.resolve(sandbox['workspaceRoot'], destinationPath);
 
-    if (!isPathInside(sandbox['workspaceRoot'], absSource) || !isPathInside(sandbox['workspaceRoot'], absDest)) {
+    if (!sandbox.isPathWriteAllowed(absSource)) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path traversal detected. Moving files outside the workspace is denied.",
-          code: "PATH_TRAVERSAL",
-          sourcePath,
-          destinationPath
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absSource
         })}\n</tool_output>`,
-        consoleOutput: `\n[Move blocked (out of workspace): ${sourcePath} -> ${destinationPath}]`
+        consoleOutput: `\n[Move blocked (source not allowed): ${sourcePath}]`
+      };
+    }
+
+    if (!sandbox.isPathWriteAllowed(absDest)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          code: "PATH_NOT_ALLOWED",
+          path: absDest
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Move blocked (destination not allowed): ${destinationPath}]`
       };
     }
 
@@ -2061,12 +2142,149 @@ async function handleToolCalls(
     }
   }
 
+  const questionResult = parseQuestion(text);
+  if (questionResult !== null) {
+    const { question, options } = questionResult;
+    
+    let chosenIdx = 0;
+    if (isNonInteractive || typeof process.stdin.setRawMode !== 'function') {
+      console.log(`\n${themePrimary.bold(question)}`);
+      options.forEach((opt, idx) => console.log(`  ${idx + 1}) ${opt}`));
+      const answer = await new Promise<string>((resolve) => {
+        rl.question(`Select an option (1-${options.length}): `, (input) => {
+          resolve(input.trim());
+        });
+      });
+      const num = parseInt(answer, 10);
+      chosenIdx = (!isNaN(num) && num >= 1 && num <= options.length) ? num - 1 : 0;
+    } else {
+      chosenIdx = await interactiveSelect(question, options);
+    }
+
+    const choice = options[chosenIdx];
+    const extractedPath = extractPathFromQuestion(question);
+
+    if (choice === 'Allow read-write') {
+      if (extractedPath) {
+        let resolvedPath = extractedPath;
+        if (resolvedPath.startsWith('~/') || resolvedPath === '~') {
+          resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+        }
+        const absPath = path.resolve(resolvedPath);
+        if (!activeAllowedPaths.some(ap => ap.path === absPath && ap.mode === 'rw')) {
+          activeAllowedPaths = activeAllowedPaths.filter(ap => ap.path !== absPath);
+          activeAllowedPaths.push({ path: absPath, mode: 'rw' });
+        }
+        sandbox.updateAllowedPaths(activeAllowedPaths);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            granted: true,
+            path: absPath,
+            mode: 'rw',
+            message: 'Access granted. Mount added dynamically.'
+          })}\n</tool_output>`,
+          consoleOutput: `\n[Permission granted (rw): ${absPath}]`
+        };
+      }
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          granted: true,
+          message: 'Access granted, but no path could be extracted from the question.'
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Permission granted: no path extracted]`
+      };
+    }
+
+    if (choice === 'Allow read-only') {
+      if (extractedPath) {
+        let resolvedPath = extractedPath;
+        if (resolvedPath.startsWith('~/') || resolvedPath === '~') {
+          resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+        }
+        const absPath = path.resolve(resolvedPath);
+        if (!activeAllowedPaths.some(ap => ap.path === absPath)) {
+          activeAllowedPaths.push({ path: absPath, mode: 'ro' });
+        }
+        sandbox.updateAllowedPaths(activeAllowedPaths);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            granted: true,
+            path: absPath,
+            mode: 'ro',
+            message: 'Access granted. Mount added dynamically.'
+          })}\n</tool_output>`,
+          consoleOutput: `\n[Permission granted (ro): ${absPath}]`
+        };
+      }
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          granted: true,
+          message: 'Access granted, but no path could be extracted from the question.'
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Permission granted: no path extracted]`
+      };
+    }
+
+    return {
+      toolRun: true,
+      nextPrompt: `<tool_output>\n${JSON.stringify({
+        granted: false,
+        path: extractedPath ? path.resolve(extractedPath.startsWith('~/') || extractedPath === '~' ? (os.homedir() + extractedPath.slice(1)) : extractedPath) : undefined
+      })}\n</tool_output>`,
+      consoleOutput: `\n[Permission denied]`
+    };
+  }
+
   return { toolRun: false, nextPrompt: '', consoleOutput: '' };
+}
+
+interface RuthenConfig {
+  allowed_paths?: AllowedPath[];
+  compact_threshold?: number;
+}
+
+function loadConfig(workspaceRoot: string): RuthenConfig {
+  const configPath = path.join(workspaceRoot, 'ruthen.json');
+  if (fs.existsSync(configPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      return data || {};
+    } catch (e: any) {
+      console.warn(chalk.yellow(`⚠ Warning: Failed to parse ruthen.json config: ${e.message}`));
+    }
+  }
+  return {};
 }
 
 async function startCli() {
   const workspaceRoot = path.resolve(__dirname, '..');
-  
+
+  // Parse command line arguments
+  const args = process.argv.slice(2);
+  let activeModelArg: string | null = null;
+  let nonInteractivePrompt: string | null = null;
+  const cliAllowedPaths: AllowedPath[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--model' && i + 1 < args.length) {
+      activeModelArg = args[i + 1];
+      i++;
+    } else if (args[i] === '-p' && i + 1 < args.length) {
+      nonInteractivePrompt = args[i + 1];
+      i++;
+    } else if (args[i] === '--allow' && i + 1 < args.length) {
+      cliAllowedPaths.push({ path: args[i + 1], mode: 'rw' });
+      i++;
+    } else if (args[i] === '--allow-read' && i + 1 < args.length) {
+      cliAllowedPaths.push({ path: args[i + 1], mode: 'ro' });
+      i++;
+    }
+  }
+
   // 1. Discover local Ollama models
   const models = await ollama.listModels();
   if (models.length === 0) {
@@ -2075,21 +2293,62 @@ async function startCli() {
   }
 
   let activeModel = models[0].name;
+  if (activeModelArg) {
+    const matchIndex = models.findIndex(m => m.name === activeModelArg);
+    if (matchIndex !== -1) {
+      activeModel = models[matchIndex].name;
+    } else {
+      console.warn(chalk.yellow(`⚠ Warning: Specified model "${activeModelArg}" not found in local library. Using default: ${activeModel}`));
+    }
+  }
+
   let contextLimit = await ollama.getContextLimit(activeModel);
   let thinkingEnabled = true;
+
+  // Load config and merge allowed paths
+  const config = loadConfig(workspaceRoot);
+  const rawAllowed = [...(config.allowed_paths || []), ...cliAllowedPaths];
+  const resolvedAllowedPaths: AllowedPath[] = [];
+  for (const item of rawAllowed) {
+    let resolvedPath = item.path;
+    if (resolvedPath.startsWith('~/') || resolvedPath === '~') {
+      resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+    }
+    resolvedAllowedPaths.push({
+      path: path.resolve(resolvedPath),
+      mode: item.mode
+    });
+  }
+  activeAllowedPaths = resolvedAllowedPaths;
+
+  // Check home directory warnings
+  const homeDir = os.homedir();
+  for (const entry of activeAllowedPaths) {
+    if (entry.mode === 'rw') {
+      const absPath = path.resolve(entry.path);
+      const rel = path.relative(absPath, homeDir);
+      if (!rel.startsWith('..')) {
+        console.warn(chalk.yellow(`⚠ Warning: Allowed path "${entry.path}" is the home directory or a parent of the home directory with read-write permissions.`));
+      }
+    }
+  }
 
   // 2. Initialize Indexer and Sandbox
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize();
 
-  const sandbox = new DirectiveSandbox(workspaceRoot);
+  const sandbox = new DirectiveSandbox(workspaceRoot, activeAllowedPaths);
   await sandbox.initialize();
 
   const gitBranch = getGitBranch(workspaceRoot);
   const fileCount = indexer['db'].getAllFiles().length;
 
-  // 3. Render Welcome Banner
-  printWelcomeBanner(workspaceRoot, activeModel, contextLimit, fileCount);
+  if (nonInteractivePrompt) {
+    isNonInteractive = true;
+  } else {
+    // 3. Render Welcome Banner
+    printWelcomeBanner(workspaceRoot, activeModel, contextLimit, fileCount);
+  }
 
   const rl = readline.createInterface({
     input: process.stdin,
@@ -2097,56 +2356,442 @@ async function startCli() {
   });
 
   const conversationHistory: { role: string; content: string }[] = [];
+  let lastInputTokens = 0;
+  let pendingCompaction = false;
+  let currentOperation: string | null = null;
 
-  const askQuestion = () => {
-    const cols = process.stdout.columns || 80;
-    
-    // Estimate token consumption of full context payload
+  let compactThreshold = 0.8;
+  if (config.compact_threshold !== undefined) {
+    if (typeof config.compact_threshold !== 'number' || config.compact_threshold < 0.5 || config.compact_threshold > 0.95) {
+      console.error(chalk.red(`\n[Config Error] "compact_threshold" must be a number between 0.5 and 0.95. Received: ${config.compact_threshold}`));
+      process.exit(1);
+    }
+    compactThreshold = config.compact_threshold;
+  }
+
+  const runCompaction = async (isAuto: boolean): Promise<boolean> => {
+    if (conversationHistory.length < 3) {
+      if (!isAuto) {
+        console.log(chalk.yellow('Nothing to compact yet — session has fewer than 3 messages.'));
+      }
+      return false;
+    }
+
     const activeRepoMap = indexer.getRepoMap();
     const activeChanges = indexer.getRecentChanges();
     const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
     const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
-    const totalTokens = systemPromptLength + historyLength;
+    const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
+    const pct = Math.round((totalTokens / contextLimit) * 100);
 
-    // Calculate context consumption ratio & progress bar
+    if (!isAuto) {
+      console.log(chalk.gray(`Compacting context (currently ${totalTokens.toLocaleString()} tokens, ${pct}% of limit)...`));
+    }
+
+    // Determine history to summarize
+    let messagesToSummarize = [...conversationHistory];
+    const currentPct = totalTokens / contextLimit;
+    if (currentPct > 0.60) {
+      const countToKeep = Math.max(1, Math.floor(conversationHistory.length * 0.60));
+      messagesToSummarize = conversationHistory.slice(-countToKeep);
+    }
+
+    const summaryPrompt = `Summarise this conversation into a concise but complete technical brief. Include:
+- The original goal and current task state
+- Every file that was read, created, or modified (exact paths)
+- Every command that was run and its outcome
+- Every decision made and why
+- Any errors encountered and how they were resolved
+- Exactly what has been done and what still remains
+
+Be specific. Use exact file names, function names, and line numbers where relevant.`;
+
+    const summarisationPayload = [
+      ...messagesToSummarize,
+      {
+        role: 'user',
+        content: summaryPrompt
+      }
+    ];
+
+    try {
+      const chatResult = await ollama.chatStream(
+        activeModel,
+        summarisationPayload,
+        contextLimit,
+        () => {} // silent streaming
+      );
+
+      const summaryContent = chatResult.content.trim();
+      if (!summaryContent) {
+        throw new Error('Model returned an empty summary');
+      }
+
+      // Replace history
+      conversationHistory.length = 0;
+      conversationHistory.push({
+        role: 'system',
+        content: `[COMPACTED CONTEXT — conversation summarised at ${new Date().toISOString()}]\n\n${summaryContent}`
+      });
+
+      const newHistoryLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+      const newTotal = systemPromptLength + newHistoryLength;
+      const saved = totalTokens - newTotal;
+      lastInputTokens = newTotal;
+
+      if (isAuto) {
+        console.log(chalk.yellow(`⚡ Context auto-compacted (was ${pct}% full). Saved ${saved.toLocaleString()} tokens.`));
+      } else {
+        console.log(chalk.green(`✓ Context compacted: ${totalTokens.toLocaleString()} → ${newTotal.toLocaleString()} tokens (saved ${saved.toLocaleString()})`));
+      }
+      return true;
+    } catch (err: any) {
+      console.warn(chalk.yellow(`⚠ Warning: Compaction failed during LLM summarization. Context not compacted. Error: ${err.message}`));
+      return false;
+    } finally {
+      pendingCompaction = false;
+    }
+  };
+
+  const runAgentLoop = async (shouldExit = false) => {
+    let loopDepth = 0;
+    const executeLoop = async () => {
+      loopDepth++;
+      if (loopDepth > 15) {
+        console.log(chalk.red(`\n⚠️  [System Guard] Maximum tool iteration depth (15) reached. Stopping loop to prevent resource drain.`));
+        if (shouldExit) {
+          indexer.close();
+          sandbox.stop();
+          rl.close();
+          process.exit(1);
+        } else {
+          askQuestion();
+        }
+        return;
+      }
+
+      if (indexer && (indexer as any).watcher) {
+        try {
+          (indexer as any).watcher.flush();
+        } catch (e) {}
+      }
+
+      const currentRepoMap = indexer.getRepoMap();
+      const currentChanges = indexer.getRecentChanges();
+      
+      const systemMessage = {
+        role: 'system',
+        content: `${SYSTEM_INSTRUCTIONS}\n\n[Active Repository Map]\n${currentRepoMap}\n\n${currentChanges}`
+      };
+
+      const activePayload = [systemMessage, ...conversationHistory];
+
+      let modelResponse = '';
+      let isFirstChunk = true;
+      let bufferedText = '';
+      let inThinkBlock = false;
+      let tempBuffer = '';
+      const spinnerStartTime = Date.now();
+      const minDelay = 2000;
+
+      const spinner = new ThinkingSpinner();
+      process.stdout.write('\n');
+      spinner.start();
+
+      let streamAccumulator = '';
+      let printedStreamText = '';
+      const streamState = {
+        buffer: '',
+        suppressed: false,
+        inCodeBlock: false
+      };
+
+      const toolSpinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+      let toolSpinnerIdx = 0;
+      let toolSpinnerStarted = false;
+      let toolSpinnerLinePrinted = false;
+
+      const filterPrint = (text: string) => {
+        const toPrint = processChunk(text, streamState);
+        if (toPrint) {
+          process.stdout.write(toPrint);
+          printedStreamText += toPrint;
+        }
+        
+        if (streamState.suppressed) {
+          if (!toolSpinnerStarted) {
+            toolSpinnerStarted = true;
+            process.stdout.write(`\n  ${themeOrange(toolSpinnerFrames[0])} preparing tool call...`);
+            toolSpinnerLinePrinted = true;
+          } else {
+            readline.clearLine(process.stdout, 0);
+            readline.cursorTo(process.stdout, 0);
+            toolSpinnerIdx = (toolSpinnerIdx + 1) % toolSpinnerFrames.length;
+            
+            const writeMatch = /<write_file\s+(?:relative_)?path=["']([^"']+)["']\s*>([\s\S]*?)(?:<\/write_file>|$)/.exec(streamAccumulator);
+            let statusMsg = '';
+            if (writeMatch) {
+              const fileName = writeMatch[1];
+              const contentSoFar = writeMatch[2];
+              const charCount = contentSoFar.length;
+              const lineCount = contentSoFar.split(/\r?\n/).length;
+              statusMsg = `${themeGreen('write')} ${fileName} (${themeGreen(charCount.toLocaleString())} chars, ${themeGreen(lineCount)} lines)...`;
+            } else {
+              const runMatch = /<run_command\s*>([\s\S]*?)(?:<\/run_command>|$)/.exec(streamAccumulator);
+              if (runMatch) {
+                const cmdSoFar = runMatch[1].trim().replace(/\n/g, ' ');
+                statusMsg = `${themePrimary('run')} ${cmdSoFar.substring(0, 50)}${cmdSoFar.length > 50 ? '...' : ''}...`;
+              } else {
+                let fileSoFar = '';
+                const readAttrMatch = /<read_file\s+(?:relative_)?path=["']([^"']+)["']\s*\/?>/.exec(streamAccumulator);
+                if (readAttrMatch) {
+                  fileSoFar = readAttrMatch[1];
+                } else {
+                  const readTagMatch = /<read_file\s*>([\s\S]*?)(?:<\/read_file>|$)/.exec(streamAccumulator);
+                  if (readTagMatch) {
+                    fileSoFar = readTagMatch[1].trim();
+                  }
+                }
+                
+                if (fileSoFar) {
+                  statusMsg = `${themeGreen('read')} ${fileSoFar}...`;
+                } else {
+                  const searchMatch = /<search_code\s*>([\s\S]*?)(?:<\/search_code>|$)/.exec(streamAccumulator);
+                  if (searchMatch) {
+                    const querySoFar = searchMatch[1].trim();
+                    statusMsg = `${themeGreen('search')} index for "${querySoFar}"...`;
+                  } else {
+                    statusMsg = `preparing tool call...`;
+                  }
+                }
+              }
+            }
+            
+            process.stdout.write(`  ${themeOrange(toolSpinnerFrames[toolSpinnerIdx])} ${statusMsg}`);
+          }
+        }
+      };
+
+      try {
+        const chatResult = await ollama.chatStream(
+          activeModel,
+          activePayload,
+          contextLimit,
+          (chunk) => {
+            streamAccumulator += chunk;
+            const elapsed = Date.now() - spinnerStartTime;
+            if (elapsed < minDelay) {
+              bufferedText += chunk;
+            } else {
+              if (isFirstChunk) {
+                isFirstChunk = false;
+                spinner.stop();
+                process.stdout.write(`${themeGreen('●')} `);
+                printedStreamText += '● ';
+                if (bufferedText) {
+                  let textToPrint = bufferedText;
+                  if (!thinkingEnabled) {
+                    textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
+                    const startIdx = textToPrint.indexOf('<think>');
+                    if (startIdx !== -1) {
+                      inThinkBlock = true;
+                      tempBuffer = textToPrint.substring(startIdx);
+                      textToPrint = textToPrint.substring(0, startIdx);
+                    }
+                  }
+                  if (textToPrint) {
+                    filterPrint(textToPrint);
+                  }
+                  bufferedText = '';
+                }
+              }
+              
+              if (!thinkingEnabled) {
+                tempBuffer += chunk;
+                if (!inThinkBlock) {
+                  const thinkStartIdx = tempBuffer.indexOf('<think>');
+                  if (thinkStartIdx !== -1) {
+                    const before = tempBuffer.substring(0, thinkStartIdx);
+                    if (before) filterPrint(before);
+                    inThinkBlock = true;
+                    tempBuffer = tempBuffer.substring(thinkStartIdx);
+                  } else {
+                    filterPrint(tempBuffer);
+                    tempBuffer = '';
+                  }
+                }
+                
+                if (inThinkBlock) {
+                  const thinkEndIdx = tempBuffer.indexOf('</think>');
+                  if (thinkEndIdx !== -1) {
+                    inThinkBlock = false;
+                    const after = tempBuffer.substring(thinkEndIdx + 8);
+                    if (after) filterPrint(after);
+                    tempBuffer = '';
+                  } else {
+                    const partialTagMatch = /<\/t?h?i?n?k?>?$/.exec(tempBuffer);
+                    if (partialTagMatch) {
+                      tempBuffer = partialTagMatch[0];
+                    } else {
+                      tempBuffer = '';
+                    }
+                  }
+                }
+              } else {
+                filterPrint(chunk);
+              }
+            }
+          }
+        );
+        modelResponse = chatResult.content;
+        const usage = chatResult.usage;
+        lastInputTokens = usage.input_tokens;
+
+        const isCompactionSkipped = currentOperation === '/summary' || currentOperation === '/export' || currentOperation === '/sessions';
+        if (!isCompactionSkipped) {
+          const usageRatio = usage.input_tokens / contextLimit;
+          if (usageRatio >= compactThreshold) {
+            pendingCompaction = true;
+          }
+        }
+
+        const elapsed = Date.now() - spinnerStartTime;
+        if (elapsed < minDelay) {
+          const remaining = minDelay - elapsed;
+          await new Promise(resolve => setTimeout(resolve, remaining));
+          isFirstChunk = false;
+          spinner.stop();
+          process.stdout.write(`${themeGreen('●')} `);
+          printedStreamText += '● ';
+          if (bufferedText) {
+            let textToPrint = bufferedText;
+            if (!thinkingEnabled) {
+              textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
+            }
+            if (textToPrint) {
+              filterPrint(textToPrint);
+            }
+          }
+        }
+      } catch (err: any) {
+        spinner.stop();
+        console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
+        if (shouldExit) {
+          indexer.close();
+          sandbox.stop();
+          rl.close();
+          process.exit(1);
+        } else {
+          askQuestion();
+        }
+        return;
+      }
+
+      if (toolSpinnerLinePrinted) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        readline.moveCursor(process.stdout, 0, -1);
+      }
+
+      const cols = process.stdout.columns || 80;
+      const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
+      if (linesToClear > 0) {
+        readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
+        readline.cursorTo(process.stdout, 0);
+        readline.clearScreenDown(process.stdout);
+      }
+
+      let cleanText = modelResponse
+        .replace(/<run_command\s*>[\s\S]*?(?:<\/run_command>|$)/g, '')
+        .replace(/<read_file\s*[^>]*>[\s\S]*?(?:<\/read_file>|$)/g, '')
+        .replace(/<search_code\s*>[\s\S]*?(?:<\/search_code>|$)/g, '')
+        .replace(/<write_file\s*[^>]*>[\s\S]*?(?:<\/write_file>|$)/g, '')
+        .replace(/<patch_file\s*[^>]*>[\s\S]*?(?:<\/patch_file>|$)/g, '')
+        .replace(/<patch_file_blocks\s*[^>]*>[\s\S]*?(?:<\/patch_file_blocks>|$)/g, '')
+        .replace(/<list_dir\s*[^>]*>[\s\S]*?(?:<\/list_dir>|$)/g, '')
+        .replace(/<git_status\s*[^>]*>[\s\S]*?(?:<\/git_status>|$)/g, '')
+        .replace(/<diagnostics\s*[^>]*>[\s\S]*?(?:<\/diagnostics>|$)/g, '')
+        .replace(/<move_file\s*[^>]*>[\s\S]*?(?:<\/move_file>|$)/g, '')
+        .replace(/<(?:path_)?question\s*[^>]*\/>/g, '')
+        .replace(/<(?:path_)?question\s*[^>]*>[\s\S]*?(?:<\/(?:path_)?question>|$)/g, '')
+        .trim();
+
+      if (!thinkingEnabled) {
+        cleanText = cleanText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      } else {
+        cleanText = cleanText.replace(/<think>([\s\S]*?)<\/think>/g, (_, thinkContent) => {
+          const trimmed = thinkContent.trim();
+          if (!trimmed) return '';
+          const indented = trimmed.split('\n').map((l: string) => '    ' + l).join('\n');
+          return `\n\n${chalk.gray.italic('🧠 Thinking:')}\n${chalk.gray.italic(indented)}\n\n`;
+        }).trim();
+      }
+
+      if (cleanText) {
+        const formatted = marked.parse(cleanText).toString().trim();
+        console.log(`${themeGreen('●')} ${formatted}`);
+      }
+
+      const toolResult = await handleToolCalls(modelResponse, sandbox, indexer, rl);
+      if (toolResult.toolRun) {
+        conversationHistory.push({ role: 'assistant', content: modelResponse });
+        conversationHistory.push({ role: 'user', content: toolResult.nextPrompt });
+        await executeLoop();
+      } else {
+        conversationHistory.push({ role: 'assistant', content: modelResponse });
+
+        if (pendingCompaction) {
+          await runCompaction(true);
+        }
+
+        console.log('\n');
+        if (shouldExit) {
+          indexer.close();
+          sandbox.stop();
+          rl.close();
+          process.exit(0);
+        } else {
+          askQuestion();
+        }
+      }
+    };
+    await executeLoop();
+  };
+
+  const askQuestion = () => {
+    const cols = process.stdout.columns || 80;
+    
+    const activeRepoMap = indexer.getRepoMap();
+    const activeChanges = indexer.getRecentChanges();
+    const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
+    const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+    const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
+
     const ratio = Math.min(totalTokens / contextLimit, 1.0);
     const pct = Math.round(ratio * 100);
-    const barWidth = 15;
-    const filledWidth = Math.round(ratio * barWidth);
-    const emptyWidth = barWidth - filledWidth;
     
-    const progressColor = ratio > 0.8 ? themeRed : ratio > 0.5 ? themeOrange : themeGreen;
-    const filledBar = progressColor('█'.repeat(filledWidth));
-    const emptyBar = chalk.hex('#374151')('░'.repeat(emptyWidth));
+    let progressColor = themeGreen;
+    if (ratio >= 0.8) {
+      progressColor = chalk.red;
+    } else if (ratio >= 0.6) {
+      progressColor = chalk.yellow;
+    }
+
+    let leftSide = `Context: ${progressColor(totalTokens.toLocaleString())} / ${contextLimit.toLocaleString()} (${progressColor(pct + '%')})`;
+    if (ratio >= 0.8) {
+      leftSide += ` — run /compact to free space`;
+    }
     
-    const tokenInfo = `${progressColor(totalTokens.toLocaleString())}/${contextLimit.toLocaleString()}`;
-    const fileCount = indexer['db'].getAllFiles().length;
-    const proxyPort = sandbox['proxyPort'] || 0;
-    const proxyInfo = proxyPort > 0 ? `port ${proxyPort}` : 'inactive';
+    const wsName = path.basename(workspaceRoot);
+    const rightSide = `${themeGreen(wsName)} (${themePrimary(gitBranch)})`;
 
-    const titleText = ` [ UNIT-01 SESSION ACTIVE ] `;
-    const headerBorder = '┌' + '─'.repeat(3) + titleText + '─'.repeat(Math.max(0, cols - 2 - 3 - titleText.length)) + '┐';
-    
-    const line1Text = ` Model: ${activeModel}  |  Branch: ${gitBranch}  |  Files: ${fileCount}  |  Proxy: ${proxyInfo}`;
-    const line1Pad = Math.max(0, cols - 4 - stripAnsi(line1Text).length);
-    const line1 = `│ ${line1Text}${' '.repeat(line1Pad)} │`;
+    const leftVisualLen = stripAnsi(leftSide).length;
+    const rightVisualLen = stripAnsi(rightSide).length;
+    const paddingLen = Math.max(cols - leftVisualLen - rightVisualLen, 1);
+    const statusBarText = leftSide + ' '.repeat(paddingLen) + rightSide;
 
-    const line2Text = ` Context: [${filledBar}${emptyBar}] ${progressColor(pct + '%')} (${tokenInfo})`;
-    const line2Pad = Math.max(0, cols - 4 - stripAnsi(line2Text).length);
-    const line2 = `│ ${line2Text}${' '.repeat(line2Pad)} │`;
-
-    const footerBorder = '└' + '─'.repeat(cols - 2) + '┘';
-
-    const dividerText = '─── ◆ ───';
-    const leftDividerLen = Math.floor((cols - dividerText.length) / 2);
-    const rightDividerLen = cols - dividerText.length - leftDividerLen;
-    const divider = themeBorder('─'.repeat(leftDividerLen)) + themePrimary(' ◆ ') + themeBorder('─'.repeat(rightDividerLen));
-    console.log('\n' + divider + '\n');
-
-    console.log(themeBorder(headerBorder));
-    console.log(themeBorder(line1));
-    console.log(themeBorder(line2));
-    console.log(themeBorder(footerBorder));
+    console.log(themeBorder('─'.repeat(cols)));
+    console.log(statusBarText);
 
     rl.question(`${themePrimary.bold('unit01')} ${themeGreen('❯')} `, async (input) => {
       const trimmed = input.trim();
@@ -2155,7 +2800,8 @@ async function startCli() {
         return;
       }
 
-      // --- Slash Commands ---
+      currentOperation = trimmed.startsWith('/') ? trimmed.split(/\s+/)[0] : null;
+
       if (trimmed.startsWith('/')) {
         const parts = trimmed.split(/\s+/);
         let command = parts[0].toLowerCase();
@@ -2170,6 +2816,7 @@ async function startCli() {
             '⏪ Revert Last Change (/undo)',
             '🔎 Search Codebase (/search)',
             '🧹 Clear History (/clear)',
+            '🗜️ Compact Context (/compact)',
             'ℹ️ System Status (/status)',
             '📁 List Indexed Files (/files)',
             '🔄 Re-index Workspace (/reindex)',
@@ -2189,6 +2836,7 @@ async function startCli() {
             '/undo',
             '/search',
             '/clear',
+            '/compact',
             '/status',
             '/files',
             '/reindex',
@@ -2197,6 +2845,7 @@ async function startCli() {
           ];
           command = cmdMapping[chosenIdx];
           arg = '';
+          currentOperation = command;
         }
 
         if (command === '/exit' || command === '/quit') {
@@ -2209,7 +2858,14 @@ async function startCli() {
 
         if (command === '/clear') {
           conversationHistory.length = 0;
+          lastInputTokens = 0;
           console.log(chalk.gray('Conversation history cleared.'));
+          askQuestion();
+          return;
+        }
+
+        if (command === '/compact') {
+          await runCompaction(false);
           askQuestion();
           return;
         }
@@ -2269,7 +2925,6 @@ async function startCli() {
 
         if (command === '/models') {
           if (arg) {
-            // Support direct models select: e.g. "/models qwen3.5:2b" or "/models 2"
             const matchIndex = models.findIndex(m => m.name === arg);
             const numVal = parseInt(arg, 10);
             const matchNum = !isNaN(numVal) && numVal > 0 && numVal <= models.length ? numVal - 1 : -1;
@@ -2334,15 +2989,32 @@ async function startCli() {
           const activeChanges = indexer.getRecentChanges();
           const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
           const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
-          const totalTokens = systemPromptLength + historyLength;
+          const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
+          
+          let progressColor = themeGreen;
+          const ratio = Math.min(totalTokens / contextLimit, 1.0);
+          if (ratio >= 0.8) {
+            progressColor = chalk.red;
+          } else if (ratio >= 0.6) {
+            progressColor = chalk.yellow;
+          }
 
           console.log(chalk.bold('\nUnit01 System Status:'));
           console.log(`- Active Model: ${chalk.green(activeModel)}`);
-          console.log(`- Context Usage: ${chalk.green(totalTokens.toLocaleString())} / ${chalk.gray(contextLimit.toLocaleString())} tokens`);
+          console.log(`- Context Usage: ${progressColor(totalTokens.toLocaleString())} / ${chalk.gray(contextLimit.toLocaleString())} tokens (${progressColor(Math.round(ratio * 100) + '%')})`);
+          console.log(`- Compact Threshold: ${chalk.green(compactThreshold)}`);
           console.log(`- Workspace Root: ${chalk.cyan(workspaceRoot)}`);
           console.log(`- Git Branch: ${chalk.cyan(gitBranch)}`);
           console.log(`- Egress Proxy Port: ${chalk.green(sandbox['proxyPort'] || 'inactive')}`);
           console.log(`- Files Indexed: ${chalk.green(indexer['db'].getAllFiles().length)}`);
+          console.log(`- Allowed Paths:`);
+          if (activeAllowedPaths.length === 0) {
+            console.log(`  (none)`);
+          } else {
+            activeAllowedPaths.forEach(ap => {
+              console.log(`  - ${chalk.cyan(ap.path)} (${chalk.green(ap.mode)})`);
+            });
+          }
           console.log();
           askQuestion();
           return;
@@ -2378,6 +3050,7 @@ async function startCli() {
           console.log(`  ${chalk.cyan('/undo')}              - Revert the last file modification`);
           console.log(`  ${chalk.cyan('/search <query>')}    - Search codebase chunks using keyword index`);
           console.log(`  ${chalk.cyan('/clear')}             - Clear conversation history`);
+          console.log(`  ${chalk.cyan('/compact')}           - Summarise and compress conversation history to free context space`);
           console.log(`  ${chalk.cyan('/status')}            - Show system status and context usage`);
           console.log(`  ${chalk.cyan('/files')}             - List all currently indexed files`);
           console.log(`  ${chalk.cyan('/reindex')}           - Force full codebase scan and rebuild repo map`);
@@ -2393,13 +3066,7 @@ async function startCli() {
         return;
       }
 
-      // --- Model-based Chat Generation ---
-      if (totalTokens > contextLimit * 0.8 && conversationHistory.length > 4) {
-        console.log(chalk.yellow('\n⚡ Auto-compacting chat history to free up tokens...'));
-        const kept = conversationHistory.slice(-6);
-        conversationHistory.length = 0;
-        conversationHistory.push(...kept);
-      }
+
 
       readline.moveCursor(process.stdout, 0, -1);
       readline.clearLine(process.stdout, 0);
@@ -2409,11 +3076,18 @@ async function startCli() {
 
       // Run recursive LLM agent generation loop
       let loopDepth = 0;
-      const runAgentLoop = async () => {
+      const runAgentLoop = async (shouldExit = false) => {
         loopDepth++;
         if (loopDepth > 15) {
           console.log(chalk.red(`\n⚠️  [System Guard] Maximum tool iteration depth (15) reached. Stopping loop to prevent resource drain.`));
-          askQuestion();
+          if (shouldExit) {
+            indexer.close();
+            sandbox.stop();
+            rl.close();
+            process.exit(1);
+          } else {
+            askQuestion();
+          }
           return;
         }
 
@@ -2522,7 +3196,7 @@ async function startCli() {
         };
 
         try {
-          modelResponse = await ollama.chatStream(
+          const chatResult = await ollama.chatStream(
             activeModel,
             activePayload,
             contextLimit,
@@ -2595,6 +3269,17 @@ async function startCli() {
               }
             }
           );
+          modelResponse = chatResult.content;
+          const usage = chatResult.usage;
+          lastInputTokens = usage.input_tokens;
+
+          const isCompactionSkipped = currentOperation === '/summary' || currentOperation === '/export' || currentOperation === '/sessions';
+          if (!isCompactionSkipped) {
+            const usageRatio = usage.input_tokens / contextLimit;
+            if (usageRatio >= compactThreshold) {
+              pendingCompaction = true;
+            }
+          }
 
           // If the model finished before the minimum spinner delay, wait and flush
           const elapsed = Date.now() - spinnerStartTime;
@@ -2635,11 +3320,18 @@ async function startCli() {
               role: 'system',
               content: '[SYSTEM] Generation aborted due to repeating text. Please generate your response concisely without repetitions.'
             });
-            await runAgentLoop();
+            await runAgentLoop(shouldExit);
             return;
           }
           console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
-          askQuestion();
+          if (shouldExit) {
+            indexer.close();
+            sandbox.stop();
+            rl.close();
+            process.exit(1);
+          } else {
+            askQuestion();
+          }
           return;
         }
 
@@ -2671,6 +3363,8 @@ async function startCli() {
           .replace(/<git_status\s*[^>]*>[\s\S]*?(?:<\/git_status>|$)/g, '')
           .replace(/<diagnostics\s*[^>]*>[\s\S]*?(?:<\/diagnostics>|$)/g, '')
           .replace(/<move_file\s*[^>]*>[\s\S]*?(?:<\/move_file>|$)/g, '')
+          .replace(/<(?:path_)?question\s*[^>]*\/>/g, '')
+          .replace(/<(?:path_)?question\s*[^>]*>[\s\S]*?(?:<\/(?:path_)?question>|$)/g, '')
           .trim();
 
         if (!thinkingEnabled) {
@@ -2695,19 +3389,36 @@ async function startCli() {
         if (toolResult.toolRun) {
           conversationHistory.push({ role: 'assistant', content: modelResponse });
           conversationHistory.push({ role: 'user', content: toolResult.nextPrompt });
-          await runAgentLoop();
+          await runAgentLoop(shouldExit);
         } else {
           conversationHistory.push({ role: 'assistant', content: modelResponse });
+          
+          if (pendingCompaction) {
+            await runCompaction(true);
+          }
+
           console.log('\n');
-          askQuestion();
+          if (shouldExit) {
+            indexer.close();
+            sandbox.stop();
+            rl.close();
+            process.exit(0);
+          } else {
+            askQuestion();
+          }
         }
       };
 
-      await runAgentLoop();
+      await runAgentLoop(false);
     });
   };
 
-  askQuestion();
+  if (nonInteractivePrompt) {
+    conversationHistory.push({ role: 'user', content: nonInteractivePrompt });
+    await runAgentLoop(true);
+  } else {
+    askQuestion();
+  }
 }
 
 startCli().catch(err => {
