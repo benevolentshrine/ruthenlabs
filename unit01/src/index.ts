@@ -15,14 +15,15 @@ import { highlight as highlightCli } from 'cli-highlight';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Theme definition (Evangelion Unit-01 theme)
-const themePrimary = chalk.hex('#9333EA'); // Deep Purple/Violet
-const themeBorder = chalk.hex('#6B21A8'); // Dark Violet for structural borders
-const themeGreen = chalk.hex('#22C55E'); // Neon Green/Lime
-const themeGreenLight = chalk.hex('#86EFAC'); // Light Neon Green for inline code
-const themeOrange = chalk.hex('#F97316'); // Cyberpunk Orange/Alert
-const themeGray = chalk.hex('#9CA3AF'); // Slate Gray
-const themeBgDeep = '#1E1B4B'; // Indigo/Deep Violet Black
+// Theme definition (Glacier & Steel Blue theme)
+const themePrimary = chalk.hex('#60A5FA'); // Glacier Steel Blue
+const themeBorder = chalk.hex('#334155'); // Slate Blue for structural borders
+const themeGreen = chalk.hex('#2DD4BF'); // Icy Teal / Mint for success
+const themeGreenLight = chalk.hex('#93C5FD'); // Sky Mist for info
+const themeOrange = chalk.hex('#F59E0B'); // Warm Amber for progress
+const themeGray = chalk.hex('#64748B'); // Cool Slate Gray
+const themeRed = chalk.hex('#FB7185'); // Icy Rose / Crimson for errors
+const themeBgDeep = '#0F172A'; // Slate 900 for dark background highlights
 
 // Helper to count visual lines of text given the terminal width
 function countVisualLines(text: string, cols: number): number {
@@ -102,7 +103,7 @@ class ThinkingSpinner {
       this.dotCount = (this.dotCount + 1) % 4;
       
       const dots = ".".repeat(this.dotCount).padEnd(3, " ");
-      const text = ` ${themeOrange('●')} ${chalk.gray(this.currentWord + dots)}`;
+      const text = ` ${themeOrange('●')} ${themeGray(this.currentWord + dots)}`;
       
       readline.cursorTo(process.stdout, 0);
       readline.clearLine(process.stdout, 0);
@@ -2080,26 +2081,38 @@ async function startCli() {
     const filledWidth = Math.round(ratio * barWidth);
     const emptyWidth = barWidth - filledWidth;
     
-    const progressColor = ratio > 0.8 ? chalk.red : ratio > 0.5 ? chalk.yellow : themeGreen;
+    const progressColor = ratio > 0.8 ? themeRed : ratio > 0.5 ? themeOrange : themeGreen;
     const filledBar = progressColor('█'.repeat(filledWidth));
     const emptyBar = chalk.hex('#374151')('░'.repeat(emptyWidth));
     
     const tokenInfo = `${progressColor(totalTokens.toLocaleString())}/${contextLimit.toLocaleString()}`;
-    const leftSide = `ctx: [${filledBar}${emptyBar}] ${progressColor(pct + '%')} (${tokenInfo})`;
-    
-    const wsName = path.basename(workspaceRoot);
-    const rightSide = `${themeGreen(wsName)} (${themePrimary(gitBranch)})`;
+    const fileCount = indexer['db'].getAllFiles().length;
+    const proxyPort = sandbox['proxyPort'] || 0;
+    const proxyInfo = proxyPort > 0 ? `port ${proxyPort}` : 'inactive';
 
-    const leftVisualLen = stripAnsi(leftSide).length;
-    const rightVisualLen = stripAnsi(rightSide).length;
-    const paddingLen = Math.max(cols - leftVisualLen - rightVisualLen, 1);
-    const statusBarText = leftSide + ' '.repeat(paddingLen) + rightSide;
-
-    // Clean horizontal divider separator above prompt area
-    console.log(themeBorder('─'.repeat(cols)));
+    const titleText = ` [ UNIT-01 SESSION ACTIVE ] `;
+    const headerBorder = '┌' + '─'.repeat(3) + titleText + '─'.repeat(Math.max(0, cols - 2 - 3 - titleText.length)) + '┐';
     
-    // Natural scrolling status bar right above prompt
-    console.log(statusBarText);
+    const line1Text = ` Model: ${activeModel}  |  Branch: ${gitBranch}  |  Files: ${fileCount}  |  Proxy: ${proxyInfo}`;
+    const line1Pad = Math.max(0, cols - 4 - stripAnsi(line1Text).length);
+    const line1 = `│ ${line1Text}${' '.repeat(line1Pad)} │`;
+
+    const line2Text = ` Context: [${filledBar}${emptyBar}] ${progressColor(pct + '%')} (${tokenInfo})`;
+    const line2Pad = Math.max(0, cols - 4 - stripAnsi(line2Text).length);
+    const line2 = `│ ${line2Text}${' '.repeat(line2Pad)} │`;
+
+    const footerBorder = '└' + '─'.repeat(cols - 2) + '┘';
+
+    const dividerText = '─── ◆ ───';
+    const leftDividerLen = Math.floor((cols - dividerText.length) / 2);
+    const rightDividerLen = cols - dividerText.length - leftDividerLen;
+    const divider = themeBorder('─'.repeat(leftDividerLen)) + themePrimary(' ◆ ') + themeBorder('─'.repeat(rightDividerLen));
+    console.log('\n' + divider + '\n');
+
+    console.log(themeBorder(headerBorder));
+    console.log(themeBorder(line1));
+    console.log(themeBorder(line2));
+    console.log(themeBorder(footerBorder));
 
     rl.question(`${themePrimary.bold('unit01')} ${themeGreen('❯')} `, async (input) => {
       const trimmed = input.trim();
@@ -2605,12 +2618,12 @@ async function startCli() {
         if (!thinkingEnabled) {
           cleanText = cleanText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
         } else {
-          // Format think blocks nicely in gray italic
+          // Format think blocks nicely in slate-gray side-bordered box
           cleanText = cleanText.replace(/<think>([\s\S]*?)<\/think>/g, (_, thinkContent) => {
             const trimmed = thinkContent.trim();
             if (!trimmed) return '';
-            const indented = trimmed.split('\n').map((l: string) => '    ' + l).join('\n');
-            return `\n\n${chalk.gray.italic('🧠 Thinking:')}\n${chalk.gray.italic(indented)}\n\n`;
+            const bordered = trimmed.split('\n').map((l: string) => `  ${themeGray('│')} ${themeGray.italic(l)}`).join('\n');
+            return `\n\n  ${themeGray.bold('🧠 Thinking:')}\n${bordered}\n\n`;
           }).trim();
         }
 
