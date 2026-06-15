@@ -301,6 +301,11 @@ Rules:
    - Use patch_file for simple, single exact replacements.
    - Use write_file only when creating new files. Never write_file on an existing file.
    - Use move_file to rename or move files. Never use cp + rm or mv in run_command.
+7. Complex Task / New Project Workflow:
+   - When asked to create a new application, website, game, or implement a large feature, DO NOT write files immediately.
+   - First, present a clear architectural plan detailing the files you plan to create/modify and libraries you need. Wait for user approval or feedback.
+   - After approval, implement the code incrementally—write or edit only ONE file per turn, starting with the base configuration and core logic.
+   - Keep code modular and clean. Separate concerns (e.g., separate UI rendering from core logic) to prevent massive single-file dumps.
 `;
 
 let lastWrittenFile: {
