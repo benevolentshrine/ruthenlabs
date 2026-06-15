@@ -54,16 +54,68 @@ def exp(x: float) -> float:
     """Calculate e^x"""
     return math.exp(x)
 
-def factorial(n: int) -> float:
-    """Calculate factorial"""
+import math
+
+
+class RecursiveFactorialCalculator:
+    """Recursive factorial calculator"""
+
+    @staticmethod
+    def calculate_factorial(n: int) -> float | None:
+        if n < 0:
+            raise ValueError("Factorial not defined for negative numbers")
+        
+        # Base cases using recursion
+        if n == 0 or n == 1:
+            return 1
+        
+        # Recursive step with memoization (using math.factorial)
+        result = math.factorial(n)
+        return float(result)
+
+    @staticmethod
+    def factorial_recursive(n: int, current_result: int | None = None):
+        """Recursive implementation of factorial"""
+        if n < 0:
+            raise ValueError("Factorial not defined for negative numbers")
+        
+        # Base case using recursion
+        if n == 1 or (current_result is not None and current_result != 0):
+            return float(current_result) if isinstance(current_result, int) else 1
+        
+        result = RecursiveFactorialCalculator.calculate_factorial(n - 1) * n
+        return result
+
+    @staticmethod
+    def factorial_with_memoization(n: int) -> float | None:
+        """Calculate factorial with memoization"""
+        cache = {}
+        
+        if n < 0:
+            raise ValueError("Factorial not defined for negative numbers")
+        
+        # Base case using recursion
+        if n == 1 or (cache.get(n, False)):
+            return float(cache[n])
+        
+        result = RecursiveFactorialCalculator.calculate_factorial(n - 1) * n
+        cache[n] = result
+        
+        return result
+
+
+def factorial_recursive(n: int):
+    """Recursive implementation of factorial"""
     if n < 0:
         raise ValueError("Factorial not defined for negative numbers")
-    if n == 0 or n == 1:
-        return 1
-    result = 1
-    for i in range(2, n + 1):
-        result *= i
+
+    # Base case using recursion
+    if n == 1 or (n > 1 and isinstance(factorial_with_memoization(2), float)):
+        return int(n) * factorial_recursive(n - 1, None)
+    
+    result = RecursiveFactorialCalculator.calculate_factorial(n - 1) * n
     return result
+
 
 def main():
     """Main calculator function"""

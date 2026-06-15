@@ -264,8 +264,27 @@ You can execute tools by wrapping commands in specific XML tags. Here are concre
 
 - To run a shell command: <run_command>npm test</run_command>
 - To read a file: <read_file>src/db.ts</read_file>
+- To write or overwrite a new file: <write_file path="src/main.ts">console.log("hello");</write_file>
 - To search the codebase: <search_code>DatabaseSync</search_code>
-- To write or overwrite a file: <write_file path="src/main.ts">console.log("hello");</write_file>
+- To patch a single exact string occurrence in a file:
+  <patch_file path="src/main.ts" search="console.log(&quot;hello&quot;);" replace="console.log(&quot;hi&quot;);" />
+  Or nested format:
+  <patch_file path="src/main.ts">
+    <search>console.log("hello");</search>
+    <replace>console.log("hi");</replace>
+  </patch_file>
+- To perform multi-block edits on an existing file:
+  <patch_file_blocks path="src/main.ts">
+  <<<<<<< ORIGINAL
+  console.log("hello");
+  =======
+  console.log("hi");
+  >>>>>>> UPDATED
+  </patch_file_blocks>
+- To list directory contents directly: <list_dir path="src" recursive="false" />
+- To view structured git status: <git_status />
+- To run project compilation/linter diagnostics: <diagnostics /> or <diagnostics command="npm run lint" />
+- To rename or move a file: <move_file source_path="old.py" destination_path="new.py" />
 
 Rules:
 1. Execute only ONE tool at a time.
@@ -273,6 +292,11 @@ Rules:
 3. Do not write placeholders like "relative_path". Write the actual path directly.
 4. Keep your explanations concise, professional, and code-focused.
 5. Before executing any file, ensure it has been written using write_file first. Always use absolute paths.
+6. Tool Selection Priority:
+   - Use patch_file_blocks as the default tool to edit existing files.
+   - Use patch_file for simple, single exact replacements.
+   - Use write_file only when creating new files. Never write_file on an existing file.
+   - Use move_file to rename or move files. Never use cp + rm or mv in run_command.
 `;
 
 let lastWrittenFile: {
@@ -326,7 +350,7 @@ function cleanContentFences(content: string): string {
 }
 
 const HALLUCINATED_TAGS = new Set([
-  'delete_file', 'move_file', 'remove_file', 'create_file', 'copy_file', 'rename_file', 'list_files',
+  'delete_file', 'remove_file', 'create_file', 'copy_file', 'rename_file', 'list_files',
   'read_directory', 'list_directory', 'create_directory', 'make_directory', 'delete_directory',
   'delete_folder', 'move_folder', 'create_folder', 'rename_folder', 'list_folder',
   'run_script', 'exec_command', 'execute_command', 'execute_script',
@@ -343,6 +367,446 @@ function isHallocinatedTool(tagName: string): boolean {
     return !allowed.has(clean);
   }
   return false;
+}
+
+const TOOL_SIGNATURES: Record<string, { desc: string; args: string }> = {
+  'run_command': {
+    desc: "Executes a shell command in the sandbox.",
+    args: "command (string, content of the tag)"
+  },
+  'read_file': {
+    desc: "Reads the content of a file in the workspace.",
+    args: "path (string, attribute or content)"
+  },
+  'write_file': {
+    desc: "Writes content to a file in the workspace.",
+    args: "path (string, attribute or content), content (string, content of the tag)"
+  },
+  'search_code': {
+    desc: "Searches the codebase index using keyword/FTS matching.",
+    args: "query (string, content of the tag)"
+  },
+  'patch_file': {
+    desc: "Replaces an exact string occurrence in a file.",
+    args: "path (string, required), search (string, required), replace (string, required)"
+  },
+  'patch_file_blocks': {
+    desc: "Multi-block search/replace using diff markers.",
+    args: "path (string, required), diff (string, required)"
+  },
+  'list_dir': {
+    desc: "Lists files and directories at a path.",
+    args: "path (string, required), recursive (boolean, optional)"
+  },
+  'git_status': {
+    desc: "Returns structured git status for the workspace.",
+    args: "none"
+  },
+  'diagnostics': {
+    desc: "Runs linter or compiler checks and returns structured results.",
+    args: "command (string, optional)"
+  },
+  'move_file': {
+    desc: "Renames/moves a file and updates indexing, backups, and sandbox tracking.",
+    args: "source_path (string, required), destination_path (string, required)"
+  },
+  'sandbox_exec': {
+    desc: "Executes code in a sandboxed environment.",
+    args: "code (string), language (string), timeout_ms (number, optional)"
+  }
+};
+
+function parseAttributes(attrStr: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const regex = /([a-zA-Z0-9_\-]+)=["']([^"']*)["']/g;
+  let match;
+  while ((match = regex.exec(attrStr))) {
+    attrs[match[1]] = match[2];
+  }
+  return attrs;
+}
+
+function validateToolCall(tagName: string, attributesStr: string): string | null {
+  const attrs = parseAttributes(attributesStr);
+  const attrKeys = Object.keys(attrs);
+
+  const isAllowed = new Set(['run_command', 'read_file', 'write_file', 'search_code', 'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics', 'move_file', 'think']).has(tagName);
+
+  if (!isAllowed) {
+    const sig = TOOL_SIGNATURES[tagName];
+    if (sig) {
+      const validArgs = sig.args.split(', ').map(a => a.split(' ')[0]);
+      const invalidArgs = attrKeys.filter(k => !validArgs.includes(k));
+      if (invalidArgs.length > 0) {
+        return JSON.stringify({
+          error: `Tool '${tagName}' called with invalid argument '${invalidArgs[0]}'. Valid arguments are: ${sig.args}.`,
+          code: "INVALID_TOOL_ARGUMENT"
+        });
+      }
+      return JSON.stringify({
+        error: `Unknown tool '${tagName}'. Valid arguments are: ${sig.args}.`,
+        code: "UNKNOWN_TOOL"
+      });
+    } else {
+      return JSON.stringify({
+        error: `Unknown tool '${tagName}'. Supported tools are: run_command, read_file, write_file, search_code.`,
+        code: "UNKNOWN_TOOL"
+      });
+    }
+  }
+
+  if (tagName === 'run_command') {
+    if (attrKeys.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'run_command' called with invalid argument '${attrKeys[0]}'. Valid arguments are: command (string, content of the tag).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'read_file') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'read_file' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, attribute or content).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'write_file') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'write_file' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, attribute or content), content (string, content of the tag).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'search_code') {
+    if (attrKeys.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'search_code' called with invalid argument '${attrKeys[0]}'. Valid arguments are: query (string, content of the tag).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'patch_file') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path' && k !== 'search' && k !== 'target' && k !== 'replace' && k !== 'replacement');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'patch_file' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, required), search (string, required), replace (string, required).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'patch_file_blocks') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path' && k !== 'diff' && k !== 'blocks');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'patch_file_blocks' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, required), diff (string, required).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'list_dir') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path' && k !== 'recursive');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'list_dir' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, required), recursive (boolean, optional).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'git_status') {
+    if (attrKeys.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'git_status' called with invalid argument '${attrKeys[0]}'. Valid arguments are: none.`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'diagnostics') {
+    const invalid = attrKeys.filter(k => k !== 'command');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'diagnostics' called with invalid argument '${invalid[0]}'. Valid arguments are: command (string, optional).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'move_file') {
+    const invalid = attrKeys.filter(k => k !== 'source_path' && k !== 'destination_path' && k !== 'src_path' && k !== 'dest_path' && k !== 'from' && k !== 'to');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'move_file' called with invalid argument '${invalid[0]}'. Valid arguments are: source_path (string, required), destination_path (string, required).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  }
+
+  return null;
+}
+
+function parseMoveFile(text: string): { sourcePath: string; destinationPath: string } | null {
+  const matchAttr = /<move_file\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    const sourceVal = attrs.source_path || attrs.src_path || attrs.from;
+    const destVal = attrs.destination_path || attrs.dest_path || attrs.to;
+    if (sourceVal && destVal) {
+      return {
+        sourcePath: cleanFilePath(sourceVal),
+        destinationPath: cleanFilePath(destVal)
+      };
+    }
+  }
+  return null;
+}
+
+function parsePatchFile(text: string): { filePath: string; search: string; replace: string } | null {
+  const matchAttr = /<patch_file\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    const pathVal = attrs.path || attrs.relative_path;
+    const searchVal = attrs.search || attrs.target;
+    const replaceVal = attrs.replace || attrs.replacement;
+    if (pathVal && searchVal !== undefined && replaceVal !== undefined) {
+      return {
+        filePath: cleanFilePath(pathVal),
+        search: searchVal,
+        replace: replaceVal
+      };
+    }
+  }
+
+  const matchNested = /<patch_file\s+([^>]+)\s*>([\s\S]*?)<\/patch_file>/.exec(text);
+  if (matchNested) {
+    const attrs = parseAttributes(matchNested[1]);
+    const pathVal = attrs.path || attrs.relative_path;
+    const inner = matchNested[2];
+    
+    const searchMatch = /<search>([\s\S]*?)<\/search>/.exec(inner);
+    const replaceMatch = /<replace>([\s\S]*?)<\/replace>/.exec(inner);
+    
+    if (pathVal && searchMatch && replaceMatch) {
+      return {
+        filePath: cleanFilePath(pathVal),
+        search: searchMatch[1],
+        replace: replaceMatch[1]
+      };
+    }
+  }
+  
+  return null;
+}
+
+function parsePatchFileBlocks(text: string): { filePath: string; diff: string } | null {
+  const match = /<patch_file_blocks\s+(?:relative_)?path=["']([^"']+)["']\s*>([\s\S]*?)(?:<\/patch_file_blocks>|$)/.exec(text);
+  if (match) {
+    return {
+      filePath: cleanFilePath(match[1]),
+      diff: match[2].trim()
+    };
+  }
+  return null;
+}
+
+function parseListDir(text: string): { pathVal: string; recursive: boolean } | null {
+  const matchAttr = /<list_dir\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    const pathVal = attrs.path || attrs.relative_path || '.';
+    const recursive = attrs.recursive === 'true' || attrs.recursive === 'yes';
+    return { pathVal: cleanFilePath(pathVal), recursive };
+  }
+  
+  const matchTag = /<list_dir\s*>([\s\S]*?)(?:<\/list_dir>|$)/.exec(text);
+  if (matchTag) {
+    return {
+      pathVal: cleanFilePath(matchTag[1]) || '.',
+      recursive: false
+    };
+  }
+  return null;
+}
+
+function parseGitStatus(text: string): boolean {
+  return /<git_status\s*\/?>/.test(text) || /<git_status\s*>/.test(text);
+}
+
+function parseDiagnosticsTag(text: string): { command?: string } | null {
+  const matchAttr = /<diagnostics\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    return { command: attrs.command };
+  }
+  const matchTag = /<diagnostics\s*>([\s\S]*?)(?:<\/diagnostics>|$)/.exec(text);
+  if (matchTag) {
+    const inner = matchTag[1].trim();
+    return { command: inner || undefined };
+  }
+  if (/<diagnostics\s*\/?>/.test(text) || /<diagnostics\s*>/.test(text)) {
+    return {};
+  }
+  return null;
+}
+
+export function applySearchReplaceBlocks(content: string, blocksStr: string): string {
+  const lines = blocksStr.split('\n');
+  const blocks: { search: string; replace: string }[] = [];
+  
+  let currentSearch: string[] = [];
+  let currentReplace: string[] = [];
+  let inSearch = false;
+  let inReplace = false;
+  let blockCount = 0;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('<<<<<<< ORIGINAL')) {
+      inSearch = true;
+      inReplace = false;
+      currentSearch = [];
+      blockCount++;
+    } else if (line.startsWith('=======')) {
+      inSearch = false;
+      inReplace = true;
+      currentReplace = [];
+    } else if (line.startsWith('>>>>>>> UPDATED')) {
+      inSearch = false;
+      inReplace = false;
+      blocks.push({
+        search: currentSearch.join('\n'),
+        replace: currentReplace.join('\n'),
+      });
+    } else {
+      if (inSearch) {
+        currentSearch.push(line);
+      } else if (inReplace) {
+        currentReplace.push(line);
+      }
+    }
+  }
+  
+  if (blocks.length === 0) {
+    throw {
+      message: "No valid ORIGINAL/UPDATED blocks found in the input. Format must use <<<<<<< ORIGINAL, =======, and >>>>>>> UPDATED.",
+      code: "INVALID_PATCH_FORMAT"
+    };
+  }
+  
+  let updated = content;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (!block.search.trim()) {
+      throw {
+        message: `Block ${i + 1} has an empty ORIGINAL block, which is not allowed.`,
+        code: "EMPTY_PATCH_BLOCK",
+        blockIndex: i + 1
+      };
+    }
+    
+    const index = updated.indexOf(block.search);
+    if (index === -1) {
+      const normalizedSearch = block.search.replace(/\r\n/g, '\n');
+      const normalizedContent = updated.replace(/\r\n/g, '\n');
+      const normIndex = normalizedContent.indexOf(normalizedSearch);
+      
+      if (normIndex === -1) {
+        throw {
+          message: `Could not find ORIGINAL block ${i + 1} in the file. Indentation and whitespace must match exactly.`,
+          code: "PATCH_BLOCK_NOT_FOUND",
+          blockIndex: i + 1,
+          blockSearch: block.search
+        };
+      }
+      
+      updated = normalizedContent.slice(0, normIndex) + block.replace + normalizedContent.slice(normIndex + normalizedSearch.length);
+    } else {
+      updated = updated.slice(0, index) + block.replace + updated.slice(index + block.search.length);
+    }
+  }
+  
+  return updated;
+}
+
+function listDirectory(dirPath: string, workspaceRoot: string, recursive = false): { directories: any[]; files: any[] } {
+  const directories: any[] = [];
+  const files: any[] = [];
+
+  function walk(currentDir: string) {
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      const relPath = path.relative(workspaceRoot, fullPath);
+      
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch (e) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        directories.push({
+          name: entry.name,
+          path: relPath,
+          modified: stat.mtimeMs
+        });
+        if (recursive) {
+          walk(fullPath);
+        }
+      } else if (entry.isFile()) {
+        files.push({
+          name: entry.name,
+          path: relPath,
+          size: stat.size,
+          modified: stat.mtimeMs
+        });
+      }
+    }
+  }
+
+  walk(dirPath);
+  return { directories, files };
+}
+
+function parseDiagnostics(raw: string): { passed: boolean; errors: any[]; warnings: any[] } {
+  const errors: any[] = [];
+  const warnings: any[] = [];
+  const lines = raw.split('\n');
+
+  const regexes = [
+    /^([a-zA-Z0-9_\-\./\s]+):(\d+):(\d+)\s+-\s+(error|warning)\s+(.*)$/i,
+    /^([a-zA-Z0-9_\-\./\s]+):(\d+):(?:\d+:)?\s*(error|warning|err|warn)?\s*[:\-]?\s*(.*)$/i
+  ];
+
+  for (const line of lines) {
+    let matched = false;
+    for (const rx of regexes) {
+      const m = rx.exec(line.trim());
+      if (m) {
+        const file = m[1].trim();
+        const lineNum = parseInt(m[2], 10);
+        const type = (m[4] || m[3] || 'error').toLowerCase();
+        const message = (m[5] || m[4] || m[3] || '').trim();
+
+        const item = { file, line: lineNum, message };
+        if (type.includes('warn')) {
+          warnings.push(item);
+        } else {
+          errors.push(item);
+        }
+        matched = true;
+        break;
+      }
+    }
+  }
+
+  let passed = errors.length === 0;
+  if (raw.toLowerCase().includes('error') || raw.toLowerCase().includes('failed') || raw.toLowerCase().includes('compilation failed')) {
+    passed = false;
+  }
+  if (errors.length === 0 && !passed) {
+    errors.push({ file: 'project', line: 1, message: 'Diagnostics command failed. See raw output.' });
+  }
+
+  return { passed, errors, warnings };
 }
 
 function parseWriteFile(text: string): { filePath: string; content: string } | null {
@@ -369,6 +833,38 @@ function parseWriteFile(text: string): { filePath: string; content: string } | n
     }
   }
 
+  return null;
+}
+
+function parseReadFile(text: string): string | null {
+  // Try matching path attribute: <read_file path="src/index.ts">...</read_file> or <read_file path="src/index.ts" />
+  const attrMatch = /<read_file\s+(?:relative_)?path=["']([^"']+)["']\s*\/?>/.exec(text);
+  if (attrMatch) {
+    return cleanFilePath(attrMatch[1]);
+  }
+
+  // Fallback to tag content: <read_file>src/index.ts</read_file>
+  const tagMatch = /<read_file\s*>([\s\S]*?)(?:<\/read_file>|$)/.exec(text);
+  if (tagMatch) {
+    return cleanFilePath(tagMatch[1]);
+  }
+
+  return null;
+}
+
+function parseRunCommand(text: string): string | null {
+  const tagMatch = /<run_command\s*>([\s\S]*?)(?:<\/run_command>|$)/.exec(text);
+  if (tagMatch) {
+    return tagMatch[1].trim();
+  }
+  return null;
+}
+
+function parseSearchCode(text: string): string | null {
+  const tagMatch = /<search_code\s*>([\s\S]*?)(?:<\/search_code>|$)/.exec(text);
+  if (tagMatch) {
+    return tagMatch[1].trim();
+  }
   return null;
 }
 
@@ -422,34 +918,109 @@ function stripAnsi(str: string): string {
   return str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 }
 
-function processChunk(chunk: string, state: { buffer: string; suppressed: boolean }): string {
+function processChunk(chunk: string, state: { buffer: string; suppressed: boolean; inCodeBlock?: boolean }): string {
   if (state.suppressed) {
     return '';
   }
-  const full = state.buffer + chunk;
   
-  const tagStarts = ['<run_command', '<read_file', '<search_code', '<write_file'];
-  for (const tag of tagStarts) {
-    const idx = full.indexOf(tag);
-    if (idx !== -1) {
-      state.suppressed = true;
-      state.buffer = '';
-      return full.substring(0, idx);
+  if (state.inCodeBlock === undefined) {
+    state.inCodeBlock = false;
+  }
+
+  let full = state.buffer + chunk;
+  let result = '';
+
+  const toolTags = [
+    '<run_command',
+    '<read_file',
+    '<search_code',
+    '<write_file',
+    '<patch_file',
+    '<patch_file_blocks',
+    '<list_dir',
+    '<git_status',
+    '<diagnostics',
+    '<move_file'
+  ];
+
+  while (full.length > 0) {
+    if (state.inCodeBlock) {
+      // In a code block, suppress all output until we see a closing ```
+      const closeIdx = full.indexOf('```');
+      if (closeIdx !== -1) {
+        state.inCodeBlock = false;
+        full = full.substring(closeIdx + 3);
+      } else {
+        // Keep partial trailing backticks in the buffer
+        const match = /`{1,2}$/.exec(full);
+        if (match) {
+          state.buffer = match[0];
+        } else {
+          state.buffer = '';
+        }
+        return result;
+      }
+    } else {
+      let earliestIdx = -1;
+      let matchType: 'tool' | 'code' = 'tool';
+
+      for (const tag of toolTags) {
+        const idx = full.indexOf(tag);
+        if (idx !== -1) {
+          if (earliestIdx === -1 || idx < earliestIdx) {
+            earliestIdx = idx;
+            matchType = 'tool';
+          }
+        }
+      }
+
+      const codeIdx = full.indexOf('```');
+      if (codeIdx !== -1) {
+        if (earliestIdx === -1 || codeIdx < earliestIdx) {
+          earliestIdx = codeIdx;
+          matchType = 'code';
+        }
+      }
+
+      if (earliestIdx !== -1) {
+        if (matchType === 'tool') {
+          state.suppressed = true;
+          state.buffer = '';
+          result += full.substring(0, earliestIdx);
+          return result;
+        } else {
+          result += full.substring(0, earliestIdx);
+          state.inCodeBlock = true;
+          full = full.substring(earliestIdx + 3);
+        }
+      } else {
+        const tagMatch = /<[a-zA-Z_]*$/.exec(full);
+        if (tagMatch) {
+          const partial = tagMatch[0];
+          const isPrefix = toolTags.some(t => t.startsWith(partial));
+          if (isPrefix) {
+            state.buffer = partial;
+            result += full.substring(0, tagMatch.index);
+            return result;
+          }
+        }
+
+        const codeMatch = /`{1,2}$/.exec(full);
+        if (codeMatch) {
+          state.buffer = codeMatch[0];
+          result += full.substring(0, codeMatch.index);
+          return result;
+        }
+
+        result += full;
+        state.buffer = '';
+        return result;
+      }
     }
   }
-  
-  const match = /<[a-zA-Z_]*$/.exec(full);
-  if (match) {
-    const partial = match[0];
-    const isPrefix = tagStarts.some(t => t.startsWith(partial));
-    if (isPrefix) {
-      state.buffer = partial;
-      return full.substring(0, match.index);
-    }
-  }
-  
+
   state.buffer = '';
-  return full;
+  return result;
 }
 
 function truncateAnsiString(str: string, maxLength: number): string {
@@ -716,30 +1287,32 @@ async function handleToolCalls(
   indexer: DirectiveIndexer,
   rl: readline.Interface
 ): Promise<{ toolRun: boolean; nextPrompt: string; consoleOutput: string }> {
-  // Check for hallucinated tool calls
-  const tagRegex = /<(\/?[a-zA-Z_][a-zA-Z0-9_\-]*)(?:\s+[^>]*)*>/g;
-  let tagMatch;
-  while ((tagMatch = tagRegex.exec(text))) {
-    const tagName = tagMatch[1];
-    if (isHallocinatedTool(tagName)) {
-      const cleanTagName = tagName.replace(/^\//, '');
-      console.log(`\n  ${chalk.red('✗')} tool call ${chalk.yellow(`<${cleanTagName}>`)} (blocked)`);
-      return {
-        toolRun: true,
-        nextPrompt: `<tool_output>\n[UNIT-01 SYSTEM] Unknown tool: <${cleanTagName}>.\nSupported tools: run_command, read_file, write_file, search_code.\nTo list files/folders use: <run_command>ls -la</run_command>\nTo delete files use: <run_command>rm path/to/file</run_command>\nTo rename/move use: <run_command>mv old new</run_command>\n</tool_output>`,
-        consoleOutput: `\n[Hallucinated tool blocked: <${cleanTagName}>]`
-      };
+  // Parse and validate all XML/HTML tags
+  const openTagRegex = /<([a-zA-Z_][a-zA-Z0-9_\-]*)([^>]*)>/g;
+  let match;
+  while ((match = openTagRegex.exec(text))) {
+    const tagName = match[1];
+    const attributesStr = match[2];
+    
+    const isTool = tagName === 'run_command' || tagName === 'read_file' || tagName === 'write_file' || tagName === 'search_code' ||
+                   tagName === 'sandbox_exec' || HALLUCINATED_TAGS.has(tagName.toLowerCase()) || tagName.endsWith('_file') || tagName.endsWith('_dir');
+    
+    if (isTool) {
+      const errorMsg = validateToolCall(tagName, attributesStr);
+      if (errorMsg) {
+        console.log(`\n  ${chalk.red('✗')} tool call ${chalk.yellow(`<${tagName}>`)} (blocked: invalid/wrong arguments)`);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${errorMsg}\n</tool_output>`,
+          consoleOutput: `\n[Tool call blocked: <${tagName}>]`
+        };
+      }
     }
   }
 
-  const runRegex = /<run_command>([\s\S]*?)(?:<\/run_command>|$)/;
-  const readRegex = /<read_file>([\s\S]*?)(?:<\/read_file>|$)/;
-  const searchRegex = /<search_code>([\s\S]*?)(?:<\/search_code>|$)/;
-
-  let match;
-  
-  if ((match = runRegex.exec(text))) {
-    const cmd = match[1].trim();
+  const runCmd = parseRunCommand(text);
+  if (runCmd !== null) {
+    const cmd = runCmd;
     process.stdout.write(`\n  ${themeOrange('⠋')} ${themePrimary('run')} ${cmd} ...`);
     const output = await sandbox.runCommand(cmd);
     readline.clearLine(process.stdout, 0);
@@ -752,6 +1325,15 @@ async function handleToolCalls(
         toolRun: false,
         nextPrompt: '',
         consoleOutput: `\n[Blocked: ${cmd}]`
+      };
+    }
+
+    if (output.startsWith('{') && output.includes('FILE_NOT_WRITTEN')) {
+      console.log(`  ${chalk.red('✗')} ${themePrimary('run')} ${cmd} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${output}\n</tool_output>`,
+        consoleOutput: `\n[Failed: ${cmd}]`
       };
     }
 
@@ -840,6 +1422,9 @@ async function handleToolCalls(
       // Clear sandbox loop history since file modification changes workspace state
       sandbox.clearLoopHistory();
       
+      // Record written file for sandbox write-before-run enforcement
+      sandbox.recordWrittenFile(absPath);
+      
       // Re-index
       try {
         const stat = fs.statSync(absPath);
@@ -867,9 +1452,9 @@ async function handleToolCalls(
     }
   }
 
-  if ((match = readRegex.exec(text))) {
-    const rawPath = match[1].trim();
-    const filePath = cleanFilePath(rawPath);
+  const readPath = parseReadFile(text);
+  if (readPath !== null) {
+    const filePath = readPath;
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
     
     if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
@@ -916,8 +1501,9 @@ async function handleToolCalls(
     };
   }
 
-  if ((match = searchRegex.exec(text))) {
-    const query = match[1].trim();
+  const searchQuery = parseSearchCode(text);
+  if (searchQuery !== null) {
+    const query = searchQuery.trim();
     if (!query) {
       console.log(`\n  ${chalk.red('✗')} ${themeGreen('search')} complete: blocked (empty query)`);
       return {
@@ -926,7 +1512,6 @@ async function handleToolCalls(
         consoleOutput: `\n[Search blocked: empty query]`
       };
     }
-    
     process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('search')} index for "${query}" ...`);
     const results = indexer.search(query);
     
@@ -943,6 +1528,490 @@ async function handleToolCalls(
       nextPrompt: `<tool_output>\nSearch results for "${query}":\n${formatted || 'No matches found'}\n</tool_output>`,
       consoleOutput: `\n[Search executed: "${query}"]`
     };
+  }
+
+  const patchResult = parsePatchFile(text);
+  if (patchResult) {
+    const { filePath, search, replace } = patchResult;
+    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+
+    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: Path traversal detected. Patching files outside the workspace is denied.\n</tool_output>`,
+        consoleOutput: `\n[Patch blocked (out of workspace): ${filePath}]`
+      };
+    }
+
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('patch')} ${filePath} ...`);
+
+    try {
+      if (!fs.existsSync(absPath)) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(`  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (failed)`);
+        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const errObj = {
+          error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
+          code: "PATCH_NOT_FOUND",
+          filePath: relPath
+        };
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+          consoleOutput: `\n[Patch failed: File not found: ${filePath}]`
+        };
+      }
+
+      const content = fs.readFileSync(absPath, 'utf-8');
+      const index = content.indexOf(search);
+      if (index === -1) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(`  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (failed)`);
+        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const errObj = {
+          error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
+          code: "PATCH_NOT_FOUND",
+          filePath: relPath
+        };
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+          consoleOutput: `\n[Patch failed: Search string not found in ${filePath}]`
+        };
+      }
+
+      indexer.backupBeforeWrite(absPath);
+
+      const updated = content.slice(0, index) + replace + content.slice(index + search.length);
+      fs.writeFileSync(absPath, updated, 'utf-8');
+
+      sandbox.clearLoopHistory();
+      sandbox.recordWrittenFile(absPath);
+
+      try {
+        const stat = fs.statSync(absPath);
+        indexer['processFileOnStartup'](absPath, stat);
+        indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
+      } catch (e) {}
+
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('patch')} ${filePath} (completed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nFile successfully patched at ${filePath}\n</tool_output>`,
+        consoleOutput: `\n[File patched: ${filePath}]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError patching file: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[File patch failed: ${filePath}]`
+      };
+    }
+  }
+
+  const patchBlocksResult = parsePatchFileBlocks(text);
+  if (patchBlocksResult) {
+    const { filePath, diff } = patchBlocksResult;
+    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+
+    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError: Path traversal detected. Patching files outside the workspace is denied.\n</tool_output>`,
+        consoleOutput: `\n[Patch blocks blocked (out of workspace): ${filePath}]`
+      };
+    }
+
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('patch_blocks')} ${filePath} ...`);
+
+    try {
+      if (!fs.existsSync(absPath)) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(`  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (failed)`);
+        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const errObj = {
+          error: `File not found at ${filePath}`,
+          code: "PATCH_FILE_NOT_FOUND",
+          filePath: relPath
+        };
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+          consoleOutput: `\n[Patch blocks failed: File not found: ${filePath}]`
+        };
+      }
+
+      const content = fs.readFileSync(absPath, 'utf-8');
+      
+      let updated: string;
+      try {
+        updated = applySearchReplaceBlocks(content, diff);
+      } catch (err: any) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(`  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (failed)`);
+        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        const errObj = {
+          error: err.message || String(err),
+          code: err.code || "PATCH_BLOCK_FAILED",
+          blockIndex: err.blockIndex,
+          filePath: relPath
+        };
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+          consoleOutput: `\n[Patch blocks failed: ${err.message}]`
+        };
+      }
+
+      indexer.backupBeforeWrite(absPath);
+
+      fs.writeFileSync(absPath, updated, 'utf-8');
+
+      sandbox.clearLoopHistory();
+      sandbox.recordWrittenFile(absPath);
+
+      try {
+        const stat = fs.statSync(absPath);
+        indexer['processFileOnStartup'](absPath, stat);
+        indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
+      } catch (e) {}
+
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('patch_blocks')} ${filePath} (completed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nFile successfully patched using blocks at ${filePath}\n</tool_output>`,
+        consoleOutput: `\n[File patched with blocks: ${filePath}]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError patching file: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[File patch blocks failed: ${filePath}]`
+      };
+    }
+  }
+
+  const listDirResult = parseListDir(text);
+  if (listDirResult) {
+    const { pathVal, recursive } = listDirResult;
+    const absPath = path.resolve(sandbox['workspaceRoot'], pathVal);
+
+    if (!isPathInside(sandbox['workspaceRoot'], absPath)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (blocked)`);
+      const errObj = {
+        error: "Error: Path traversal detected. Accessing directories outside the workspace is denied.",
+        code: "PATH_OUTSIDE_WORKSPACE",
+        path: pathVal
+      };
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+        consoleOutput: `\n[List dir blocked (out of workspace): ${pathVal}]`
+      };
+    }
+
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('list_dir')} ${pathVal} ...`);
+
+    try {
+      if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(`  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (failed)`);
+        const errObj = {
+          error: `Directory not found at ${pathVal}`,
+          code: "DIRECTORY_NOT_FOUND",
+          path: pathVal
+        };
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+          consoleOutput: `\n[List dir failed: Directory not found: ${pathVal}]`
+        };
+      }
+
+      const result = listDirectory(absPath, sandbox['workspaceRoot'], recursive);
+
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('list_dir')} ${pathVal} (completed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
+        consoleOutput: `\n[Directory listed: ${pathVal}]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError listing directory: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[Directory list failed: ${pathVal}]`
+      };
+    }
+  }
+
+  if (parseGitStatus(text)) {
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('git_status')} ...`);
+
+    try {
+      let isGit = false;
+      try {
+        execSync('git rev-parse --is-inside-work-tree', { cwd: sandbox['workspaceRoot'], stdio: 'ignore' });
+        isGit = true;
+      } catch (e) {}
+
+      if (!isGit) {
+        readline.clearLine(process.stdout, 0);
+        readline.cursorTo(process.stdout, 0);
+        console.log(`  ${chalk.red('✗')} ${themeGreen('git_status')} (failed)`);
+        const errObj = {
+          error: "Not a git repository",
+          code: "NOT_GIT_REPO"
+        };
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify(errObj)}\n</tool_output>`,
+          consoleOutput: `\n[Git status failed: Not a git repository]`
+        };
+      }
+
+      const branch = execSync('git branch --show-current', { cwd: sandbox['workspaceRoot'] }).toString().trim();
+      const statusText = execSync('git status --porcelain', { cwd: sandbox['workspaceRoot'] }).toString().trim();
+
+      const lines = statusText ? statusText.split('\n') : [];
+      const staged: string[] = [];
+      const unstaged: string[] = [];
+      const untracked: string[] = [];
+
+      for (const line of lines) {
+        const x = line[0];
+        const y = line[1];
+        const file = line.slice(3).replace(/^["']|["']$/g, '');
+
+        if (x === '?' && y === '?') {
+          untracked.push(file);
+        } else {
+          if (x !== ' ' && x !== '?') {
+            staged.push(file);
+          }
+          if (y !== ' ' && y !== '?') {
+            unstaged.push(file);
+          }
+        }
+      }
+
+      let ahead = 0;
+      let behind = 0;
+      try {
+        const revList = execSync('git rev-list --left-right --count HEAD...@{u}', { cwd: sandbox['workspaceRoot'], stdio: 'pipe' }).toString().trim();
+        const parts = revList.split(/\s+/);
+        if (parts.length === 2) {
+          ahead = parseInt(parts[0], 10) || 0;
+          behind = parseInt(parts[1], 10) || 0;
+        }
+      } catch (e) {}
+
+      const result = {
+        branch,
+        staged,
+        unstaged,
+        untracked,
+        ahead,
+        behind
+      };
+
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('git_status')} (completed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
+        consoleOutput: `\n[Git status completed]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('git_status')} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError running git status: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[Git status failed: ${err.message}]`
+      };
+    }
+  }
+
+  const diagResult = parseDiagnosticsTag(text);
+  if (diagResult !== null) {
+    let commandToRun = diagResult.command;
+    const workspaceRoot = sandbox['workspaceRoot'];
+
+    if (!commandToRun) {
+      if (fs.existsSync(path.join(workspaceRoot, 'package.json'))) {
+        let hasLintScript = false;
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(workspaceRoot, 'package.json'), 'utf-8'));
+          if (pkg.scripts && pkg.scripts.lint) {
+            hasLintScript = true;
+          }
+        } catch (e) {}
+        commandToRun = hasLintScript ? 'npm run lint' : 'npm run build';
+      } else if (fs.existsSync(path.join(workspaceRoot, 'Cargo.toml'))) {
+        commandToRun = 'cargo check';
+      } else if (fs.existsSync(path.join(workspaceRoot, 'go.mod'))) {
+        commandToRun = 'go build ./...';
+      } else if (fs.existsSync(path.join(workspaceRoot, 'pyproject.toml')) || fs.existsSync(path.join(workspaceRoot, 'setup.py'))) {
+        commandToRun = 'python -m py_compile';
+      }
+    }
+
+    if (!commandToRun) {
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          passed: true,
+          errors: [],
+          warnings: [],
+          raw: "No standard project configuration (package.json, Cargo.toml, go.mod, pyproject.toml, setup.py) detected to run diagnostics."
+        }, null, 2)}\n</tool_output>`,
+        consoleOutput: `\n[Diagnostics skipped: No configuration]`
+      };
+    }
+
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('diagnostics')} (running "${commandToRun}") ...`);
+
+    try {
+      const rawOutput = await sandbox.runCommand(commandToRun);
+      
+      const parsed = parseDiagnostics(rawOutput);
+      const result = {
+        passed: parsed.passed,
+        errors: parsed.errors,
+        warnings: parsed.warnings,
+        raw: rawOutput
+      };
+
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('diagnostics')} (completed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
+        consoleOutput: `\n[Diagnostics completed: "${commandToRun}"]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('diagnostics')} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError running diagnostics: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[Diagnostics failed]`
+      };
+    }
+  }
+
+  const moveResult = parseMoveFile(text);
+  if (moveResult !== null) {
+    const { sourcePath, destinationPath } = moveResult;
+    const absSource = path.resolve(sandbox['workspaceRoot'], sourcePath);
+    const absDest = path.resolve(sandbox['workspaceRoot'], destinationPath);
+
+    if (!isPathInside(sandbox['workspaceRoot'], absSource) || !isPathInside(sandbox['workspaceRoot'], absDest)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (blocked)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: "Path traversal detected. Moving files outside the workspace is denied.",
+          code: "PATH_TRAVERSAL",
+          sourcePath,
+          destinationPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Move blocked (out of workspace): ${sourcePath} -> ${destinationPath}]`
+      };
+    }
+
+    if (!fs.existsSync(absSource)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} (failed: not found)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: `Source file not found at ${sourcePath}`,
+          code: "MOVE_SOURCE_NOT_FOUND",
+          sourcePath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Move failed: Source not found: ${sourcePath}]`
+      };
+    }
+
+    if (fs.existsSync(absDest)) {
+      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} -> ${destinationPath} (failed: destination already exists)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: `Destination path already exists at ${destinationPath}. Move aborted to prevent overwrite.`,
+          code: "MOVE_DESTINATION_EXISTS",
+          destinationPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Move failed: Destination exists: ${destinationPath}]`
+      };
+    }
+
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('move')} ${sourcePath} to ${destinationPath} ...`);
+
+    try {
+      fs.mkdirSync(path.dirname(absDest), { recursive: true });
+      fs.renameSync(absSource, absDest);
+
+      indexer.renameFile(absSource, absDest);
+      sandbox.recordWrittenFile(absDest);
+      sandbox.clearLoopHistory();
+
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${themeGreen('✓')} ${themeGreen('move')} ${sourcePath} to ${destinationPath} (completed)`);
+      
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          success: true,
+          message: `File successfully moved/renamed from ${sourcePath} to ${destinationPath}`,
+          sourcePath,
+          destinationPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[File moved: ${sourcePath} -> ${destinationPath}]`
+      };
+    } catch (err: any) {
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      console.log(`  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: `Failed to move/rename file: ${err.message}`,
+          code: "MOVE_FAILED",
+          sourcePath,
+          destinationPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[File move failed: ${sourcePath} -> ${destinationPath}]`
+      };
+    }
   }
 
   return { toolRun: false, nextPrompt: '', consoleOutput: '' };
@@ -1203,7 +2272,8 @@ async function startCli() {
         let printedStreamText = '';
         const streamState = {
           buffer: '',
-          suppressed: false
+          suppressed: false,
+          inCodeBlock: false
         };
 
         const toolSpinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -1243,9 +2313,19 @@ async function startCli() {
                   const cmdSoFar = runMatch[1].trim().replace(/\n/g, ' ');
                   statusMsg = `${themePrimary('run')} ${cmdSoFar.substring(0, 50)}${cmdSoFar.length > 50 ? '...' : ''}...`;
                 } else {
-                  const readMatch = /<read_file\s*>([\s\S]*?)(?:<\/read_file>|$)/.exec(streamAccumulator);
-                  if (readMatch) {
-                    const fileSoFar = readMatch[1].trim();
+                  // Support both <read_file path="..."> and <read_file>path</read_file>
+                  let fileSoFar = '';
+                  const readAttrMatch = /<read_file\s+(?:relative_)?path=["']([^"']+)["']\s*\/?>/.exec(streamAccumulator);
+                  if (readAttrMatch) {
+                    fileSoFar = readAttrMatch[1];
+                  } else {
+                    const readTagMatch = /<read_file\s*>([\s\S]*?)(?:<\/read_file>|$)/.exec(streamAccumulator);
+                    if (readTagMatch) {
+                      fileSoFar = readTagMatch[1].trim();
+                    }
+                  }
+                  
+                  if (fileSoFar) {
                     statusMsg = `${themeGreen('read')} ${fileSoFar}...`;
                   } else {
                     const searchMatch = /<search_code\s*>([\s\S]*?)(?:<\/search_code>|$)/.exec(streamAccumulator);
@@ -1380,10 +2460,16 @@ async function startCli() {
 
         // Strip tool tags so only the explanation text is rendered as markdown
         let cleanText = modelResponse
-          .replace(/<run_command>[\s\S]*?(?:<\/run_command>|$)/g, '')
-          .replace(/<read_file>[\s\S]*?(?:<\/read_file>|$)/g, '')
-          .replace(/<search_code>[\s\S]*?(?:<\/search_code>|$)/g, '')
-          .replace(/<write_file[\s\S]*?(?:<\/write_file>|$)/g, '')
+          .replace(/<run_command\s*>[\s\S]*?(?:<\/run_command>|$)/g, '')
+          .replace(/<read_file\s*[^>]*>[\s\S]*?(?:<\/read_file>|$)/g, '')
+          .replace(/<search_code\s*>[\s\S]*?(?:<\/search_code>|$)/g, '')
+          .replace(/<write_file\s*[^>]*>[\s\S]*?(?:<\/write_file>|$)/g, '')
+          .replace(/<patch_file\s*[^>]*>[\s\S]*?(?:<\/patch_file>|$)/g, '')
+          .replace(/<patch_file_blocks\s*[^>]*>[\s\S]*?(?:<\/patch_file_blocks>|$)/g, '')
+          .replace(/<list_dir\s*[^>]*>[\s\S]*?(?:<\/list_dir>|$)/g, '')
+          .replace(/<git_status\s*[^>]*>[\s\S]*?(?:<\/git_status>|$)/g, '')
+          .replace(/<diagnostics\s*[^>]*>[\s\S]*?(?:<\/diagnostics>|$)/g, '')
+          .replace(/<move_file\s*[^>]*>[\s\S]*?(?:<\/move_file>|$)/g, '')
           .trim();
 
         if (!thinkingEnabled) {

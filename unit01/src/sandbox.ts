@@ -100,14 +100,267 @@ export class LoopDetector {
   }
 }
 
+const RUNNERS = new Set([
+  'python', 'python3', 'node', 'bun', 'deno', 'ts-node', 'tsx', 'bash', 'sh',
+  'source', 'perl', 'ruby', 'php', 'pytest', 'unittest', 'npx'
+]);
+
+const SCRIPT_EXTS = new Set([
+  '.py', '.js', '.ts', '.sh', '.bash', '.jsx', '.tsx', '.rb', '.pl', '.php', '.pyw', '.command'
+]);
+
+function isPathInside(parent: string, child: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  if (relative === '') return true;
+  return !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function splitCommands(command: string): string[] {
+  const cmds: string[] = [];
+  let current = '';
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let escape = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (escape) {
+      current += char;
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      current += char;
+      escape = true;
+      continue;
+    }
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      current += char;
+      continue;
+    }
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      current += char;
+      continue;
+    }
+    if (!inDoubleQuote && !inSingleQuote) {
+      if (char === ';') {
+        cmds.push(current);
+        current = '';
+        continue;
+      }
+      if (char === '\n') {
+        cmds.push(current);
+        current = '';
+        continue;
+      }
+      if (char === '&' && command[i + 1] === '&') {
+        cmds.push(current);
+        current = '';
+        i++;
+        continue;
+      }
+      if (char === '|' && command[i + 1] === '|') {
+        cmds.push(current);
+        current = '';
+        i++;
+        continue;
+      }
+      if (char === '|' && command[i + 1] !== '|') {
+        cmds.push(current);
+        current = '';
+        continue;
+      }
+      if (char === '&' && command[i + 1] !== '&') {
+        cmds.push(current);
+        current = '';
+        continue;
+      }
+    }
+    current += char;
+  }
+  if (current) {
+    cmds.push(current);
+  }
+  return cmds.map(c => c.trim()).filter(Boolean);
+}
+
+function tokenizeCommand(cmd: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+  let escape = false;
+
+  for (let i = 0; i < cmd.length; i++) {
+    const char = cmd[i];
+    if (escape) {
+      current += char;
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+    if (!inDoubleQuote && !inSingleQuote && /\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+  if (current) {
+    tokens.push(current);
+  }
+  return tokens;
+}
+
+function isRunner(firstToken: string, secondToken?: string): boolean {
+  const cmdName = path.basename(firstToken);
+  if (RUNNERS.has(cmdName)) {
+    return true;
+  }
+  if (cmdName === 'go' && secondToken === 'run') {
+    return true;
+  }
+  if (cmdName === 'cargo' && secondToken === 'run') {
+    return true;
+  }
+  return false;
+}
+
+function isTokenAPath(token: string): boolean {
+  return token.startsWith('.') || token.startsWith('/') || token.includes('/');
+}
+
+function isBuildCommand(tokens: string[]): boolean {
+  if (tokens.length === 0) return false;
+  const first = tokens[0].toLowerCase();
+  if (['gcc', 'g++', 'clang', 'clang++', 'make', 'cmake'].includes(first)) {
+    return true;
+  }
+  if (first === 'cargo' && tokens[1] === 'build') {
+    return true;
+  }
+  if (first === 'go' && tokens[1] === 'build') {
+    return true;
+  }
+  if (['npm', 'yarn', 'pnpm', 'bun'].includes(first)) {
+    return tokens.slice(1).some(t => t === 'build');
+  }
+  return false;
+}
+
 export class DirectiveSandbox {
   private workspaceRoot: string;
   private loopDetector = new LoopDetector();
   private egressProxy: EgressProxy | null = null;
   private proxyPort: number = 0;
+  private writtenFiles = new Set<string>();
+  private sessionStartTime: number;
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = path.resolve(workspaceRoot);
+    this.sessionStartTime = Date.now();
+  }
+
+  public recordWrittenFile(filePath: string) {
+    const absPath = path.resolve(this.workspaceRoot, filePath);
+    this.writtenFiles.add(absPath);
+  }
+
+  private checkWriteBeforeRun(command: string): string | null {
+    const subCommands = splitCommands(command);
+    let seenBuildStep = false;
+
+    for (const subCmd of subCommands) {
+      const tokens = tokenizeCommand(subCmd);
+      if (tokens.length === 0) continue;
+
+      if (isBuildCommand(tokens)) {
+        seenBuildStep = true;
+      }
+
+      let fileToExecute: string | null = null;
+      let startIndex = 0;
+      if (tokens[startIndex] === 'env' || tokens[startIndex] === '/usr/bin/env') {
+        startIndex++;
+      }
+      if (startIndex >= tokens.length) continue;
+
+      const firstToken = tokens[startIndex];
+      const cmdName = path.basename(firstToken);
+      const isCmdInsideWorkspace = isTokenAPath(firstToken) && isPathInside(this.workspaceRoot, firstToken);
+
+      if (isCmdInsideWorkspace) {
+        fileToExecute = path.resolve(this.workspaceRoot, firstToken);
+      } else {
+        const secondToken = tokens[startIndex + 1];
+        const isRun = isRunner(firstToken, secondToken);
+        if (isRun) {
+          const skipOffset = (cmdName === 'go' || cmdName === 'cargo') ? 2 : 1;
+          for (let i = startIndex + skipOffset; i < tokens.length; i++) {
+            const token = tokens[i];
+            if (token.startsWith('-')) continue;
+            const absTokenPath = path.resolve(this.workspaceRoot, token);
+            if (isTokenAPath(token) && isPathInside(this.workspaceRoot, absTokenPath)) {
+              const ext = path.extname(absTokenPath).toLowerCase();
+              const isScriptExt = SCRIPT_EXTS.has(ext);
+              const isDirectExec = token.startsWith('.') || token.startsWith('/');
+              if (isScriptExt || isDirectExec) {
+                fileToExecute = absTokenPath;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      if (fileToExecute) {
+        if (seenBuildStep) {
+          this.recordWrittenFile(fileToExecute);
+        }
+
+        let exists = fs.existsSync(fileToExecute);
+        let wasWritten = this.writtenFiles.has(fileToExecute);
+
+        if (seenBuildStep) {
+          exists = true;
+          wasWritten = true;
+        }
+
+        if (exists && !wasWritten) {
+          try {
+            const stat = fs.statSync(fileToExecute);
+            if (stat.mtimeMs >= this.sessionStartTime) {
+              wasWritten = true;
+            }
+          } catch (e) {}
+        }
+
+        if (!exists || !wasWritten) {
+          const relPath = path.relative(this.workspaceRoot, fileToExecute);
+          return JSON.stringify({
+            error: "File not found. Did you mean to write it first? Write the file using write_file before executing it.",
+            code: "FILE_NOT_WRITTEN",
+            filePath: relPath
+          });
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -198,6 +451,12 @@ export class DirectiveSandbox {
   public async runCommand(command: string): Promise<string> {
     const resolvedCommand = this.resolvePaths(command.trim());
     const trimmedCommand = resolvedCommand.trim();
+
+    // 0. Write-before-run enforcement check:
+    const fileNotWrittenError = this.checkWriteBeforeRun(trimmedCommand);
+    if (fileNotWrittenError) {
+      return fileNotWrittenError;
+    }
 
     // 1. Block cd commands
     if (containsCdCommand(trimmedCommand)) {

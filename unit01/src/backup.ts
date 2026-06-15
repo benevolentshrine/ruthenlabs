@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
+import * as path from 'path';
 import { IndexerDB } from './db.js';
 
 export function getPathHash(filepath: string): string {
@@ -53,7 +54,17 @@ export class ShadowBackupManager {
     }
 
     try {
-      if (backup.content === '__NEW_FILE__') {
+      if (backup.content.startsWith('__RENAMED_FROM__UIO:')) {
+        // Fallback for custom sentinel or namespace if needed, but we'll use a clean __RENAMED_FROM__:
+      }
+      
+      if (backup.content.startsWith('__RENAMED_FROM__:')) {
+        const oldPath = backup.content.substring('__RENAMED_FROM__:'.length);
+        if (fs.existsSync(absolutePath)) {
+          fs.mkdirSync(path.dirname(oldPath), { recursive: true });
+          fs.renameSync(absolutePath, oldPath);
+        }
+      } else if (backup.content === '__NEW_FILE__') {
         if (fs.existsSync(absolutePath)) {
           fs.unlinkSync(absolutePath);
         }
@@ -65,6 +76,32 @@ export class ShadowBackupManager {
     } catch (err) {
       console.error(`Failed to restore backup for ${absolutePath}:`, err);
       return false;
+    }
+  }
+
+  /**
+   * Update shadow backup records when a file is renamed.
+   */
+  public renameBackup(oldPath: string, newPath: string) {
+    const oldHash = getPathHash(oldPath);
+    const newHash = getPathHash(newPath);
+    const existing = this.db.getBackup(oldHash);
+    
+    if (existing) {
+      // If a backup already exists for oldPath, rename the backup record itself
+      this.db.removeBackup(oldHash);
+      this.db.upsertBackup({
+        path_hash: newHash,
+        original_path: newPath,
+        content: existing.content
+      });
+    } else {
+      // If no backup existed, create a rename backup record
+      this.db.upsertBackup({
+        path_hash: newHash,
+        original_path: newPath,
+        content: `__RENAMED_FROM__:${oldPath}`
+      });
     }
   }
 }

@@ -191,6 +191,42 @@ export class DirectiveIndexer {
   }
 
   /**
+   * Update indexer database and shadow backups when a file is renamed.
+   */
+  public renameFile(absSource: string, absDest: string) {
+    // 1. Move backup records
+    this.backupManager.renameBackup(absSource, absDest);
+    
+    // 2. Delete old DB record & chunks
+    this.db.removeFile(absSource);
+    
+    // 3. Index new file
+    try {
+      if (fs.existsSync(absDest)) {
+        const stat = fs.statSync(absDest);
+        const relpath = path.relative(this.workspaceRoot, absDest);
+        const content = fs.readFileSync(absDest, 'utf-8');
+        const hash = computeHash(content);
+        const chunks = chunkFile(absDest, relpath, content);
+        
+        this.db.upsertFile({
+          path: absDest,
+          hash,
+          size: stat.size,
+          modified: stat.mtimeMs
+        });
+        this.db.removeChunksForFile(absDest);
+        this.db.insertChunks(chunks);
+      }
+    } catch (e) {
+      console.error(`Failed to re-index renamed file ${absDest}:`, e);
+    }
+    
+    // 4. Update current repository map
+    this.currentRepoMap = buildRepoMap(this.db);
+  }
+
+  /**
    * Clean up background watcher and close DB connection.
    */
   public close() {

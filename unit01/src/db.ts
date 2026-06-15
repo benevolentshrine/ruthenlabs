@@ -1,6 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
+import { homedir } from 'os';
 
 export interface FileRecord {
   path: string;
@@ -19,6 +21,7 @@ export interface ChunkRecord {
   content: string;
   chunk_type: 'function' | 'class' | 'module' | 'file';
   name: string;
+  embedding?: string | null;
 }
 
 export interface ShadowBackupRecord {
@@ -31,11 +34,20 @@ export class IndexerDB {
   private db: DatabaseSync;
 
   constructor(workspaceRoot: string) {
-    const dbDir = path.join(workspaceRoot, '.ruthen');
+    const absWorkspaceRoot = path.resolve(workspaceRoot);
+    const hash = crypto.createHash('sha256').update(absWorkspaceRoot).digest('hex');
+    const home = homedir();
+    let baseDir: string;
+    if (process.platform === 'darwin') {
+      baseDir = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.indexer');
+    } else {
+      baseDir = path.join(home, '.local', 'share', 'com.ruthenlabs.indexer');
+    }
+    const dbDir = path.join(baseDir, hash);
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true });
     }
-    const dbPath = path.join(dbDir, 'indexer.db');
+    const dbPath = path.join(dbDir, 'db.sqlite');
     this.db = new DatabaseSync(dbPath);
     this.initializeSchema();
   }
@@ -61,7 +73,8 @@ export class IndexerDB {
         end_line INTEGER NOT NULL,
         content TEXT NOT NULL,
         chunk_type TEXT NOT NULL,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        embedding TEXT
       );
 
       CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5(
