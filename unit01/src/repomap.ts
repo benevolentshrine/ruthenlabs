@@ -46,7 +46,7 @@ export function buildRepoMap(db: IndexerDB): string {
   let omittedCount = 0;
 
   for (const file of files) {
-    const relpath = file.path; // Already relative or direct key
+    const relpath = path.relative(db.workspaceRoot, file.path); // Already relative or direct key
     const specialSuffix = getSpecialTypeSuffix(relpath);
 
     let fileEntry = '';

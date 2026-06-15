@@ -171,7 +171,10 @@ function interactiveSelect(title: string, options: string[]): Promise<number> {
           process.exit(0);
         }
         
-        if (key.name === 'up') {
+        if (key.name === 'escape' || key.name === 'q') {
+          cleanup();
+          resolve(-1);
+        } else if (key.name === 'up') {
           selectedIndex = (selectedIndex - 1 + options.length) % options.length;
           clear();
           render();
@@ -1337,6 +1340,15 @@ async function handleToolCalls(
       };
     }
 
+    if (output.startsWith('[Command failed with exit code')) {
+      console.log(`  ${chalk.red('✗')} ${themePrimary('run')} ${cmd} (failed)`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${output.trim()}\n</tool_output>`,
+        consoleOutput: `\n[Failed: ${cmd}]`
+      };
+    }
+
     console.log(`  ${themeGreen('✓')} ${themePrimary('run')} ${cmd} (completed)`);
     const outputResult = output.trim() || 'Command executed successfully with no output.';
     return {
@@ -2099,8 +2111,46 @@ async function startCli() {
       // --- Slash Commands ---
       if (trimmed.startsWith('/')) {
         const parts = trimmed.split(/\s+/);
-        const command = parts[0].toLowerCase();
-        const arg = parts.slice(1).join(' ');
+        let command = parts[0].toLowerCase();
+        let arg = parts.slice(1).join(' ');
+
+        if (command === '/' || command === '/menu') {
+          const menuOptions = [
+            '🤖 Switch Model (/models)',
+            '🧠 Toggle Thinking (/thinking)',
+            '🔍 Preview Last File (/preview)',
+            '📝 View Recent Changes (/changes)',
+            '⏪ Revert Last Change (/undo)',
+            '🔎 Search Codebase (/search)',
+            '🧹 Clear History (/clear)',
+            'ℹ️ System Status (/status)',
+            '📁 List Indexed Files (/files)',
+            '🔄 Re-index Workspace (/reindex)',
+            '❓ Show Help (/help)',
+            '❌ Exit CLI (/exit)'
+          ];
+          const chosenIdx = await interactiveSelect('Command Menu:', menuOptions);
+          if (chosenIdx === -1) {
+            askQuestion();
+            return;
+          }
+          const cmdMapping = [
+            '/models',
+            '/thinking',
+            '/preview',
+            '/changes',
+            '/undo',
+            '/search',
+            '/clear',
+            '/status',
+            '/files',
+            '/reindex',
+            '/help',
+            '/exit'
+          ];
+          command = cmdMapping[chosenIdx];
+          arg = '';
+        }
 
         if (command === '/exit' || command === '/quit') {
           console.log(chalk.yellow('Shutting down file watchers and sandbox proxies...'));
@@ -2125,14 +2175,28 @@ async function startCli() {
         }
 
         if (command === '/search') {
-          if (!arg) {
-            console.log(chalk.red('Usage: /search <query>'));
-          } else {
-            const results = indexer.search(arg);
+          const runSearch = (queryStr: string) => {
+            const results = indexer.search(queryStr);
             console.log(chalk.blue(`Found ${results.length} matches:`));
             results.slice(0, 5).forEach((r) => {
               console.log(chalk.cyan(`- ${r.relpath} (line ${r.start_line}-${r.end_line})`));
             });
+          };
+
+          if (!arg) {
+            await new Promise<void>((resolve) => {
+              rl.question('Enter search query: ', (query) => {
+                const searchArg = query.trim();
+                if (!searchArg) {
+                  console.log(chalk.red('Search cancelled: empty query.'));
+                } else {
+                  runSearch(searchArg);
+                }
+                resolve();
+              });
+            });
+          } else {
+            runSearch(arg);
           }
           askQuestion();
           return;
@@ -2218,6 +2282,65 @@ async function startCli() {
           return;
         }
 
+        if (command === '/status') {
+          const activeRepoMap = indexer.getRepoMap();
+          const activeChanges = indexer.getRecentChanges();
+          const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
+          const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+          const totalTokens = systemPromptLength + historyLength;
+
+          console.log(chalk.bold('\nUnit01 System Status:'));
+          console.log(`- Active Model: ${chalk.green(activeModel)}`);
+          console.log(`- Context Usage: ${chalk.green(totalTokens.toLocaleString())} / ${chalk.gray(contextLimit.toLocaleString())} tokens`);
+          console.log(`- Workspace Root: ${chalk.cyan(workspaceRoot)}`);
+          console.log(`- Git Branch: ${chalk.cyan(gitBranch)}`);
+          console.log(`- Egress Proxy Port: ${chalk.green(sandbox['proxyPort'] || 'inactive')}`);
+          console.log(`- Files Indexed: ${chalk.green(indexer['db'].getAllFiles().length)}`);
+          console.log();
+          askQuestion();
+          return;
+        }
+
+        if (command === '/files') {
+          const allFiles = indexer['db'].getAllFiles();
+          console.log(chalk.bold(`\nIndexed Files (${allFiles.length}):`));
+          allFiles.forEach(f => {
+            const rel = path.relative(workspaceRoot, f.path);
+            console.log(`  - ${chalk.cyan(rel)} (${chalk.gray((f.size / 1024).toFixed(1) + ' KB')})`);
+          });
+          console.log();
+          askQuestion();
+          return;
+        }
+
+        if (command === '/reindex') {
+          console.log(chalk.yellow('Re-scanning workspace and rebuilding index...'));
+          await indexer.initialize();
+          console.log(chalk.green('Index successfully rebuilt.'));
+          askQuestion();
+          return;
+        }
+
+        if (command === '/help') {
+          console.log(chalk.bold('\nUnit01 CLI Help Menu'));
+          console.log('Commands:');
+          console.log(`  ${chalk.cyan('/models')}            - Switch the active Ollama model`);
+          console.log(`  ${chalk.cyan('/thinking')}          - Toggle showing/hiding LLM thinking blocks`);
+          console.log(`  ${chalk.cyan('/preview')}           - Preview side-by-side diff of the last written file`);
+          console.log(`  ${chalk.cyan('/changes')}           - View list of recently modified files`);
+          console.log(`  ${chalk.cyan('/undo')}              - Revert the last file modification`);
+          console.log(`  ${chalk.cyan('/search <query>')}    - Search codebase chunks using keyword index`);
+          console.log(`  ${chalk.cyan('/clear')}             - Clear conversation history`);
+          console.log(`  ${chalk.cyan('/status')}            - Show system status and context usage`);
+          console.log(`  ${chalk.cyan('/files')}             - List all currently indexed files`);
+          console.log(`  ${chalk.cyan('/reindex')}           - Force full codebase scan and rebuild repo map`);
+          console.log(`  ${chalk.cyan('/help')}              - Show this help menu`);
+          console.log(`  ${chalk.cyan('/exit, /quit')}       - Exit the application`);
+          console.log();
+          askQuestion();
+          return;
+        }
+
         console.log(chalk.red(`Unknown command: ${command}`));
         askQuestion();
         return;
@@ -2246,6 +2369,13 @@ async function startCli() {
           askQuestion();
           return;
         }
+
+        if (indexer && (indexer as any).watcher) {
+          try {
+            (indexer as any).watcher.flush();
+          } catch (e) {}
+        }
+
         const currentRepoMap = indexer.getRepoMap();
         const currentChanges = indexer.getRecentChanges();
         

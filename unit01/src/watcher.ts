@@ -28,6 +28,7 @@ export class FileWatcher {
   private diffTracker: DiffTracker;
   private onUpdate: () => void;
   private debounceTimers = new Map<string, NodeJS.Timeout>();
+  private pendingEvents = new Map<string, 'add' | 'change' | 'unlink'>();
 
   constructor(
     workspaceRoot: string,
@@ -47,7 +48,7 @@ export class FileWatcher {
         const rel = path.relative(this.workspaceRoot, filePath);
         if (!rel) return false; // root itself
         const parts = rel.split(path.sep);
-        return IGNORE_PATTERNS.some(pat => parts.includes(pat));
+        return parts.some(part => part.startsWith('.') || IGNORE_PATTERNS.includes(part));
       },
       persistent: true,
       ignoreInitial: true // Initial scan is handled manually during index startup
@@ -68,6 +69,17 @@ export class FileWatcher {
       clearTimeout(timer);
     }
     this.debounceTimers.clear();
+    this.pendingEvents.clear();
+  }
+
+  public flush() {
+    for (const [filePath, timer] of this.debounceTimers.entries()) {
+      clearTimeout(timer);
+      const eventType = this.pendingEvents.get(filePath) || (fs.existsSync(filePath) ? 'change' : 'unlink');
+      this.handleFileEvent(filePath, eventType);
+    }
+    this.debounceTimers.clear();
+    this.pendingEvents.clear();
   }
 
   private enqueue(filePath: string, eventType: 'add' | 'change' | 'unlink') {
@@ -76,8 +88,11 @@ export class FileWatcher {
       clearTimeout(existingTimer);
     }
 
+    this.pendingEvents.set(filePath, eventType);
+
     const timer = setTimeout(() => {
       this.debounceTimers.delete(filePath);
+      this.pendingEvents.delete(filePath);
       this.handleFileEvent(filePath, eventType);
     }, 500); // 500ms debounce
 

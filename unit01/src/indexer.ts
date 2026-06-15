@@ -67,8 +67,8 @@ export class DirectiveIndexer {
       for (const entry of entries) {
         const fullPath = path.join(currentDir, entry.name);
         
-        // Skip ignored directories/files
-        if (IGNORE_PATTERNS.includes(entry.name)) {
+        // Skip ignored directories/files or hidden files
+        if (IGNORE_PATTERNS.includes(entry.name) || entry.name.startsWith('.')) {
           continue;
         }
 

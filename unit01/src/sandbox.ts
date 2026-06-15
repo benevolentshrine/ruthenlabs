@@ -581,6 +581,8 @@ export class DirectiveSandbox {
         let result = outputBuffer;
         if (killed) {
           result += '\n[Directive AI] Process terminated: execution timed out after 30 seconds.';
+        } else if (code !== 0 && code !== null) {
+          result = `[Command failed with exit code ${code}]\n${result}`;
         }
 
         // Apply truncation and secret redaction

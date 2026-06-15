@@ -32,10 +32,11 @@ export interface ShadowBackupRecord {
 
 export class IndexerDB {
   private db: DatabaseSync;
+  public workspaceRoot: string;
 
   constructor(workspaceRoot: string) {
-    const absWorkspaceRoot = path.resolve(workspaceRoot);
-    const hash = crypto.createHash('sha256').update(absWorkspaceRoot).digest('hex');
+    this.workspaceRoot = path.resolve(workspaceRoot);
+    const hash = crypto.createHash('sha256').update(this.workspaceRoot).digest('hex');
     const home = homedir();
     let baseDir: string;
     if (process.platform === 'darwin') {
