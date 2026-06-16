@@ -324,7 +324,8 @@ You can execute tools by wrapping commands in specific XML tags. Here are concre
 - To view structured git status: <git_status />
 - To run project compilation/linter diagnostics: <diagnostics /> or <diagnostics command="npm run lint" />
 - To rename or move a file: <move_file source_path="old.py" destination_path="new.py" />
-- To ask the developer a question or request path permission (substitute the target path dynamically): <question question="I need access to /path/to/directory to complete this task. Grant access?" options="Allow read-write, Allow read-only, Deny" />
+- To ask the developer a question or request path permission (substitute the target path dynamically):
+  <question options="Allow read-write, Allow read-only, Deny">I need access to /path/to/directory to complete this task. Grant access?</question>
 
 Rules:
 1. Execute only ONE tool at a time.
@@ -343,7 +344,7 @@ Rules:
    - First, present a clear architectural plan detailing the files you plan to create/modify and libraries you need. Wait for user approval or feedback.
    - After approval, implement the code incrementally—write or edit only ONE file per turn, starting with the base configuration and core logic.
    - Keep code modular and clean. Separate concerns (e.g., separate UI rendering from core logic) to prevent massive single-file dumps.
-8. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="/home/zenK" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the question tool. You MUST use the <question> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
+8. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="/home/zenK" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the question tool (e.g., <question options="Allow read-write, Allow read-only, Deny">I need access to /home/zenK to complete this task. Grant access?</question>). You MUST use the <question> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
 9. When using the <question> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "/home/zenK").
 `;
 
@@ -942,6 +943,25 @@ function extractPathFromQuestion(question: string): string | null {
 }
 
 function parseQuestion(text: string): { question: string; options: string[] } | null {
+  // 1. Try matching nested format: <question options="Allow read-write, Allow read-only, Deny">I need access...</question>
+  const matchNested = /<(?:path_)?question(?:\s+([^>]*))?>([\s\S]*?)<\/(?:path_)?question>/.exec(text);
+  if (matchNested) {
+    const attrsStr = matchNested[1] || '';
+    const innerContent = matchNested[2].trim();
+    if (innerContent) {
+      const attrs = parseAttributes(attrsStr);
+      const optionsVal = attrs.options;
+      const options = optionsVal
+        ? optionsVal.split(',').map(o => o.trim())
+        : ['Yes', 'No'];
+      return {
+        question: innerContent,
+        options
+      };
+    }
+  }
+
+  // 2. Fallback to matching attribute format: <question question="..." options="..." />
   const matchAttr = /<(?:path_)?question\s+([^>]+)\s*\/?>/.exec(text);
   if (matchAttr) {
     const attrs = parseAttributes(matchAttr[1]);
