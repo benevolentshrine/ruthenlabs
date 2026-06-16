@@ -2674,6 +2674,8 @@ Be specific. Use exact file names, function names, and line numbers where releva
               filterPrint(textToPrint);
             }
           }
+        } else {
+          spinner.stop();
         }
       } catch (err: any) {
         spinner.stop();
@@ -3301,6 +3303,8 @@ Be specific. Use exact file names, function names, and line numbers where releva
                 filterPrint(textToPrint);
               }
             }
+          } else {
+            spinner.stop();
           }
         } catch (err: any) {
           spinner.stop();
