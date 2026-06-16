@@ -1480,7 +1480,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absPath} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absPath
         })}\n</tool_output>`,
@@ -1589,7 +1589,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absPath} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absPath
         })}\n</tool_output>`,
@@ -1671,7 +1671,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absPath} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absPath
         })}\n</tool_output>`,
@@ -1762,7 +1762,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absPath} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absPath
         })}\n</tool_output>`,
@@ -1856,7 +1856,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absPath} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absPath
         })}\n</tool_output>`,
@@ -2076,7 +2076,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absSource} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absSource
         })}\n</tool_output>`,
@@ -2089,7 +2089,7 @@ async function handleToolCalls(
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
-          error: "Path is outside the workspace and not in the allowed paths list. Use --allow to grant access.",
+          error: `Path is outside the workspace. You must request permission using the <question> tool tag: <question options="Allow read-write, Allow read-only, Deny">I need access to ${absDest} to complete this task. Grant access?</question>`,
           code: "PATH_NOT_ALLOWED",
           path: absDest
         })}\n</tool_output>`,
