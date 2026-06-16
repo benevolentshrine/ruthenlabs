@@ -337,13 +337,13 @@ Rules:
    - Use patch_file for simple, single exact replacements.
    - Use write_file only when creating new files. Never write_file on an existing file.
    - Use move_file to rename or move files. Never use cp + rm or mv in run_command.
-   - Use the question tool to request path access if you need to access files outside the workspace.
+   - You MUST use the <question> tool to request path access if you need to access files outside the workspace. Do NOT request path access, ask questions, or clarify requirements via plain conversational text, as the user has no way to grant permissions or respond unless you invoke the <question> tool tag.
 7. Complex Task / New Project Workflow:
    - When asked to create a new application, website, game, or implement a large feature, DO NOT write files immediately.
    - First, present a clear architectural plan detailing the files you plan to create/modify and libraries you need. Wait for user approval or feedback.
    - After approval, implement the code incrementally—write or edit only ONE file per turn, starting with the base configuration and core logic.
    - Keep code modular and clean. Separate concerns (e.g., separate UI rendering from core logic) to prevent massive single-file dumps.
-8. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="/home/zenK" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and request access using the question tool.
+8. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="/home/zenK" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the question tool. You MUST use the <question> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
 9. When using the <question> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "/home/zenK").
 `;
 
@@ -1032,7 +1032,9 @@ function processChunk(chunk: string, state: { buffer: string; suppressed: boolea
     '<list_dir',
     '<git_status',
     '<diagnostics',
-    '<move_file'
+    '<move_file',
+    '<question',
+    '<path_question'
   ];
 
   while (full.length > 0) {
