@@ -1476,7 +1476,6 @@ async function handleToolCalls(
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
     
     if (!sandbox.isPathWriteAllowed(absPath)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('write')} ${filePath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1585,7 +1584,6 @@ async function handleToolCalls(
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
     
     if (!sandbox.isPathAllowed(absPath)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('read')} ${filePath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1667,7 +1665,6 @@ async function handleToolCalls(
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
 
     if (!sandbox.isPathWriteAllowed(absPath)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1758,7 +1755,6 @@ async function handleToolCalls(
     const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
 
     if (!sandbox.isPathWriteAllowed(absPath)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1852,7 +1848,6 @@ async function handleToolCalls(
     const absPath = path.resolve(sandbox['workspaceRoot'], pathVal);
 
     if (!sandbox.isPathAllowed(absPath)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -2072,7 +2067,6 @@ async function handleToolCalls(
     const absDest = path.resolve(sandbox['workspaceRoot'], destinationPath);
 
     if (!sandbox.isPathWriteAllowed(absSource)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -2085,7 +2079,6 @@ async function handleToolCalls(
     }
 
     if (!sandbox.isPathWriteAllowed(absDest)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (blocked)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
