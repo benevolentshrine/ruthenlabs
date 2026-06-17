@@ -2895,27 +2895,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
   const askQuestion = () => {
     const cols = process.stdout.columns || 80;
     
-    const activeRepoMap = indexer.getRepoMap();
-    const activeChanges = indexer.getRecentChanges();
-    const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
-    const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
-    const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
-
-    const ratio = Math.min(totalTokens / contextLimit, 1.0);
-    const pct = Math.round(ratio * 100);
-    
-    let progressColor = themeGreen;
-    if (ratio >= 0.8) {
-      progressColor = chalk.red;
-    } else if (ratio >= 0.6) {
-      progressColor = chalk.yellow;
-    }
-
-    let leftSide = `Context: ${progressColor(totalTokens.toLocaleString())} / ${contextLimit.toLocaleString()} (${progressColor(pct + '%')})`;
-    if (ratio >= 0.8) {
-      leftSide += ` — run /compact to free space`;
-    }
-    
+    const leftSide = '';
     const wsName = path.basename(workspaceRoot);
     const rightSide = `${themeGreen(wsName)} (${themePrimary(gitBranch)})`;
 
@@ -2945,6 +2925,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           const menuOptions = [
             '🤖 Switch Model (/models)',
             '🧠 Toggle Thinking (/thinking)',
+            '📊 Context Usage (/usage)',
             '🔍 Preview Last File (/preview)',
             '📝 View Recent Changes (/changes)',
             '⏪ Revert Last Change (/undo)',
@@ -2965,6 +2946,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           const cmdMapping = [
             '/models',
             '/thinking',
+            '/usage',
             '/preview',
             '/changes',
             '/undo',
@@ -3154,6 +3136,43 @@ Be specific. Use exact file names, function names, and line numbers where releva
           return;
         }
 
+        if (command === '/usage') {
+          const activeRepoMap = indexer.getRepoMap();
+          const activeChanges = indexer.getRecentChanges();
+          const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
+          const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+          const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
+          const ratio = Math.min(totalTokens / contextLimit, 1.0);
+          const pct = Math.round(ratio * 100);
+          const remaining = Math.max(0, contextLimit - totalTokens);
+
+          let progressColor = themeGreen;
+          if (ratio >= 0.8) {
+            progressColor = chalk.red;
+          } else if (ratio >= 0.6) {
+            progressColor = chalk.yellow;
+          }
+
+          console.log(chalk.bold('\nContext Window Usage:'));
+          console.log(`- Active Model:     ${chalk.cyan(activeModel)}`);
+          console.log(`- Context Limit:    ${chalk.cyan(contextLimit.toLocaleString())} tokens`);
+          console.log(`- Total Usage:      ${progressColor(totalTokens.toLocaleString())} / ${contextLimit.toLocaleString()} tokens (${progressColor(pct + '%')})`);
+          console.log(`- System Context:   ${chalk.gray(systemPromptLength.toLocaleString())} tokens (instructions, repo map, recent changes)`);
+          console.log(`- Messages History: ${chalk.gray(historyLength.toLocaleString())} tokens (${conversationHistory.length} messages)`);
+          console.log(`- Remaining space:  ${progressColor(remaining.toLocaleString())} tokens`);
+          
+          // Visual progress bar
+          const barWidth = 40;
+          const filledWidth = Math.round(ratio * barWidth);
+          const emptyWidth = barWidth - filledWidth;
+          const bar = progressColor('█'.repeat(filledWidth)) + chalk.gray('░'.repeat(emptyWidth));
+          console.log(`  [${bar}]`);
+          console.log();
+
+          askQuestion();
+          return;
+        }
+
         if (command === '/files') {
           const allFiles = indexer['db'].getAllFiles();
           console.log(chalk.bold(`\nIndexed Files (${allFiles.length}):`));
@@ -3179,13 +3198,14 @@ Be specific. Use exact file names, function names, and line numbers where releva
           console.log('Commands:');
           console.log(`  ${chalk.cyan('/models')}            - Switch the active Ollama model`);
           console.log(`  ${chalk.cyan('/thinking')}          - Toggle showing/hiding LLM thinking blocks`);
+          console.log(`  ${chalk.cyan('/usage')}             - Show the context usage for the active model`);
           console.log(`  ${chalk.cyan('/preview')}           - Preview side-by-side diff of the last written file`);
           console.log(`  ${chalk.cyan('/changes')}           - View list of recently modified files`);
           console.log(`  ${chalk.cyan('/undo')}              - Revert the last file modification`);
           console.log(`  ${chalk.cyan('/search <query>')}    - Search codebase chunks using keyword index`);
           console.log(`  ${chalk.cyan('/clear')}             - Clear conversation history`);
           console.log(`  ${chalk.cyan('/compact')}           - Summarise and compress conversation history to free context space`);
-          console.log(`  ${chalk.cyan('/status')}            - Show system status and context usage`);
+          console.log(`  ${chalk.cyan('/status')}            - Show system status`);
           console.log(`  ${chalk.cyan('/files')}             - List all currently indexed files`);
           console.log(`  ${chalk.cyan('/reindex')}           - Force full codebase scan and rebuild repo map`);
           console.log(`  ${chalk.cyan('/help')}              - Show this help menu`);
