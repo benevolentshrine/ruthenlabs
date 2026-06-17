@@ -2429,39 +2429,86 @@ Be specific. Use exact file names, function names, and line numbers where releva
       }
     ];
 
+    const abortController = new AbortController();
+    const stdin = process.stdin;
+    const wasRaw = stdin.isRaw;
+    const hasRawMode = typeof stdin.setRawMode === 'function';
+
+    const onKeypress = (str: any, key: any) => {
+      if (key) {
+        if (key.name === 'escape') {
+          abortController.abort();
+        } else if (key.ctrl && key.name === 'c') {
+          if (hasRawMode) {
+            try {
+              stdin.removeListener('keypress', onKeypress);
+              stdin.setRawMode(wasRaw);
+            } catch (_) {}
+          }
+          process.exit(130);
+        }
+      }
+    };
+
+    if (hasRawMode) {
+      try {
+        stdin.setRawMode(true);
+        stdin.resume();
+        readline.emitKeypressEvents(stdin);
+        stdin.on('keypress', onKeypress);
+      } catch (_) {}
+    }
+
     try {
-      const chatResult = await ollama.chatStream(
-        activeModel,
-        summarisationPayload,
-        contextLimit,
-        () => {} // silent streaming
-      );
+      try {
+        const chatResult = await ollama.chatStream(
+          activeModel,
+          summarisationPayload,
+          contextLimit,
+          () => {}, // silent streaming
+          abortController.signal
+        );
 
-      const summaryContent = chatResult.content.trim();
-      if (!summaryContent) {
-        throw new Error('Model returned an empty summary');
+        const summaryContent = chatResult.content.trim();
+        if (!summaryContent) {
+          throw new Error('Model returned an empty summary');
+        }
+
+        // Replace history
+        conversationHistory.length = 0;
+        conversationHistory.push({
+          role: 'system',
+          content: `[COMPACTED CONTEXT — conversation summarised at ${new Date().toISOString()}]\n\n${summaryContent}`
+        });
+
+        const newHistoryLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+        const newTotal = systemPromptLength + newHistoryLength;
+        const saved = totalTokens - newTotal;
+        lastInputTokens = newTotal;
+
+        if (isAuto) {
+          console.log(chalk.yellow(`⚡ Context auto-compacted (was ${pct}% full). Saved ${saved.toLocaleString()} tokens.`));
+        } else {
+          console.log(chalk.green(`✓ Context compacted: ${totalTokens.toLocaleString()} → ${newTotal.toLocaleString()} tokens (saved ${saved.toLocaleString()})`));
+        }
+        return true;
+      } finally {
+        if (hasRawMode) {
+          try {
+            stdin.removeListener('keypress', onKeypress);
+            stdin.setRawMode(wasRaw);
+          } catch (_) {}
+        }
       }
-
-      // Replace history
-      conversationHistory.length = 0;
-      conversationHistory.push({
-        role: 'system',
-        content: `[COMPACTED CONTEXT — conversation summarised at ${new Date().toISOString()}]\n\n${summaryContent}`
-      });
-
-      const newHistoryLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
-      const newTotal = systemPromptLength + newHistoryLength;
-      const saved = totalTokens - newTotal;
-      lastInputTokens = newTotal;
-
-      if (isAuto) {
-        console.log(chalk.yellow(`⚡ Context auto-compacted (was ${pct}% full). Saved ${saved.toLocaleString()} tokens.`));
-      } else {
-        console.log(chalk.green(`✓ Context compacted: ${totalTokens.toLocaleString()} → ${newTotal.toLocaleString()} tokens (saved ${saved.toLocaleString()})`));
-      }
-      return true;
     } catch (err: any) {
-      console.warn(chalk.yellow(`⚠ Warning: Compaction failed during LLM summarization. Context not compacted. Error: ${err.message}`));
+      const isAbort = err.name === 'AbortError' || 
+                      err.message?.includes('aborted') || 
+                      err.message?.includes('Abort');
+      if (isAbort) {
+        console.warn(chalk.yellow(`\n⚠ Warning: Compaction aborted by user. Context not compacted.`));
+      } else {
+        console.warn(chalk.yellow(`⚠ Warning: Compaction failed during LLM summarization. Context not compacted. Error: ${err.message}`));
+      }
       return false;
     } finally {
       pendingCompaction = false;
@@ -2587,111 +2634,181 @@ Be specific. Use exact file names, function names, and line numbers where releva
         }
       };
 
+      const abortController = new AbortController();
+      const stdin = process.stdin;
+      const wasRaw = stdin.isRaw;
+      const hasRawMode = typeof stdin.setRawMode === 'function';
+
+      const onKeypress = (str: any, key: any) => {
+        if (key) {
+          if (key.name === 'escape') {
+            abortController.abort();
+          } else if (key.ctrl && key.name === 'c') {
+            if (hasRawMode) {
+              try {
+                stdin.removeListener('keypress', onKeypress);
+                stdin.setRawMode(wasRaw);
+              } catch (_) {}
+            }
+            process.exit(130);
+          }
+        }
+      };
+
+      if (hasRawMode) {
+        try {
+          stdin.setRawMode(true);
+          stdin.resume();
+          readline.emitKeypressEvents(stdin);
+          stdin.on('keypress', onKeypress);
+        } catch (_) {}
+      }
+
       try {
-        const chatResult = await ollama.chatStream(
-          activeModel,
-          activePayload,
-          contextLimit,
-          (chunk) => {
-            streamAccumulator += chunk;
-            const elapsed = Date.now() - spinnerStartTime;
-            if (elapsed < minDelay) {
-              bufferedText += chunk;
-            } else {
-              if (isFirstChunk) {
-                isFirstChunk = false;
-                spinner.stop();
-                process.stdout.write(`${themeGreen('●')} `);
-                printedStreamText += '● ';
-                if (bufferedText) {
-                  let textToPrint = bufferedText;
-                  if (!thinkingEnabled) {
-                    textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
-                    const startIdx = textToPrint.indexOf('<think>');
-                    if (startIdx !== -1) {
-                      inThinkBlock = true;
-                      tempBuffer = textToPrint.substring(startIdx);
-                      textToPrint = textToPrint.substring(0, startIdx);
+        try {
+          const chatResult = await ollama.chatStream(
+            activeModel,
+            activePayload,
+            contextLimit,
+            (chunk) => {
+              streamAccumulator += chunk;
+              const elapsed = Date.now() - spinnerStartTime;
+              if (elapsed < minDelay) {
+                bufferedText += chunk;
+              } else {
+                if (isFirstChunk) {
+                  isFirstChunk = false;
+                  spinner.stop();
+                  process.stdout.write(`${themeGreen('●')} `);
+                  printedStreamText += '● ';
+                  if (bufferedText) {
+                    let textToPrint = bufferedText;
+                    if (!thinkingEnabled) {
+                      textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
+                      const startIdx = textToPrint.indexOf('<think>');
+                      if (startIdx !== -1) {
+                        inThinkBlock = true;
+                        tempBuffer = textToPrint.substring(startIdx);
+                        textToPrint = textToPrint.substring(0, startIdx);
+                      }
                     }
-                  }
-                  if (textToPrint) {
-                    filterPrint(textToPrint);
-                  }
-                  bufferedText = '';
-                }
-              }
-              
-              if (!thinkingEnabled) {
-                tempBuffer += chunk;
-                if (!inThinkBlock) {
-                  const thinkStartIdx = tempBuffer.indexOf('<think>');
-                  if (thinkStartIdx !== -1) {
-                    const before = tempBuffer.substring(0, thinkStartIdx);
-                    if (before) filterPrint(before);
-                    inThinkBlock = true;
-                    tempBuffer = tempBuffer.substring(thinkStartIdx);
-                  } else {
-                    filterPrint(tempBuffer);
-                    tempBuffer = '';
+                    if (textToPrint) {
+                      filterPrint(textToPrint);
+                    }
+                    bufferedText = '';
                   }
                 }
                 
-                if (inThinkBlock) {
-                  const thinkEndIdx = tempBuffer.indexOf('</think>');
-                  if (thinkEndIdx !== -1) {
-                    inThinkBlock = false;
-                    const after = tempBuffer.substring(thinkEndIdx + 8);
-                    if (after) filterPrint(after);
-                    tempBuffer = '';
-                  } else {
-                    const partialTagMatch = /<\/t?h?i?n?k?>?$/.exec(tempBuffer);
-                    if (partialTagMatch) {
-                      tempBuffer = partialTagMatch[0];
+                if (!thinkingEnabled) {
+                  tempBuffer += chunk;
+                  if (!inThinkBlock) {
+                    const thinkStartIdx = tempBuffer.indexOf('<think>');
+                    if (thinkStartIdx !== -1) {
+                      const before = tempBuffer.substring(0, thinkStartIdx);
+                      if (before) filterPrint(before);
+                      inThinkBlock = true;
+                      tempBuffer = tempBuffer.substring(thinkStartIdx);
                     } else {
+                      filterPrint(tempBuffer);
                       tempBuffer = '';
                     }
                   }
+                  
+                  if (inThinkBlock) {
+                    const thinkEndIdx = tempBuffer.indexOf('</think>');
+                    if (thinkEndIdx !== -1) {
+                      inThinkBlock = false;
+                      const after = tempBuffer.substring(thinkEndIdx + 8);
+                      if (after) filterPrint(after);
+                      tempBuffer = '';
+                    } else {
+                      const partialTagMatch = /<\/t?h?i?n?k?>?$/.exec(tempBuffer);
+                      if (partialTagMatch) {
+                        tempBuffer = partialTagMatch[0];
+                      } else {
+                        tempBuffer = '';
+                      }
+                    }
+                  }
+                } else {
+                  filterPrint(chunk);
                 }
-              } else {
-                filterPrint(chunk);
+              }
+            },
+            abortController.signal
+          );
+          modelResponse = chatResult.content;
+          const usage = chatResult.usage;
+          lastInputTokens = usage.input_tokens;
+
+          const isCompactionSkipped = currentOperation === '/summary' || currentOperation === '/export' || currentOperation === '/sessions';
+          if (!isCompactionSkipped) {
+            const usageRatio = usage.input_tokens / contextLimit;
+            if (usageRatio >= compactThreshold) {
+              pendingCompaction = true;
+            }
+          }
+
+          const elapsed = Date.now() - spinnerStartTime;
+          if (elapsed < minDelay) {
+            const remaining = minDelay - elapsed;
+            await new Promise(resolve => setTimeout(resolve, remaining));
+            isFirstChunk = false;
+            spinner.stop();
+            process.stdout.write(`${themeGreen('●')} `);
+            printedStreamText += '● ';
+            if (bufferedText) {
+              let textToPrint = bufferedText;
+              if (!thinkingEnabled) {
+                textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
+              }
+              if (textToPrint) {
+                filterPrint(textToPrint);
               }
             }
+          } else {
+            spinner.stop();
           }
-        );
-        modelResponse = chatResult.content;
-        const usage = chatResult.usage;
-        lastInputTokens = usage.input_tokens;
-
-        const isCompactionSkipped = currentOperation === '/summary' || currentOperation === '/export' || currentOperation === '/sessions';
-        if (!isCompactionSkipped) {
-          const usageRatio = usage.input_tokens / contextLimit;
-          if (usageRatio >= compactThreshold) {
-            pendingCompaction = true;
+        } finally {
+          if (hasRawMode) {
+            try {
+              stdin.removeListener('keypress', onKeypress);
+              stdin.setRawMode(wasRaw);
+            } catch (_) {}
           }
-        }
-
-        const elapsed = Date.now() - spinnerStartTime;
-        if (elapsed < minDelay) {
-          const remaining = minDelay - elapsed;
-          await new Promise(resolve => setTimeout(resolve, remaining));
-          isFirstChunk = false;
-          spinner.stop();
-          process.stdout.write(`${themeGreen('●')} `);
-          printedStreamText += '● ';
-          if (bufferedText) {
-            let textToPrint = bufferedText;
-            if (!thinkingEnabled) {
-              textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
-            }
-            if (textToPrint) {
-              filterPrint(textToPrint);
-            }
-          }
-        } else {
-          spinner.stop();
         }
       } catch (err: any) {
         spinner.stop();
+        if (toolSpinnerLinePrinted) {
+          readline.clearLine(process.stdout, 0);
+          readline.cursorTo(process.stdout, 0);
+          readline.moveCursor(process.stdout, 0, -1);
+        }
+        const cols = process.stdout.columns || 80;
+        const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
+        if (linesToClear > 0) {
+          readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
+          readline.cursorTo(process.stdout, 0);
+          readline.clearScreenDown(process.stdout);
+        }
+
+        const isAbort = err.name === 'AbortError' || 
+                        err.message?.includes('aborted') || 
+                        err.message?.includes('Abort');
+
+        if (isAbort) {
+          console.log(themeRed('\n✗ Generation interrupted.'));
+          if (shouldExit) {
+            indexer.close();
+            sandbox.stop();
+            rl.close();
+            process.exit(130);
+          } else {
+            askQuestion();
+          }
+          return;
+        }
+
         console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
         if (shouldExit) {
           indexer.close();
@@ -3212,112 +3329,152 @@ Be specific. Use exact file names, function names, and line numbers where releva
           }
         };
 
-        try {
-          const chatResult = await ollama.chatStream(
-            activeModel,
-            activePayload,
-            contextLimit,
-            (chunk) => {
-              streamAccumulator += chunk;
-              if (hasRepetitionLoop(streamAccumulator)) {
-                throw new Error('REPETITION_LOOP');
+        const abortController = new AbortController();
+        const stdin = process.stdin;
+        const wasRaw = stdin.isRaw;
+        const hasRawMode = typeof stdin.setRawMode === 'function';
+
+        const onKeypress = (str: any, key: any) => {
+          if (key) {
+            if (key.name === 'escape') {
+              abortController.abort();
+            } else if (key.ctrl && key.name === 'c') {
+              if (hasRawMode) {
+                try {
+                  stdin.removeListener('keypress', onKeypress);
+                  stdin.setRawMode(wasRaw);
+                } catch (_) {}
               }
-              const elapsed = Date.now() - spinnerStartTime;
-              if (elapsed < minDelay) {
-                bufferedText += chunk;
-              } else {
-                if (isFirstChunk) {
-                  isFirstChunk = false;
-                  spinner.stop();
-                  process.stdout.write(`${themeGreen('●')} `);
-                  printedStreamText += '● ';
-                  if (bufferedText) {
-                    let textToPrint = bufferedText;
-                    if (!thinkingEnabled) {
-                      textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
-                      const startIdx = textToPrint.indexOf('<think>');
-                      if (startIdx !== -1) {
-                        inThinkBlock = true;
-                        tempBuffer = textToPrint.substring(startIdx);
-                        textToPrint = textToPrint.substring(0, startIdx);
-                      }
-                    }
-                    if (textToPrint) {
-                      filterPrint(textToPrint);
-                    }
-                    bufferedText = '';
-                  }
+              process.exit(130);
+            }
+          }
+        };
+
+        if (hasRawMode) {
+          try {
+            stdin.setRawMode(true);
+            stdin.resume();
+            readline.emitKeypressEvents(stdin);
+            stdin.on('keypress', onKeypress);
+          } catch (_) {}
+        }
+
+        try {
+          try {
+            const chatResult = await ollama.chatStream(
+              activeModel,
+              activePayload,
+              contextLimit,
+              (chunk) => {
+                streamAccumulator += chunk;
+                if (hasRepetitionLoop(streamAccumulator)) {
+                  throw new Error('REPETITION_LOOP');
                 }
-                
-                if (!thinkingEnabled) {
-                  tempBuffer += chunk;
-                  if (!inThinkBlock) {
-                    const thinkStartIdx = tempBuffer.indexOf('<think>');
-                    if (thinkStartIdx !== -1) {
-                      const before = tempBuffer.substring(0, thinkStartIdx);
-                      if (before) filterPrint(before);
-                      inThinkBlock = true;
-                      tempBuffer = tempBuffer.substring(thinkStartIdx);
-                    } else {
-                      filterPrint(tempBuffer);
-                      tempBuffer = '';
+                const elapsed = Date.now() - spinnerStartTime;
+                if (elapsed < minDelay) {
+                  bufferedText += chunk;
+                } else {
+                  if (isFirstChunk) {
+                    isFirstChunk = false;
+                    spinner.stop();
+                    process.stdout.write(`${themeGreen('●')} `);
+                    printedStreamText += '● ';
+                    if (bufferedText) {
+                      let textToPrint = bufferedText;
+                      if (!thinkingEnabled) {
+                        textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
+                        const startIdx = textToPrint.indexOf('<think>');
+                        if (startIdx !== -1) {
+                          inThinkBlock = true;
+                          tempBuffer = textToPrint.substring(startIdx);
+                          textToPrint = textToPrint.substring(0, startIdx);
+                        }
+                      }
+                      if (textToPrint) {
+                        filterPrint(textToPrint);
+                      }
+                      bufferedText = '';
                     }
                   }
                   
-                  if (inThinkBlock) {
-                    const thinkEndIdx = tempBuffer.indexOf('</think>');
-                    if (thinkEndIdx !== -1) {
-                      inThinkBlock = false;
-                      const after = tempBuffer.substring(thinkEndIdx + 8);
-                      if (after) filterPrint(after);
-                      tempBuffer = '';
-                    } else {
-                      const partialTagMatch = /<\/t?h?i?n?k?>?$/.exec(tempBuffer);
-                      if (partialTagMatch) {
-                        tempBuffer = partialTagMatch[0];
+                  if (!thinkingEnabled) {
+                    tempBuffer += chunk;
+                    if (!inThinkBlock) {
+                      const thinkStartIdx = tempBuffer.indexOf('<think>');
+                      if (thinkStartIdx !== -1) {
+                        const before = tempBuffer.substring(0, thinkStartIdx);
+                        if (before) filterPrint(before);
+                        inThinkBlock = true;
+                        tempBuffer = tempBuffer.substring(thinkStartIdx);
                       } else {
+                        filterPrint(tempBuffer);
                         tempBuffer = '';
                       }
                     }
+                    
+                    if (inThinkBlock) {
+                      const thinkEndIdx = tempBuffer.indexOf('</think>');
+                      if (thinkEndIdx !== -1) {
+                        inThinkBlock = false;
+                        const after = tempBuffer.substring(thinkEndIdx + 8);
+                        if (after) filterPrint(after);
+                        tempBuffer = '';
+                      } else {
+                        const partialTagMatch = /<\/t?h?i?n?k?>?$/.exec(tempBuffer);
+                        if (partialTagMatch) {
+                          tempBuffer = partialTagMatch[0];
+                        } else {
+                          tempBuffer = '';
+                        }
+                      }
+                    }
+                  } else {
+                    filterPrint(chunk);
                   }
-                } else {
-                  filterPrint(chunk);
+                }
+              },
+              abortController.signal
+            );
+            modelResponse = chatResult.content;
+            const usage = chatResult.usage;
+            lastInputTokens = usage.input_tokens;
+
+            const isCompactionSkipped = currentOperation === '/summary' || currentOperation === '/export' || currentOperation === '/sessions';
+            if (!isCompactionSkipped) {
+              const usageRatio = usage.input_tokens / contextLimit;
+              if (usageRatio >= compactThreshold) {
+                pendingCompaction = true;
+              }
+            }
+
+            // If the model finished before the minimum spinner delay, wait and flush
+            const elapsed = Date.now() - spinnerStartTime;
+            if (elapsed < minDelay) {
+              const remaining = minDelay - elapsed;
+              await new Promise(resolve => setTimeout(resolve, remaining));
+              isFirstChunk = false;
+              spinner.stop();
+              process.stdout.write(`${themeGreen('●')} `);
+              printedStreamText += '● ';
+              if (bufferedText) {
+                let textToPrint = bufferedText;
+                if (!thinkingEnabled) {
+                  textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
+                }
+                if (textToPrint) {
+                  filterPrint(textToPrint);
                 }
               }
+            } else {
+              spinner.stop();
             }
-          );
-          modelResponse = chatResult.content;
-          const usage = chatResult.usage;
-          lastInputTokens = usage.input_tokens;
-
-          const isCompactionSkipped = currentOperation === '/summary' || currentOperation === '/export' || currentOperation === '/sessions';
-          if (!isCompactionSkipped) {
-            const usageRatio = usage.input_tokens / contextLimit;
-            if (usageRatio >= compactThreshold) {
-              pendingCompaction = true;
+          } finally {
+            if (hasRawMode) {
+              try {
+                stdin.removeListener('keypress', onKeypress);
+                stdin.setRawMode(wasRaw);
+              } catch (_) {}
             }
-          }
-
-          // If the model finished before the minimum spinner delay, wait and flush
-          const elapsed = Date.now() - spinnerStartTime;
-          if (elapsed < minDelay) {
-            const remaining = minDelay - elapsed;
-            await new Promise(resolve => setTimeout(resolve, remaining));
-            isFirstChunk = false;
-            spinner.stop();
-            process.stdout.write(`${themeGreen('●')} `);
-            printedStreamText += '● ';
-            if (bufferedText) {
-              let textToPrint = bufferedText;
-              if (!thinkingEnabled) {
-                textToPrint = textToPrint.replace(/<think>[\s\S]*?<\/think>/g, '');
-              }
-              if (textToPrint) {
-                filterPrint(textToPrint);
-              }
-            }
-          } else {
-            spinner.stop();
           }
         } catch (err: any) {
           spinner.stop();
@@ -3342,6 +3499,37 @@ Be specific. Use exact file names, function names, and line numbers where releva
             await runAgentLoop(shouldExit);
             return;
           }
+
+          if (toolSpinnerLinePrinted) {
+            readline.clearLine(process.stdout, 0);
+            readline.cursorTo(process.stdout, 0);
+            readline.moveCursor(process.stdout, 0, -1);
+          }
+          const cols = process.stdout.columns || 80;
+          const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
+          if (linesToClear > 0) {
+            readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
+            readline.cursorTo(process.stdout, 0);
+            readline.clearScreenDown(process.stdout);
+          }
+
+          const isAbort = err.name === 'AbortError' || 
+                          err.message?.includes('aborted') || 
+                          err.message?.includes('Abort');
+
+          if (isAbort) {
+            console.log(themeRed('\n✗ Generation interrupted.'));
+            if (shouldExit) {
+              indexer.close();
+              sandbox.stop();
+              rl.close();
+              process.exit(130);
+            } else {
+              askQuestion();
+            }
+            return;
+          }
+
           console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
           if (shouldExit) {
             indexer.close();

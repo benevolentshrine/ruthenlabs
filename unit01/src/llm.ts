@@ -77,7 +77,8 @@ export class OllamaClient {
     modelName: string,
     messages: { role: string; content: string }[],
     contextLimit: number,
-    onChunk: (text: string) => void
+    onChunk: (text: string) => void,
+    signal?: AbortSignal
   ): Promise<{ content: string; usage: { input_tokens: number; output_tokens: number } }> {
     const res = await fetch(`${this.host}/api/chat`, {
       method: 'POST',
@@ -90,7 +91,8 @@ export class OllamaClient {
           temperature: 0.1 // Low temperature for deterministic coding tasks
         },
         stream: true
-      })
+      }),
+      signal
     });
 
     if (!res.ok) {
