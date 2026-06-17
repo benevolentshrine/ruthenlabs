@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import { execSync } from 'child_process';
 import { DirectiveIndexer } from './indexer.js';
-import { DirectiveSandbox } from './sandbox.js';
+import { DirectiveSandbox, redactSecrets } from './sandbox.js';
 import { ollama } from './llm.js';
 import { buildRepoMap } from './repomap.js';
 import { marked } from 'marked';
@@ -2371,6 +2371,7 @@ async function startCli() {
   });
 
   const conversationHistory: { role: string; content: string }[] = [];
+  const sessionStartTime = Date.now();
   let lastInputTokens = 0;
   let pendingCompaction = false;
   let currentOperation: string | null = null;
@@ -2926,6 +2927,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             '🤖 Switch Model (/models)',
             '🧠 Toggle Thinking (/thinking)',
             '📊 Context Usage (/usage)',
+            '💾 Export Session (/export)',
             '🔍 Preview Last File (/preview)',
             '📝 View Recent Changes (/changes)',
             '⏪ Revert Last Change (/undo)',
@@ -2947,6 +2949,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             '/models',
             '/thinking',
             '/usage',
+            '/export',
             '/preview',
             '/changes',
             '/undo',
@@ -3173,6 +3176,408 @@ Be specific. Use exact file names, function names, and line numbers where releva
           return;
         }
 
+        if (command === '/export') {
+          if (conversationHistory.length === 0) {
+            console.log(chalk.yellow('Nothing to export — conversation history is empty.'));
+            askQuestion();
+            return;
+          }
+
+          const homeDir = os.homedir();
+          const sessionDir = path.join(homeDir, 'ruthen-sessions');
+
+          // Ensure ruthen-sessions directory exists
+          if (!fs.existsSync(sessionDir)) {
+            try {
+              fs.mkdirSync(sessionDir, { recursive: true });
+            } catch (e: any) {
+              console.error(chalk.red(`✗ Failed to create sessions directory: ${e.message}`));
+            }
+          }
+
+          // YYYY-MM-DD
+          const now = new Date();
+          const yyyy = now.getFullYear();
+          const mm = String(now.getMonth() + 1).padStart(2, '0');
+          const dd = String(now.getDate()).padStart(2, '0');
+          const dateStr = `${yyyy}-${mm}-${dd}`;
+
+          // Find first user message (not tool output)
+          const firstUserMsg = conversationHistory.find(m => m.role === 'user' && !m.content.includes('<tool_output>'));
+          let suffix = '';
+          if (firstUserMsg) {
+            let sanitised = firstUserMsg.content.toLowerCase();
+            sanitised = sanitised.replace(/\s+/g, '-');
+            sanitised = sanitised.replace(/[^a-z0-9\-]/g, '');
+            sanitised = sanitised.replace(/-+/g, '-');
+            sanitised = sanitised.replace(/^-+|-+$/g, '');
+            sanitised = sanitised.substring(0, 40);
+            sanitised = sanitised.replace(/-+$/g, '');
+            
+            if (sanitised.length >= 3) {
+              suffix = sanitised;
+            }
+          }
+
+          if (!suffix) {
+            const hh = String(now.getHours()).padStart(2, '0');
+            const min = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            suffix = `${hh}-${min}-${ss}`;
+          }
+
+          const defaultPath = path.join(sessionDir, `${dateStr}-${suffix}.md`);
+
+          let targetPath = arg.trim();
+          if (!targetPath) {
+            targetPath = defaultPath;
+          } else {
+            if (targetPath.startsWith('~/')) {
+              targetPath = path.join(homeDir, targetPath.slice(2));
+            } else {
+              targetPath = path.resolve(workspaceRoot, targetPath);
+            }
+          }
+
+          let finalPath = targetPath;
+          if (fs.existsSync(finalPath)) {
+            const answer = await new Promise<string>((resolve) => {
+              rl.question(`File already exists at ${finalPath}. Overwrite? [y/N]: `, (ans) => {
+                resolve(ans.trim().toLowerCase());
+              });
+            });
+
+            if (answer !== 'y' && answer !== 'yes') {
+              const ext = path.extname(finalPath);
+              const dir = path.dirname(finalPath);
+              const base = path.basename(finalPath, ext);
+              let counter = 1;
+              while (true) {
+                const candidate = path.join(dir, `${base}-${counter}${ext}`);
+                if (!fs.existsSync(candidate)) {
+                  finalPath = candidate;
+                  break;
+                }
+                counter++;
+              }
+            }
+          }
+
+          interface FileMod {
+            file: string;
+            action: 'created' | 'modified' | 'moved';
+            toolUsed: string;
+            edits: number;
+          }
+
+          const fileMods = new Map<string, FileMod>();
+
+          function addOrMergeFileMod(file: string, action: 'created' | 'modified' | 'moved', toolUsed: string) {
+            const normalized = path.normalize(file);
+            const existing = fileMods.get(normalized);
+            if (existing) {
+              existing.edits += 1;
+              if (existing.action !== 'created' && action === 'created') {
+                existing.action = 'created';
+              }
+              existing.toolUsed = toolUsed;
+            } else {
+              fileMods.set(normalized, {
+                file: normalized,
+                action,
+                toolUsed,
+                edits: 1
+              });
+            }
+          }
+
+          for (const msg of conversationHistory) {
+            if (msg.role !== 'assistant') continue;
+            const content = msg.content;
+
+            const writeAttrRegex = /<write_file\s+(?:relative_)?path=["']([^"']+)["']/g;
+            let match;
+            while ((match = writeAttrRegex.exec(content)) !== null) {
+              addOrMergeFileMod(match[1], 'created', 'write_file');
+            }
+
+            const writeTagRegex = /<write_file\s*>([\s\S]*?)(?:<\/write_file>|$)/g;
+            while ((match = writeTagRegex.exec(content)) !== null) {
+              const lines = match[1].trim().split('\n');
+              if (lines.length > 0 && lines[0].trim()) {
+                addOrMergeFileMod(lines[0].trim(), 'created', 'write_file');
+              }
+            }
+
+            const patchRegex = /<(patch_file|patch_file_blocks)\s+(?:relative_)?path=["']([^"']+)["']/g;
+            while ((match = patchRegex.exec(content)) !== null) {
+              addOrMergeFileMod(match[2], 'modified', match[1]);
+            }
+
+            const moveRegex = /<move_file\s+source_path=["']([^"']+)["']\s+destination_path=["']([^"']+)["']/g;
+            while ((match = moveRegex.exec(content)) !== null) {
+              addOrMergeFileMod(match[1], 'moved', 'move_file');
+            }
+          }
+
+          let filesModifiedTable = '';
+          if (fileMods.size === 0) {
+            filesModifiedTable = '*No files were modified in this session.*';
+          } else {
+            filesModifiedTable = '| File | Action | Tool Used | Edits |\n|------|--------|-----------|-------|\n';
+            for (const mod of fileMods.values()) {
+              filesModifiedTable += `| ${mod.file} | ${mod.action} | ${mod.toolUsed} | ${mod.edits} |\n`;
+            }
+          }
+
+          const commandsRun: { command: string; outcome: string }[] = [];
+          for (let i = 0; i < conversationHistory.length; i++) {
+            const msg = conversationHistory[i];
+            if (msg.role !== 'assistant') continue;
+
+            let match;
+            const runRegex = /<run_command\s*>([\s\S]*?)<\/run_command>/g;
+            while ((match = runRegex.exec(msg.content)) !== null) {
+              const cmd = match[1].trim();
+              let outcome = '✓ passed';
+              if (i + 1 < conversationHistory.length) {
+                const nextMsg = conversationHistory[i + 1];
+                if (nextMsg.role === 'user' && nextMsg.content.includes('<tool_output>')) {
+                  const outputMatch = /<tool_output\s*>([\s\S]*?)<\/tool_output>/.exec(nextMsg.content);
+                  const output = outputMatch ? outputMatch[1].trim() : nextMsg.content.trim();
+                  if (output.startsWith('[Command failed') || output.includes('exit code') && !output.includes('exit code 0')) {
+                    outcome = '✗ failed';
+                  }
+                }
+              }
+              commandsRun.push({ command: cmd, outcome });
+            }
+          }
+
+          let commandsRunTable = '';
+          if (commandsRun.length > 0) {
+            commandsRunTable = '## Commands Run\n\n| Command | Outcome |\n|---------|---------|\n';
+            for (const cmd of commandsRun) {
+              commandsRunTable += `| ${cmd.command} | ${cmd.outcome} |\n`;
+            }
+            commandsRunTable += '\n';
+          }
+
+          let secretsRedacted = false;
+          function redactWithNotice(c: string): string {
+            const redacted = redactSecrets(c);
+            if (redacted !== c) {
+              secretsRedacted = true;
+            }
+            return redacted;
+          }
+
+          function parseCommandResult(output: string): { status: string; code: string } {
+            const failMatch = /exit code (\d+)/i.exec(output);
+            if (failMatch) {
+              const code = parseInt(failMatch[1], 10);
+              if (code === 0) return { status: '✓ exit code 0', code: '0' };
+              return { status: `✗ exit code ${code}`, code: String(code) };
+            }
+            if (output.includes('Command failed') || output.includes('Error:')) {
+              return { status: '✗ failed', code: '1' };
+            }
+            return { status: '✓ exit code 0', code: '0' };
+          }
+
+          const durationMs = Date.now() - sessionStartTime;
+          function formatDuration(ms: number): string {
+            const seconds = Math.floor((ms / 1000) % 60);
+            const minutes = Math.floor((ms / (1000 * 60)) % 60);
+            const hours = Math.floor(ms / (1000 * 60 * 60));
+            const parts = [];
+            if (hours > 0) parts.push(`${hours}h`);
+            if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+            parts.push(`${seconds}s`);
+            return parts.join(' ');
+          }
+
+          const durationStr = formatDuration(durationMs);
+          const fullDateStr = new Intl.DateTimeFormat('en-US', { dateStyle: 'long' }).format(new Date());
+          const exportTimestamp = new Date().toISOString();
+
+          let conversationMarkdown = '';
+          for (let idx = 0; idx < conversationHistory.length; idx++) {
+            const msg = conversationHistory[idx];
+            if (msg.role === 'system') {
+              const compactMatch = /\[COMPACTED CONTEXT — conversation summarised at ([^\]]+)\]\n\n([\s\S]*)/.exec(msg.content);
+              if (compactMatch) {
+                const timestamp = compactMatch[1].trim();
+                const summaryContent = compactMatch[2].trim();
+                conversationMarkdown += `### ⚡ Context Compacted\n*Conversation history was compacted at ${timestamp}. Summary below:*\n${summaryContent}\n\n`;
+              } else {
+                conversationMarkdown += `### ⚙️ System\n${msg.content}\n\n`;
+              }
+            } else if (msg.role === 'user') {
+              if (msg.content.includes('<tool_output>')) {
+                continue;
+              }
+              conversationMarkdown += `### 👤 User\n${msg.content.trim()}\n\n`;
+            } else if (msg.role === 'assistant') {
+              const prose = msg.content
+                .replace(/<run_command\s*>[\s\S]*?(?:<\/run_command>|$)/g, '')
+                .replace(/<read_file\s*[^>]*>[\s\S]*?(?:<\/read_file>|$)/g, '')
+                .replace(/<search_code\s*>[\s\S]*?(?:<\/search_code>|$)/g, '')
+                .replace(/<write_file\s*[^>]*>[\s\S]*?(?:<\/write_file>|$)/g, '')
+                .replace(/<patch_file\s*[^>]*>[\s\S]*?(?:<\/patch_file>|$)/g, '')
+                .replace(/<patch_file_blocks\s*[^>]*>[\s\S]*?(?:<\/patch_file_blocks>|$)/g, '')
+                .replace(/<list_dir\s*[^>]*>[\s\S]*?(?:<\/list_dir>|$)/g, '')
+                .replace(/<git_status\s*[^>]*>[\s\S]*?(?:<\/git_status>|$)/g, '')
+                .replace(/<diagnostics\s*[^>]*>[\s\S]*?(?:<\/diagnostics>|$)/g, '')
+                .replace(/<move_file\s*[^>]*>[\s\S]*?(?:<\/move_file>|$)/g, '')
+                .replace(/<(?:path_)?question\s*[^>]*\/>/g, '')
+                .replace(/<(?:path_)?question\s*[^>]*>[\s\S]*?(?:<\/(?:path_)?question>|$)/g, '')
+                .trim();
+
+              if (prose) {
+                conversationMarkdown += `### 🤖 Agent\n${prose}\n\n`;
+              }
+
+              const toolCallRegex = /<(run_command|read_file|write_file|patch_file|patch_file_blocks|search_code|list_dir|git_status|diagnostics|move_file|question|path_question)(\s+[^>]*?)(?:>([\s\S]*?)(?:<\/\1>|$)|\s*\/>)/g;
+              let toolMatch;
+              while ((toolMatch = toolCallRegex.exec(msg.content)) !== null) {
+                const toolName = toolMatch[1];
+                let toolOutputContent = '';
+                
+                for (let k = idx + 1; k < conversationHistory.length; k++) {
+                  if (conversationHistory[k].role === 'user' && conversationHistory[k].content.includes('<tool_output>')) {
+                    toolOutputContent = conversationHistory[k].content;
+                    break;
+                  }
+                  if (conversationHistory[k].role === 'assistant') {
+                    break;
+                  }
+                }
+
+                let rawOutput = '';
+                const outputMatch = /<tool_output\s*>([\s\S]*?)<\/tool_output>/.exec(toolOutputContent);
+                if (outputMatch) {
+                  rawOutput = outputMatch[1].trim();
+                } else {
+                  rawOutput = toolOutputContent.trim();
+                }
+
+                if (toolName === 'write_file') {
+                  let file = '';
+                  const pathAttr = /path=["']([^"']+)["']/.exec(toolMatch[2]);
+                  let fileContent = '';
+                  if (pathAttr) {
+                    file = pathAttr[1];
+                    fileContent = toolMatch[3] || '';
+                  } else {
+                    const lines = (toolMatch[3] || '').trim().split('\n');
+                    if (lines.length > 0) {
+                      file = lines[0].trim();
+                      fileContent = lines.slice(1).join('\n');
+                    }
+                  }
+
+                  let resultStatus = '✓ success';
+                  if (rawOutput.includes('Error') || rawOutput.startsWith('Error')) {
+                    resultStatus = '✗ failure';
+                  }
+
+                  const lineCount = fileContent.split('\n').length;
+                  conversationMarkdown += `### 🔧 Tool Call: write_file\n`;
+                  conversationMarkdown += `**File:** ${file}\n`;
+                  conversationMarkdown += `**Result:** ${resultStatus}\n\n`;
+
+                  if (lineCount <= 500) {
+                    const lang = getLanguageFromFilename(file);
+                    const redactedContent = redactWithNotice(fileContent);
+                    conversationMarkdown += `\`\`\`${lang}\n${redactedContent}\n\`\`\`\n\n`;
+                  } else {
+                    conversationMarkdown += `[File content omitted — ${lineCount} lines. See ${file}]\n\n`;
+                  }
+                } else if (toolName === 'run_command') {
+                  const cmd = (toolMatch[3] || '').trim();
+                  const cmdResult = parseCommandResult(rawOutput);
+
+                  const outputLines = rawOutput.split('\n');
+                  let truncatedOutput = outputLines.slice(0, 100).join('\n');
+                  if (outputLines.length > 100) {
+                    truncatedOutput += `\n\n[Output truncated to 100 lines — ${outputLines.length - 100} lines omitted]`;
+                  }
+                  const redactedOutput = redactWithNotice(truncatedOutput);
+
+                  conversationMarkdown += `### 🔧 Tool Call: run_command\n`;
+                  conversationMarkdown += `**Command:** \`${cmd}\`\n`;
+                  conversationMarkdown += `**Result:** ${cmdResult.status}\n`;
+                  conversationMarkdown += `**Output:**\n\`\`\`\n${redactedOutput}\n\`\`\`\n\n`;
+                } else {
+                  let details = '';
+                  if (toolName === 'patch_file' || toolName === 'patch_file_blocks' || toolName === 'read_file') {
+                    const pathAttr = /path=["']([^"']+)["']/.exec(toolMatch[2]);
+                    if (pathAttr) details = `**File:** ${pathAttr[1]}`;
+                  } else if (toolName === 'move_file') {
+                    const srcAttr = /source_path=["']([^"']+)["']/.exec(toolMatch[2]);
+                    const destAttr = /destination_path=["']([^"']+)["']/.exec(toolMatch[2]);
+                    if (srcAttr && destAttr) details = `**Source:** ${srcAttr[1]}\n**Destination:** ${destAttr[1]}`;
+                  } else if (toolName === 'search_code') {
+                    details = `**Query:** \`${(toolMatch[3] || '').trim()}\``;
+                  }
+
+                  let resultStatus = '✓ success';
+                  if (rawOutput.includes('Error') || rawOutput.startsWith('Error')) {
+                    resultStatus = '✗ failure';
+                  }
+
+                  conversationMarkdown += `### 🔧 Tool Call: ${toolName}\n`;
+                  if (details) {
+                    conversationMarkdown += `${details}\n`;
+                  }
+                  conversationMarkdown += `**Result:** ${resultStatus}\n\n`;
+                }
+              }
+            }
+          }
+
+          let metadataNotice = '';
+          if (secretsRedacted) {
+            metadataNotice = `\n> ⚠ Note: Secret patterns were automatically redacted from this export.\n`;
+          }
+
+          const exportMarkdown = `# Ruthen Session — ${fullDateStr}\n\n` +
+            `**Duration:** ${durationStr}\n` +
+            `**Messages:** ${conversationHistory.length}\n` +
+            `**Workspace:** ${workspaceRoot}\n` +
+            `**Model:** ${activeModel}\n` +
+            `**Exported:** ${exportTimestamp}\n` +
+            metadataNotice +
+            `\n---\n\n` +
+            `## Files Modified This Session\n\n` +
+            filesModifiedTable +
+            `\n\n` +
+            commandsRunTable +
+            `---\n\n` +
+            `## Full Conversation\n\n` +
+            conversationMarkdown;
+
+          try {
+            fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+            fs.writeFileSync(finalPath, exportMarkdown, 'utf8');
+            const stats = fs.statSync(finalPath);
+            const sizeKb = (stats.size / 1024).toFixed(0);
+
+            let displayPath = finalPath;
+            if (displayPath.startsWith(homeDir)) {
+              displayPath = '~' + displayPath.slice(homeDir.length);
+            }
+
+            console.log(chalk.green(`✓ Session exported to ${displayPath} (${sizeKb} KB)`));
+          } catch (e: any) {
+            console.error(chalk.red(`✗ Failed to write export file: ${e.message}`));
+          }
+
+          askQuestion();
+          return;
+        }
+
         if (command === '/files') {
           const allFiles = indexer['db'].getAllFiles();
           console.log(chalk.bold(`\nIndexed Files (${allFiles.length}):`));
@@ -3199,6 +3604,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           console.log(`  ${chalk.cyan('/models')}            - Switch the active Ollama model`);
           console.log(`  ${chalk.cyan('/thinking')}          - Toggle showing/hiding LLM thinking blocks`);
           console.log(`  ${chalk.cyan('/usage')}             - Show the context usage for the active model`);
+          console.log(`  ${chalk.cyan('/export [path]')}     - Export current session to a markdown file`);
           console.log(`  ${chalk.cyan('/preview')}           - Preview side-by-side diff of the last written file`);
           console.log(`  ${chalk.cyan('/changes')}           - View list of recently modified files`);
           console.log(`  ${chalk.cyan('/undo')}              - Revert the last file modification`);
