@@ -59,7 +59,11 @@ function hasRepetitionLoop(text: string): boolean {
     const chunk2 = text.slice(-2 * size, -size);
     const chunk1 = text.slice(-3 * size, -2 * size);
     if (chunk1 === chunk2 && chunk2 === chunk3) {
-      return true;
+      // Must contain at least one letter and have a character variety of at least 3 unique characters
+      // to avoid false positives on formatting lines (e.g. dashes, equals, spaces).
+      if (/[a-zA-Z]/.test(chunk3) && new Set(chunk3).size > 2) {
+        return true;
+      }
     }
   }
 
@@ -68,7 +72,8 @@ function hasRepetitionLoop(text: string): boolean {
   if (lines.length >= 4) {
     const last4 = lines.slice(-4);
     if (last4[0] === last4[1] && last4[1] === last4[2] && last4[2] === last4[3]) {
-      if (last4[0].length >= 3) {
+      const line = last4[0];
+      if (line.length >= 3 && /[a-zA-Z]/.test(line) && new Set(line).size > 2) {
         return true;
       }
     }
