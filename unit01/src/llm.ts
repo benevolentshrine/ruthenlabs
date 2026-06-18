@@ -164,5 +164,65 @@ export class OllamaClient {
       throw err;
     }
   }
+
+  /**
+   * Create a model in Ollama from a local GGUF file path.
+   */
+  public async createModel(modelName: string, ggufPath: string, onStatus?: (status: string) => void): Promise<void> {
+    const res = await fetch(`${this.host}/api/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: modelName,
+        modelfile: `FROM ${ggufPath}\nPARAMETER temperature 1.0\nPARAMETER top_p 0.95`
+      })
+    });
+
+    if (!res.ok) {
+      throw new Error(`Ollama model creation failed: ${res.statusText}`);
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      throw new Error('Could not get response stream reader');
+    }
+
+    try {
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const json = JSON.parse(line) as { status?: string; error?: string };
+            if (json.error) {
+              throw new Error(json.error);
+            }
+            if (json.status && onStatus) {
+              onStatus(json.status);
+            }
+          } catch (e: any) {
+            if (e.message && (e.message.includes('Ollama model creation failed') || e.message.includes('failed to open') || e.message.includes('error'))) {
+              throw e;
+            }
+            // ignore parsing error for malformed lines
+          }
+        }
+      }
+    } catch (err) {
+      try {
+        await reader.cancel();
+      } catch (_) {}
+      throw err;
+    }
+  }
 }
 export const ollama = new OllamaClient();
