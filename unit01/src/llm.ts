@@ -173,8 +173,9 @@ export class OllamaClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: modelName,
-        modelfile: `FROM ${ggufPath}\nPARAMETER temperature 1.0\nPARAMETER top_p 0.95`
+        model: modelName,
+        name: modelName, // backward compatibility
+        modelfile: `FROM "${ggufPath}"\nPARAMETER temperature 1.0\nPARAMETER top_p 0.95`
       })
     });
 
