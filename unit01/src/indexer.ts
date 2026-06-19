@@ -50,8 +50,11 @@ export class DirectiveIndexer {
   /**
    * Run initial codebase scan, prune deleted files, generate initial repo map, and start background watcher.
    */
-  public async initialize() {
-    console.log(`  ${themeGreen('index')} workspace: ${this.workspaceRoot}`);
+  public async initialize(options?: { silent?: boolean; onFileIndexed?: (relPath: string) => void }) {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      console.log(`  ${themeGreen('index')} workspace: ${this.workspaceRoot}`);
+    }
     
     const scannedFiles = new Set<string>();
 
@@ -88,7 +91,7 @@ export class DirectiveIndexer {
             }
 
             scannedFiles.add(fullPath);
-            this.processFileOnStartup(fullPath, stat);
+            this.processFileOnStartup(fullPath, stat, options);
           } catch (err) {
             console.error(`Failed to process file ${fullPath}:`, err);
           }
@@ -105,7 +108,9 @@ export class DirectiveIndexer {
     const allDbFiles = this.db.getAllFiles();
     for (const dbFile of allDbFiles) {
       if (!scannedFiles.has(dbFile.path)) {
-        console.log(`  ${themeGreen('index')} Pruning: ${dbFile.path}`);
+        if (!silent) {
+          console.log(`  ${themeGreen('index')} Pruning: ${dbFile.path}`);
+        }
         this.db.removeFile(dbFile.path);
       }
     }
@@ -124,22 +129,32 @@ export class DirectiveIndexer {
       }
     );
     this.watcher.start();
-    console.log(`  ${themeGreen('index')} Initial scan complete and background watcher started.`);
+    if (!silent) {
+      console.log(`  ${themeGreen('index')} Initial scan complete and background watcher started.`);
+    }
   }
 
-  private processFileOnStartup(filePath: string, stat: fs.Stats) {
+  private processFileOnStartup(filePath: string, stat: fs.Stats, options?: { silent?: boolean; onFileIndexed?: (relPath: string) => void }) {
     const relpath = path.relative(this.workspaceRoot, filePath);
+    const silent = options?.silent ?? false;
     try {
       const content = fs.readFileSync(filePath, 'utf-8');
       const hash = computeHash(content);
       const existing = this.db.getFile(filePath);
+
+      // Notify the indexing callback even if we skip re-chunking (to show scanning progress)
+      if (options?.onFileIndexed) {
+        options.onFileIndexed(relpath);
+      }
 
       // Skip re-chunking if hash is identical
       if (existing && existing.hash === hash) {
         return;
       }
 
-      console.log(`  ${themeGreen('index')} Indexing: ${relpath}`);
+      if (!silent) {
+        console.log(`  ${themeGreen('index')} Indexing: ${relpath}`);
+      }
       const chunks = chunkFile(filePath, relpath, content);
       
       this.db.upsertFile({

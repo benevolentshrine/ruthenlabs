@@ -268,7 +268,7 @@ export class DirectiveSandbox {
   private workspaceRoot: string;
   private loopDetector = new LoopDetector();
   private egressProxy: EgressProxy | null = null;
-  private proxyPort: number = 0;
+  public proxyPort: number = 0;
   private writtenFiles = new Set<string>();
   private sessionStartTime: number;
   private allowedPaths: AllowedPath[] = [];
@@ -418,7 +418,7 @@ export class DirectiveSandbox {
   /**
    * Initializes the Sandbox, starting the egress proxy.
    */
-  public async initialize(tier3Domains: string[] = []) {
+  public async initialize(tier3Domains: string[] = [], options?: { silent?: boolean }) {
     // Collect allowed domains (Tier 1 + Tier 2 + Tier 3)
     const allowed = new Set<string>(TIER1_DOMAINS);
     
@@ -435,7 +435,9 @@ export class DirectiveSandbox {
 
     this.egressProxy = new EgressProxy(allowed);
     this.proxyPort = await this.egressProxy.start();
-    console.log(`  ${themePrimary('sandbox')} Egress proxy started on port ${this.proxyPort}`);
+    if (!options?.silent) {
+      console.log(`  ${themePrimary('sandbox')} Egress proxy started on port ${this.proxyPort}`);
+    }
   }
 
   /**
