@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { homedir } from 'os';
 import chalk from 'chalk';
+import { printSystemMessage } from './ui.js';
 import {
   parseWriteFile,
   parsePatchFile,
@@ -184,6 +185,6 @@ export function runStalenessCheck(history: { role: string; content: string }[], 
   }
 
   if (missingCount >= 3) {
-    console.warn(chalk.yellow('⚠ Warning: This session references files that no longer exist in the workspace. The workspace may have changed significantly since this session.'));
+    printSystemMessage('warn', 'This session references files that no longer exist in the workspace. The workspace may have changed significantly since this session.');
   }
 }

@@ -6,15 +6,17 @@ import { marked } from 'marked';
 import { markedTerminal } from 'marked-terminal';
 import { highlight as highlightCli } from 'cli-highlight';
 
-// Theme definition (Glacier & Steel Blue theme)
-export const themePrimary = chalk.hex('#60A5FA'); // Glacier Steel Blue
-export const themeBorder = chalk.hex('#334155'); // Slate Blue for structural borders
-export const themeGreen = chalk.hex('#2DD4BF'); // Icy Teal / Mint for success
-export const themeGreenLight = chalk.hex('#93C5FD'); // Sky Mist for info
-export const themeOrange = chalk.hex('#F59E0B'); // Warm Amber for progress
-export const themeGray = chalk.hex('#64748B'); // Cool Slate Gray
-export const themeRed = chalk.hex('#FB7185'); // Icy Rose / Crimson for errors
-export const themeBgDeep = '#0F172A'; // Slate 900 for dark background highlights
+// Theme: Amber & Silver (Complementary Warm)
+export const themePrimary     = chalk.hex('#E2E8F0'); // Silver Slate — structure, identity
+export const themeBorder      = chalk.hex('#475569'); // Muted Slate — rules, borders
+export const themeGold        = chalk.hex('#F59E0B'); // Amber Gold — active, selected, spinner
+export const themeOrange      = chalk.hex('#F59E0B'); // alias for themeGold (backwards compat)
+export const themeAccent      = chalk.hex('#F97316'); // Warm Orange — success, AI voice, status
+export const themeAccentLight = chalk.hex('#FAB387'); // Peach — info, inline code
+export const themeGray        = chalk.hex('#64748B'); // Muted Slate — secondary text
+export const themeRed         = chalk.hex('#F87171'); // Coral Red — errors, failures
+export const themeBg          = '#1E293B';            // Base Slate — code bg
+export const themeBgDeep      = '#0F172A';            // Dark Slate — background
 
 export function stripAnsi(str: string): string {
   return str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
@@ -88,73 +90,71 @@ export function getRelativeTime(timestamp: number): string {
   return `${days} day${days > 1 ? 's' : ''} ago`;
 }
 
-export class ThinkingSpinner {
-  private words: string[];
-  private intervalId: NodeJS.Timeout | null = null;
-  private currentWord = '';
-  private dotCount = 0;
-  private active = false;
+// Sanskrit characters for cascade animation
+const SANSKRIT_CHARS = 'अआइईउऊएऐओऔकखगघचछजझटठडढणतथदधनपफबभमयरलवशषसह'.split('');
+// Gold gradient palette for cascade (warm → cool → warm)
+const CASCADE_COLORS = ['#F59E0B', '#D97706', '#B45309', '#92400E', '#B45309', '#D97706', '#F59E0B', '#FCD34D'];
 
-  constructor() {
-    this.words = [
-      "Thinking", "Bamboozling", "Fantasizing", "Synthesizing", "Compiling",
-      "Refactoring", "Indexing", "Pondering", "Consulting the oracle", "Generating bugs",
-      "Solving P vs NP", "Baking cookies", "Brewing coffee", "Hacking the mainframe", "Optimizing the indexer",
-      "Running Seatbelt", "Escaping FTS5 queries", "Counting tokens", "Compiling TypeScript", "Tuning hyper-parameters",
-      "Analyzing AST", "Diffing changes", "Redacting secrets", "Truncating logs", "Checking egress proxy",
-      "Simulating consciousness", "Aligning vectors", "Querying SQLite", "Debouncing file watch", "Garbage collecting",
-      "Calibrating flux capacitor", "Deciphering codebase", "Caching responses", "Minifying bundle", "Resolving dependencies",
-      "Bootstrapping sandbox", "Parsing signatures", "Building repo map", "Invoking tree-sitter", "Spawning processes",
-      "Running tests", "Reading database", "Calculating embeddings", "Reranking chunks", "Searching FTS index",
-      "Undoing last command", "Clearing loop history", "Checking package-lock.json", "Analyzing imports", "Scanning workspace",
-      "Polishing UI", "Centering mascot", "Drawing steel blue boxes", "Reflowing text", "Redrawing border",
-      "Adjusting seatbelt profile", "Starting bubblewrap", "Verifying egress whitelist", "Compacting chat history", "Streaming tokens",
-      "Detecting infinite loops", "Taming local models", "Optimizing context size", "Loading weights", "Quantizing gradients",
-      "Finetuning neurons", "Activating self-repair", "Debugging compiler errors", "Linting files", "Locating source maps",
-      "Preheating CPU", "Spinning up sandbox", "Allocating virtual memory", "Checking file descriptors", "Enforcing ulimits",
-      "Resolving symlinks", "Sanitizing input", "Redacting API keys", "Reading git branch", "Estimating token usage",
-      "Formatting markdown", "Injecting system prompt", "Filtering parameters", "Hashing file changes", "Tracing call graph",
-      "Calculating semantic similarity", "Generating code snippets", "Validating syntax", "Normalizing text", "Splitting chunks",
-      "Pruning repository map", "Benchmarking performance", "Reducing latency", "Warming cache", "Clearing screen down",
-      "Moving cursor", "Styling terminal", "Loading qwen2.5-coder", "Running Ollama", "Parsing JSON response",
-      "Decrypting secrets", "Inspecting heap memory", "Detecting memory leaks", "Evaluating Seatbelt rules", "Restoring backup",
-      "Compiling WebAssembly", "Optimizing AST queries", "Formatting tables", "Coloring console logs", "Handling resize event",
-      "Querying model info", "Finding context length", "Checking git status", "Fetching git diff", "Parsing CLI arguments",
-      "Generating shell script", "Managing background tasks", "Listening to stdin", "Handling exit signals", "Graceful shutdown",
-      "Resolving relative paths", "Replacing ANSI escapes", "Stripping XML tags", "Formatting bullet points", "Configuring marked options",
-      "Setting chalk colors", "Wrapping long lines", "Padding code blocks", "Tuning temperature", "Generating next token",
-      "Predicting next word", "Calculating probabilities", "Filtering logits", "Sampling completions", "Polishing code block padding",
-      "Centering welcome banner", "Making UI look premium", "Wowing the user", "Avoiding generic red and green", "Tailoring HSL colors",
-      "Adding micro-animations", "Implementing modern design", "Flipping agency model", "Preparing workspace", "Tracking deltas",
-      "Pruning FTS index", "Re-indexing modified files", "Compacting database", "Vacuuming SQLite", "Flushing write-ahead log",
-      "Resolving biological ontologies", "Searching PDB templates", "Calling foldseek API", "Extracting genetic variant effects",
-      "Retrieving clinical trials", "Parsing dbSNP database", "Extracting UniProt accession attributes", "Querying ChEMBL properties",
-      "Fetching GTEx tissue expressions", "Looking up string interactions", "Loading UCSC conservation scores", "Distilling workflow into reusable skill"
-    ];
-    this.words = this.words.sort(() => Math.random() - 0.5);
-  }
+export class ThinkingSpinner {
+  private intervalId: NodeJS.Timeout | null = null;
+  private active = false;
+  private displayChars: string[] = [];
+  private charIndex = 0;
+  private tick = 0;
+  private phase: 'cascade' | 'ambient' = 'cascade';
+  private ambientBrightness = 50;
+  private ambientDir = 1;
 
   public start() {
     if (this.active) return;
     this.active = true;
-    this.currentWord = this.words[Math.floor(Math.random() * this.words.length)];
-    this.dotCount = 0;
-    
-    let ticks = 0;
+    this.displayChars = [];
+    this.charIndex = Math.floor(Math.random() * SANSKRIT_CHARS.length);
+    this.tick = 0;
+    this.phase = 'cascade';
+    this.ambientBrightness = 50;
+
     this.intervalId = setInterval(() => {
-      ticks++;
-      if (ticks % 10 === 0) {
-        this.currentWord = this.words[Math.floor(Math.random() * this.words.length)];
+      this.tick++;
+
+      // Switch to ambient heartbeat after ~1.2s (15 ticks × 80ms)
+      if (this.tick > 15 && this.phase === 'cascade') {
+        this.phase = 'ambient';
       }
-      this.dotCount = (this.dotCount + 1) % 4;
-      
-      const dots = ".".repeat(this.dotCount).padEnd(3, " ");
-      const text = ` ${themeOrange('●')} ${themeGray(this.currentWord + dots)}`;
-      
-      readline.cursorTo(process.stdout, 0);
-      readline.clearLine(process.stdout, 0);
-      process.stdout.write(text);
-    }, 200);
+
+      if (this.phase === 'cascade') {
+        // Add next Sanskrit char, keep max 8 visible (scrolling window)
+        this.displayChars.push(SANSKRIT_CHARS[this.charIndex % SANSKRIT_CHARS.length]);
+        this.charIndex++;
+        if (this.displayChars.length > 8) this.displayChars.shift();
+
+        // Render with warm gold gradient across the cascade
+        let text = '  ';
+        this.displayChars.forEach((char, i) => {
+          text += chalk.hex(CASCADE_COLORS[i % CASCADE_COLORS.length])(char);
+        });
+
+        readline.cursorTo(process.stdout, 0);
+        readline.clearLine(process.stdout, 0);
+        process.stdout.write(text);
+      } else {
+        // Ambient: single Sanskrit char pulsing between dim and bright warm orange
+        this.ambientBrightness += this.ambientDir * 15;
+        if (this.ambientBrightness >= 100) this.ambientDir = -1;
+        if (this.ambientBrightness <= 10) this.ambientDir = 1;
+
+        const bright = Math.max(10, Math.min(100, this.ambientBrightness));
+        const r = Math.round(249 * bright / 100);
+        const g = Math.round(115 * bright / 100);
+        const b = Math.round(22 * bright / 100);
+        const char = this.displayChars[this.displayChars.length - 1] || 'ॐ';
+        const text = `  \u001b[38;2;${r};${g};${b}m${char}\u001b[0m`;
+
+        readline.cursorTo(process.stdout, 0);
+        readline.clearLine(process.stdout, 0);
+        process.stdout.write(text);
+      }
+    }, 80);
   }
 
   public stop() {
@@ -173,97 +173,81 @@ export function interactiveSelect(title: string, options: string[]): Promise<num
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const stdout = process.stdout;
-    
+    const cols = process.stdout.columns || 80;
+
     if (typeof stdin.setRawMode !== 'function') {
       // Non-TTY fallback
       console.log(`\n${themePrimary.bold(title)}`);
-      options.forEach((opt, idx) => console.log(`  ${idx + 1}. ${opt}`));
+      console.log(themeBorder('─'.repeat(cols)));
+      options.forEach((opt, idx) => console.log(`  ${themeGold('❯')} ${themeGray(opt)}`));
       resolve(0);
       return;
     }
-    
+
     let selectedIndex = 0;
     const wasRaw = stdin.isRaw;
     stdin.setRawMode(true);
     stdin.resume();
     readline.emitKeypressEvents(stdin);
-    
-    // Hide cursor
-    stdout.write('\u001b[?25l');
-    
+    stdout.write('\u001b[?25l'); // hide cursor
+
     const render = () => {
       stdout.write('\r\n' + themePrimary.bold(title) + '\r\n');
+      stdout.write(themeBorder('─'.repeat(cols)) + '\r\n');
       options.forEach((opt, idx) => {
         if (idx === selectedIndex) {
-          stdout.write(`  ${themeGreen('●')} ${chalk.bgHex('#6B21A8').white(' ' + opt + ' ')}\r\n`);
+          stdout.write(`  ${themeGold('❯')} ${chalk.hex('#E2E8F0').bold(opt)}\r\n`);
         } else {
-          stdout.write(`    ${chalk.gray(opt)}\r\n`);
+          stdout.write(`    ${themeGray(opt)}\r\n`);
         }
       });
     };
-    
+
     const clear = () => {
-      const linesToMove = options.length + 2;
+      const linesToMove = options.length + 3; // title + rule + options
       readline.moveCursor(stdout, 0, -linesToMove);
       readline.cursorTo(stdout, 0);
       readline.clearScreenDown(stdout);
     };
-    
+
     render();
-    
+
     const onKeypress = (str: any, key: any) => {
-      if (key) {
-        if (key.ctrl && key.name === 'c') {
-          cleanup();
-          process.exit(0);
-        }
-        
-        if (key.name === 'escape' || key.name === 'q') {
-          cleanup();
-          resolve(-1);
-        } else if (key.name === 'up') {
-          selectedIndex = (selectedIndex - 1 + options.length) % options.length;
-          clear();
-          render();
-        } else if (key.name === 'down') {
-          selectedIndex = (selectedIndex + 1) % options.length;
-          clear();
-          render();
-        } else if (key.name === 'return' || key.name === 'enter') {
-          cleanup();
-          resolve(selectedIndex);
-        }
-      }
+      if (!key) return;
+      if (key.ctrl && key.name === 'c') { cleanup(); process.exit(0); }
+      if (key.name === 'escape' || key.name === 'q') { cleanup(); resolve(-1); }
+      else if (key.name === 'up') { selectedIndex = (selectedIndex - 1 + options.length) % options.length; clear(); render(); }
+      else if (key.name === 'down') { selectedIndex = (selectedIndex + 1) % options.length; clear(); render(); }
+      else if (key.name === 'return' || key.name === 'enter') { cleanup(); resolve(selectedIndex); }
     };
-    
+
     const cleanup = () => {
       stdin.removeListener('keypress', onKeypress);
       stdin.setRawMode(wasRaw);
-      // Restore cursor
-      stdout.write('\u001b[?25h');
+      stdout.write('\u001b[?25h'); // restore cursor
       clear();
     };
-    
+
     stdin.on('keypress', onKeypress);
   });
 }
 
-// Setup marked renderer
+// Setup marked renderer — Dark Ritual palette
 const markedRenderer = markedTerminal({
   heading: (text: string) => themePrimary.bold(text),
   firstHeading: (text: string) => themePrimary.bold.underline(text),
-  blockquote: chalk.gray.italic,
-  listitem: (text: string) => text,
+  blockquote: chalk.hex('#64748B').italic,
+  listitem: (text: string) => `${themeGold('·')} ${text}`,
   tableOptions: {
     style: {
-      head: ['magenta'],
+      head: ['cyan'],
       border: ['gray']
     }
   },
-  codespan: (text: string) => themeGreenLight.bgHex(themeBgDeep)(' ' + text + ' '),
+  codespan: (text: string) => themeAccentLight.bgHex(themeBg)(' ' + text + ' '),
 });
 
-// Override the code block renderer to use the beautiful padded dark block layout
+// Code block renderer — language label on top rule, dark bg body, bottom rule
 // @ts-ignore
 markedRenderer.renderer.code = function (code: any, lang?: string) {
   let text = '';
@@ -280,30 +264,24 @@ markedRenderer.renderer.code = function (code: any, lang?: string) {
   try {
     highlighted = highlightCli(text, { language });
   } catch (e) {
-    highlighted = chalk.yellow(text);
+    highlighted = themeAccentLight(text);
   }
 
-  const lines = highlighted.split('\n');
-  const stripAnsiLocal = (str: string) => str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
-  const visualLengths = lines.map(line => stripAnsiLocal(line.replace(/\t/g, '    ')).length);
-  const maxLineLen = Math.max(...visualLengths, 0);
-
   const cols = process.stdout.columns || 80;
-  const maxCodeWidth = cols - 8;
-  const padWidth = Math.min(Math.max(maxLineLen + 4, 40), maxCodeWidth);
+  const ruleLen = Math.max(cols - 4, 20);
 
-  const bgOpen = '\u001b[48;2;30;30;30m'; // #1E1E1E background
-  const ansiReset = '\u001b[0m'; // Full reset
+  // Top rule: language label in themePrimary, rule fills the rest
+  const topRule = '  ' + (language
+    ? themePrimary(language) + ' ' + themeBorder('─'.repeat(Math.max(ruleLen - language.length - 1, 0)))
+    : themeBorder('─'.repeat(ruleLen)));
 
-  const topBottomPadding = '  ' + bgOpen + ' '.repeat(padWidth) + ansiReset;
-  const styledLines = lines.map(line => {
-    const expanded = line.replace(/\t/g, '    ');
-    const len = stripAnsiLocal(expanded).length;
-    const padding = ' '.repeat(Math.max(padWidth - len, 0));
-    return '  ' + bgOpen + line.replaceAll(ansiReset, ansiReset + bgOpen) + padding + ansiReset;
+  const styledLines = highlighted.split('\n').map(line => {
+    return `  ${line.replace(/\t/g, '    ')}`;
   });
 
-  return '\n' + [topBottomPadding, ...styledLines, topBottomPadding].join('\n') + '\n\n';
+  const bottomRule = '  ' + themeBorder('─'.repeat(ruleLen));
+
+  return '\n' + topRule + '\n' + styledLines.join('\n') + '\n' + bottomRule + '\n\n';
 };
 
 marked.use(markedRenderer);
@@ -368,196 +346,399 @@ export function diffLines(oldLines: string[], newLines: string[]): { type: 'adde
   return diff;
 }
 
+// Unified diff renderer — replaces the old side-by-side layout
 export function renderSideBySideDiff(original: string, modified: string, language: string, filePath: string) {
-  const borderCol = themeBorder;
-  const cols = Math.max(process.stdout.columns || 80, 80);
-  const sideWidth = Math.floor((cols - 9) / 2);
-  
-  const oldRaw = original.split('\n');
-  const newRaw = modified.split('\n');
-  
-  let oldHighlighted: string[] = [];
-  let newHighlighted: string[] = [];
-  
-  try {
-    oldHighlighted = highlightCli(original, { language }).split('\n');
-    newHighlighted = highlightCli(modified, { language }).split('\n');
-  } catch (e) {
-    oldHighlighted = oldRaw.map(l => chalk.yellow(l));
-    newHighlighted = newRaw.map(l => chalk.yellow(l));
-  }
-  
-  const diff = diffLines(oldRaw, newRaw);
-  const rows: {
-    left: { text: string; type: 'unchanged' | 'removed' | 'empty'; rawLen: number };
-    right: { text: string; type: 'unchanged' | 'added' | 'empty'; rawLen: number };
-  }[] = [];
-  let oldIdx = 0, newIdx = 0, idx = 0;
-  
-  while (idx < diff.length) {
-    if (diff[idx].type === 'unchanged') {
-      rows.push({
-        left: { text: oldHighlighted[oldIdx] || '', type: 'unchanged', rawLen: (oldRaw[oldIdx] || '').length },
-        right: { text: newHighlighted[newIdx] || '', type: 'unchanged', rawLen: (newRaw[newIdx] || '').length }
-      });
-      oldIdx++;
-      newIdx++;
-      idx++;
+  const cols = Math.max(process.stdout.columns || 80, 40);
+  const rule = '─'.repeat(cols - 2);
+
+  const oldLines = original.split('\n');
+  const newLines = modified.split('\n');
+  const diff = diffLines(oldLines, newLines);
+
+  console.log('\n' + themePrimary(path.basename(filePath)) + ' ' + themeGray('· modified'));
+  console.log(themeBorder(rule));
+
+  let oldLineNum = 1, newLineNum = 1;
+  for (const entry of diff) {
+    const numWidth = 4;
+    if (entry.type === 'removed') {
+      const n = oldLineNum.toString().padStart(numWidth, ' ');
+      console.log(themeGray(n) + ' ' + chalk.hex('#F87171')('- ' + entry.text));
+      oldLineNum++;
+    } else if (entry.type === 'added') {
+      const n = newLineNum.toString().padStart(numWidth, ' ');
+      console.log(themeGray(n) + ' ' + chalk.hex('#34D399')('+ ' + entry.text));
+      newLineNum++;
     } else {
-      const removed: { text: string; rawLen: number }[] = [];
-      const added: { text: string; rawLen: number }[] = [];
-      while (idx < diff.length && diff[idx].type !== 'unchanged') {
-        if (diff[idx].type === 'removed') {
-          removed.push({ text: oldHighlighted[oldIdx] || '', rawLen: (oldRaw[oldIdx] || '').length });
-          oldIdx++;
-        } else {
-          added.push({ text: newHighlighted[newIdx] || '', rawLen: (newRaw[newIdx] || '').length });
-          newIdx++;
-        }
-        idx++;
-      }
-      const maxLen = Math.max(removed.length, added.length);
-      for (let k = 0; k < maxLen; k++) {
-        rows.push({
-          left: k < removed.length ? { text: removed[k].text, type: 'removed', rawLen: removed[k].rawLen } : { text: '', type: 'empty', rawLen: 0 },
-          right: k < added.length ? { text: added[k].text, type: 'added', rawLen: added[k].rawLen } : { text: '', type: 'empty', rawLen: 0 }
-        });
-      }
+      const n = newLineNum.toString().padStart(numWidth, ' ');
+      console.log(themeGray(n + '   ' + entry.text));
+      oldLineNum++;
+      newLineNum++;
     }
   }
-  
-  const bgRemoved = '\u001b[48;2;80;30;30m'; // #501E1E (slightly brighter red)
-  const bgAdded = '\u001b[48;2;30;80;30m'; // #1E501E (slightly brighter green)
-  const bgUnchanged = '\u001b[48;2;25;25;25m'; // #191919 (dark gray)
-  const ansiReset = '\u001b[0m';
-  
-  console.log('\n' + borderCol('┌' + '─'.repeat(sideWidth + 2) + '┬' + '─'.repeat(sideWidth + 2) + '┐'));
-  const leftHeader = `Original: ${path.basename(filePath)}`.substring(0, sideWidth);
-  const rightHeader = `Modified: ${path.basename(filePath)}`.substring(0, sideWidth);
-  console.log(borderCol('│ ') + chalk.bold.gray(leftHeader.padEnd(sideWidth)) + borderCol(' │ ') + chalk.bold.green(rightHeader.padEnd(sideWidth)) + borderCol(' │'));
-  console.log(borderCol('├' + '─'.repeat(sideWidth + 2) + '┼' + '─'.repeat(sideWidth + 2) + '┤'));
-  
-  let leftLineNum = 1;
-  let rightLineNum = 1;
-  
-  for (const row of rows) {
-    let leftStyled: string, rightStyled: string;
-    
-    // Left Column (Original/Removed)
-    if (row.left.type === 'empty') {
-      leftStyled = bgUnchanged + '    ' + chalk.gray(' │ ') + ' '.repeat(sideWidth - 8) + ansiReset;
-    } else {
-      const bg = row.left.type === 'removed' ? bgRemoved : bgUnchanged;
-      const prefix = row.left.type === 'removed' ? chalk.red('- ') : '  ';
-      const numStr = leftLineNum.toString().padStart(4, ' ');
-      leftLineNum++;
-      
-      const maxTextWidth = sideWidth - 8;
-      const expanded = row.left.text.replaceAll('\t', '    ');
-      const truncated = truncateAnsiString(expanded, maxTextWidth);
-      const visualLen = stripAnsi(truncated).length;
-      leftStyled = bg + chalk.gray(numStr) + chalk.gray(' │ ') + prefix + truncated.replaceAll(ansiReset, ansiReset + bg) + ' '.repeat(Math.max(maxTextWidth - visualLen, 0)) + ansiReset;
-    }
-    
-    // Right Column (Modified/Added)
-    if (row.right.type === 'empty') {
-      rightStyled = bgUnchanged + '    ' + chalk.gray(' │ ') + ' '.repeat(sideWidth - 8) + ansiReset;
-    } else {
-      const bg = row.right.type === 'added' ? bgAdded : bgUnchanged;
-      const prefix = row.right.type === 'added' ? chalk.green('+ ') : '  ';
-      const numStr = rightLineNum.toString().padStart(4, ' ');
-      rightLineNum++;
-      
-      const maxTextWidth = sideWidth - 8;
-      const expanded = row.right.text.replaceAll('\t', '    ');
-      const truncated = truncateAnsiString(expanded, maxTextWidth);
-      const visualLen = stripAnsi(truncated).length;
-      rightStyled = bg + chalk.gray(numStr) + chalk.gray(' │ ') + prefix + truncated.replaceAll(ansiReset, ansiReset + bg) + ' '.repeat(Math.max(maxTextWidth - visualLen, 0)) + ansiReset;
-    }
-    
-    console.log(borderCol('│ ') + leftStyled + borderCol(' │ ') + rightStyled + borderCol(' │'));
-  }
-  console.log(borderCol('└' + '─'.repeat(sideWidth + 2) + '┴' + '─'.repeat(sideWidth + 2) + '┘') + '\n');
+
+  console.log(themeBorder(rule) + '\n');
 }
 
 export function renderNewFileBlock(content: string, language: string, filePath: string) {
-  const borderCol = themeBorder;
-  const cols = Math.max(process.stdout.columns || 80, 80);
-  const contentWidth = cols - 6;
-  
-  const rawLines = content.split('\n');
+  const cols = Math.max(process.stdout.columns || 80, 40);
+  const rule = '─'.repeat(cols - 2);
+
   let highlightedLines: string[] = [];
   try {
     highlightedLines = highlightCli(content, { language }).split('\n');
   } catch (e) {
-    highlightedLines = rawLines.map(l => chalk.yellow(l));
+    highlightedLines = content.split('\n').map(l => themeAccentLight(l));
   }
-  
-  const bgAdded = '\u001b[48;2;20;60;20m'; // #143C14
-  const ansiReset = '\u001b[0m';
-  
-  console.log('\n' + borderCol('┌' + '─'.repeat(contentWidth + 2) + '┐'));
-  const header = `New File: ${path.basename(filePath)}`.substring(0, contentWidth);
-  console.log(borderCol('│ ') + chalk.bold.green(header.padEnd(contentWidth)) + borderCol(' │'));
-  console.log(borderCol('├' + '─'.repeat(contentWidth + 2) + '┤'));
-  
+  const rawLines = content.split('\n');
+
+  console.log('\n' + themePrimary(path.basename(filePath)) + ' ' + themeGray('· new file'));
+  console.log(themeBorder(rule));
+
   for (let i = 0; i < rawLines.length; i++) {
     const lineNum = (i + 1).toString().padStart(4, ' ');
-    const maxTextWidth = contentWidth - 8;
-    const expanded = (highlightedLines[i] || '').replaceAll('\t', '    ');
-    const truncated = truncateAnsiString(expanded, maxTextWidth);
-    const visualLen = stripAnsi(truncated).length;
-    const clean = truncated.replaceAll(ansiReset, ansiReset + bgAdded);
-    const pad = ' '.repeat(Math.max(maxTextWidth - visualLen, 0));
-    
-    const styled = bgAdded + chalk.gray(lineNum) + chalk.gray(' │ ') + chalk.green('+ ') + clean + pad + ansiReset;
-    console.log(borderCol('│ ') + styled + borderCol(' │'));
+    const highlighted = (highlightedLines[i] || '').replace(/\t/g, '    ');
+    console.log(themeGray(lineNum) + '   ' + highlighted);
   }
-  console.log(borderCol('└' + '─'.repeat(contentWidth + 2) + '┘') + '\n');
+
+  console.log(themeBorder(rule) + '\n');
 }
 
 /**
- * Renders the clean Claude Code-style header (mascot on left, metadata on right)
+ * The Monument — Unit01 welcome banner
+ * ◈ mark → vertical line → spaced wordmark → metadata rule
  */
 export function printWelcomeBanner(workspaceRoot: string, modelName: string, contextLimit: number, fileCount: number) {
-  const cols = process.stdout.columns || 80;
+  const ctxK = contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k ctx` : `${contextLimit} ctx`;
+  const metaParts = [modelName, ctxK, workspaceRoot, `${fileCount} files`].filter(Boolean);
+  const meta = metaParts.join('  ·  ');
 
-  const mascotLines = [
-    '    ' + themePrimary('░░░░░░░░░░░') + '    ',
-    ' ' + themePrimary('░░░░') + ' ' + chalk.hex('#707070')('█████████') + ' ' + themePrimary('░░░░'),
-    themePrimary('░░░░') + '  ' + chalk.hex('#707070')('██') + ' ' + themeGreen('>') + '   ' + themeGreen('<') + ' ' + chalk.hex('#707070')('██') + '  ' + themePrimary('░░'),
-    themePrimary('░░') + '    ' + chalk.hex('#707070')('██') + '   ' + themeGreen('o') + '   ' + chalk.hex('#707070')('██') + '    ',
-    '      ' + chalk.hex('#707070')('█████████') + '      '
-  ];
+  console.log('');
+  console.log(themePrimary('  █     █  █▄  █  █  ███████  ▄████▄    ██ '));
+  console.log(themePrimary('  █     █  ███ █  █     █    ██    ██  ███ '));
+  console.log(themePrimary('  █     █  █ ███  █     █    ██    ██   ██ '));
+  console.log(themePrimary('  █     █  █  ██  █     █    ██    ██   ██ '));
+  console.log(themePrimary('   █████   █   █  █     █     ▀████▀    ██ '));
+  console.log('');
+  console.log('  ' + themeGray(meta));
+  console.log('');
+}
 
-  const infoLines = [
-    themePrimary.bold('Unit01') + ' ' + themeGreen('v1.0.0'),
-    chalk.bold('Model') + '       ' + `${modelName} (${themeGreen(contextLimit.toLocaleString())} ctx)`,
-    chalk.bold('Workspace') + '   ' + `${workspaceRoot} (${themeGreen(fileCount)} files)`
-  ];
+/**
+ * Prints a ◈ type · message system notification.
+ * type: 'error' | 'warn' | 'guard' | 'info' | 'stop'
+ */
+export function printSystemMessage(type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) {
+  const colorMap: Record<string, (s: string) => string> = {
+    error: chalk.hex('#F87171'),
+    stop:  chalk.hex('#F87171'),
+    warn:  chalk.hex('#F59E0B'),
+    guard: chalk.hex('#F59E0B'),
+    info:  chalk.hex('#38BDF8'),
+  };
+  const col = colorMap[type] || themeGray;
+  console.log(col(`  ◈ ${type}`) + themeGray('  ·  ') + col(message));
+}
 
-  const maxInfoLen = Math.max(...infoLines.map(l => stripAnsi(l).length));
-  const alignedInfo = infoLines.map(line => {
-    const len = stripAnsi(line).length;
-    return line + ' '.repeat(maxInfoLen - len);
+/**
+ * Prints a tool result line using the standard ⎿  glyph.
+ */
+export function printToolResult(status: 'success' | 'failure' | 'skipped', message: string) {
+  const col = status === 'success' ? themeAccent : (status === 'failure' ? themeRed : themeGray);
+  console.log(themeGray('  ⎿  ') + col(message));
+}
+
+/**
+ * Interactive prompt helper for file writes (Component #8).
+ * Supports hotkeys and left/right navigation, clears screen on confirm/cancel.
+ */
+export function interactiveConfirmWrite(filePath: string, lineCount: number, actionVerb: 'write' | 'create' | 'modify'): Promise<'y' | 'n' | 'p'> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+
+    const fileGlyph = ''; // Nerd Font file glyph
+    const title = `  ${fileGlyph}  ${actionVerb}  ${filePath}  ·  ${lineCount} lines`;
+    const titleLen = stripAnsi(title).length;
+    const rule = '  ' + '─'.repeat(Math.max(titleLen - 2, 20));
+
+    if (typeof stdin.setRawMode !== 'function') {
+      // Non-TTY fallback
+      console.log('\n' + title);
+      console.log(themeBorder(rule));
+      console.log('  [y] yes    [n] no    [p] preview diff');
+      resolve('y');
+      return;
+    }
+
+    const options = [
+      { key: 'y', label: 'yes' },
+      { key: 'n', label: 'no' },
+      { key: 'p', label: 'preview diff' }
+    ];
+    let selectedIndex = 0;
+    const wasRaw = stdin.isRaw;
+    stdin.setRawMode(true);
+    stdin.resume();
+    readline.emitKeypressEvents(stdin);
+    stdout.write('\u001b[?25l'); // hide cursor
+
+    const render = () => {
+      stdout.write('\r\n' + title + '\r\n');
+      stdout.write(themeBorder(rule) + '\r\n');
+      
+      const optStrings = options.map((opt, idx) => {
+        if (idx === selectedIndex) {
+          return `${themeGold('[')}${chalk.hex('#E2E8F0').bold(opt.key)}${themeGold(']')} ${chalk.hex('#E2E8F0').bold(opt.label)}`;
+        } else {
+          return themeGray(`[${opt.key}] ${opt.label}`);
+        }
+      });
+      stdout.write('  ' + optStrings.join('    ') + '\r\n');
+    };
+
+    const clear = () => {
+      const linesToMove = 3; // title + rule + options
+      readline.moveCursor(stdout, 0, -linesToMove);
+      readline.cursorTo(stdout, 0);
+      readline.clearScreenDown(stdout);
+    };
+
+    render();
+
+    const onKeypress = (str: any, key: any) => {
+      if (!key) return;
+      if (key.ctrl && key.name === 'c') {
+        cleanup();
+        process.exit(0);
+      }
+      
+      const inputChar = (str || '').toLowerCase();
+      if (inputChar === 'y') {
+        cleanup();
+        resolve('y');
+      } else if (inputChar === 'n') {
+        cleanup();
+        resolve('n');
+      } else if (inputChar === 'p') {
+        cleanup();
+        resolve('p');
+      } else if (key.name === 'left') {
+        selectedIndex = (selectedIndex - 1 + options.length) % options.length;
+        clear();
+        render();
+      } else if (key.name === 'right') {
+        selectedIndex = (selectedIndex + 1) % options.length;
+        clear();
+        render();
+      } else if (key.name === 'return' || key.name === 'enter') {
+        cleanup();
+        resolve(options[selectedIndex].key as 'y' | 'n' | 'p');
+      }
+    };
+
+    const cleanup = () => {
+      stdin.removeListener('keypress', onKeypress);
+      stdin.setRawMode(wasRaw);
+      stdout.write('\u001b[?25h'); // restore cursor
+      clear();
+    };
+
+    stdin.on('keypress', onKeypress);
   });
+}
 
-  const contentLines = [
-    '',
-    ...mascotLines,
-    '',
-    ...alignedInfo,
-    ''
-  ];
+/**
+ * Contained prompt input zone (Components #4, #5, #19).
+ * Features live-updating inline autocomplete for slash commands, prompt symbol color pulse,
+ * and clears structural rules from terminal history upon submission.
+ */
+export function interactivePrompt(): Promise<string> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const stdout = process.stdout;
+    const cols = process.stdout.columns || 80;
 
-  console.log(themeBorder('┌' + '─'.repeat(cols - 2) + '┐'));
-  for (const line of contentLines) {
-    const len = stripAnsi(line).length;
-    const leftPad = Math.floor((cols - 2 - len) / 2);
-    const rightPad = (cols - 2 - len) - leftPad;
-    console.log(themeBorder('│') + ' '.repeat(leftPad) + line + ' '.repeat(rightPad) + themeBorder('│'));
-  }
-  console.log(themeBorder('└' + '─'.repeat(cols - 2) + '┘'));
+    if (typeof stdin.setRawMode !== 'function') {
+      const tempRl = readline.createInterface({
+        input: stdin,
+        output: stdout
+      });
+      tempRl.question(`  ❯ `, (answer) => {
+        tempRl.close();
+        resolve(answer);
+      });
+      return;
+    }
+
+    const wasRaw = stdin.isRaw;
+    stdin.setRawMode(true);
+    stdin.resume();
+    readline.emitKeypressEvents(stdin);
+    stdout.write('\u001b[?25l'); // hide cursor
+
+    let currentInput = '';
+    let cursorOffset = 0;
+    let showPopup = true;
+    let lastLinesPrinted = 0;
+    
+    // Prompt symbol color pulse state
+    let isGold = true;
+    const pulseTimer = setInterval(() => {
+      isGold = !isGold;
+      redraw();
+    }, 600);
+
+    const commands = [
+      '/models', '/thinking', '/status', '/usage', '/sessions', 
+      '/compact', '/clear', '/help', '/exit', '/quit', 
+      '/files', '/reindex', '/export', '/preview', '/changes', 
+      '/undo', '/search'
+    ];
+
+    const getPopupMatches = () => {
+      if (!showPopup || !currentInput.startsWith('/')) return [];
+      const query = currentInput.toLowerCase();
+      const all = commands.filter(c => c.startsWith(query));
+      
+      const filtered: string[] = [];
+      let currentLen = 6; // visual indent + border │
+      for (const cmd of all) {
+        const cmdLen = cmd.length + 4; // command name + space padding
+        if (currentLen + cmdLen < cols - 5) {
+          filtered.push(cmd);
+          currentLen += cmdLen;
+        } else {
+          break;
+        }
+      }
+      return filtered;
+    };
+
+    const redraw = () => {
+      // Clear previously printed lines
+      if (lastLinesPrinted > 0) {
+        readline.moveCursor(stdout, 0, -(lastLinesPrinted - 2));
+        readline.cursorTo(stdout, 0);
+        readline.clearScreenDown(stdout);
+      }
+
+      const matches = getPopupMatches();
+      const hasPopup = matches.length > 0;
+      let lines = [];
+
+      if (hasPopup) {
+        // Line 1: Popup matches
+        const styledMatches = matches.map(match => {
+          const matchedPart = themeGold.bold(currentInput);
+          const restPart = themePrimary(match.slice(currentInput.length));
+          return matchedPart + restPart;
+        }).join('    ');
+        lines.push(`  ${themeBorder('│')} ${styledMatches}`);
+      }
+
+      // Border rule
+      lines.push(themeBorder('─'.repeat(cols)));
+
+      // Input line
+      const promptSymbol = isGold ? themeGold('❯') : themePrimary('❯');
+      lines.push(`  ${promptSymbol} ${currentInput}`);
+
+      // Bottom rule
+      lines.push(themeBorder('─'.repeat(cols)));
+
+      // Print all lines
+      stdout.write(lines.join('\r\n') + '\r\n');
+      lastLinesPrinted = lines.length;
+
+      // Position terminal cursor on the input line (which is the second line from bottom)
+      readline.moveCursor(stdout, 0, -2);
+      readline.cursorTo(stdout, 4 + cursorOffset);
+      stdout.write('\u001b[?25h'); // show cursor
+    };
+
+    redraw();
+
+    const onKeypress = (str: any, key: any) => {
+      if (key && key.ctrl && key.name === 'c') {
+        cleanup();
+        process.exit(0);
+      }
+
+      if (key && key.name === 'escape') {
+        showPopup = false;
+        redraw();
+        return;
+      }
+
+      if (key && key.name === 'tab') {
+        const matches = getPopupMatches();
+        if (matches.length > 0) {
+          currentInput = matches[0];
+          cursorOffset = currentInput.length;
+          redraw();
+        }
+        return;
+      }
+
+      if (key && (key.name === 'return' || key.name === 'enter')) {
+        readline.moveCursor(stdout, 0, -1);
+        cleanup();
+        resolve(currentInput);
+        return;
+      }
+
+      if (key && key.name === 'backspace') {
+        if (cursorOffset > 0) {
+          currentInput = currentInput.slice(0, cursorOffset - 1) + currentInput.slice(cursorOffset);
+          cursorOffset--;
+          showPopup = true;
+          redraw();
+        }
+        return;
+      }
+
+      if (key && key.name === 'left') {
+        if (cursorOffset > 0) {
+          cursorOffset--;
+          redraw();
+        }
+        return;
+      }
+
+      if (key && key.name === 'right') {
+        if (cursorOffset < currentInput.length) {
+          cursorOffset++;
+          redraw();
+        }
+        return;
+      }
+
+      // Standard character input
+      if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
+        currentInput = currentInput.slice(0, cursorOffset) + str + currentInput.slice(cursorOffset);
+        cursorOffset++;
+        showPopup = true;
+        redraw();
+      }
+    };
+
+    const cleanup = () => {
+      clearInterval(pulseTimer);
+      stdin.removeListener('keypress', onKeypress);
+      stdin.setRawMode(wasRaw);
+      
+      // Clear the prompt input zone completely from terminal
+      if (lastLinesPrinted > 0) {
+        readline.cursorTo(stdout, 0);
+        readline.moveCursor(stdout, 0, -(lastLinesPrinted - 2));
+        readline.clearScreenDown(stdout);
+      }
+      stdout.write('\u001b[?25h'); // restore cursor
+    };
+
+    stdin.on('keypress', onKeypress);
+  });
 }
 
 // Note: This function contains a hardcoded list of tool tag names that must be kept in sync manually if new tools are added elsewhere in the codebase.

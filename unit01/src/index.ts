@@ -1,3 +1,4 @@
+import './warnings.js';
 import * as readline from 'readline';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -16,9 +17,10 @@ import { SessionStore, SessionData, runStalenessCheck } from './session.js';
 import {
   themePrimary,
   themeBorder,
-  themeGreen,
-  themeGreenLight,
+  themeAccent,
+  themeAccentLight,
   themeOrange,
+  themeGold,
   themeGray,
   themeRed,
   themeBgDeep,
@@ -32,7 +34,11 @@ import {
   renderNewFileBlock,
   printWelcomeBanner,
   processChunk,
-  truncateAnsiString
+  truncateAnsiString,
+  printSystemMessage,
+  printToolResult,
+  interactiveConfirmWrite,
+  interactivePrompt
 } from './ui.js';
 
 let activeAllowedPaths: AllowedPath[] = [];
@@ -820,8 +826,8 @@ async function handleToolCalls(
     readline.cursorTo(process.stdout, 0);
 
     if (output.startsWith('[DIRECTIVE AI]')) {
-      console.log(`  ${chalk.red('✗')} ${themePrimary('run')} ${cmd} (blocked)`);
-      console.log(chalk.red(`\n⚠️  [Sandbox Guard] ${output}`));
+      printToolResult('failure', `Ran: ${cmd} (blocked)`);
+      printSystemMessage('guard', `command blocked  ·  ${cmd}`);
       return {
         toolRun: false,
         nextPrompt: '',
@@ -830,7 +836,7 @@ async function handleToolCalls(
     }
 
     if (output.startsWith('{') && output.includes('FILE_NOT_WRITTEN')) {
-      console.log(`  ${chalk.red('✗')} ${themePrimary('run')} ${cmd} (failed)`);
+      printToolResult('failure', `Ran: ${cmd} (failed: file not written)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${output}\n</tool_output>`,
@@ -839,7 +845,9 @@ async function handleToolCalls(
     }
 
     if (output.startsWith('[Command failed with exit code')) {
-      console.log(`  ${chalk.red('✗')} ${themePrimary('run')} ${cmd} (failed)`);
+      const match = output.match(/exit code (\d+)/);
+      const exitCode = match ? match[1] : '1';
+      printToolResult('failure', `Ran: ${cmd} (exit ${exitCode})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${output.trim()}\n</tool_output>`,
@@ -847,7 +855,7 @@ async function handleToolCalls(
       };
     }
 
-    console.log(`  ${themeGreen('✓')} ${themePrimary('run')} ${cmd} (completed)`);
+    printToolResult('success', `Ran: ${cmd} (exit 0)`);
     const outputResult = output.trim() || 'Command executed successfully with no output.';
     return {
       toolRun: true,
@@ -892,32 +900,28 @@ async function handleToolCalls(
     };
     
     const lineCount = content.split('\n').length;
-    const actionStr = fileExists ? 'modify' : 'create';
-    console.log(`\n  ${themeGreen(actionStr)} Proposed: ${filePath} (${lineCount} lines)`);
-    
-    const userConfirmed = await new Promise<boolean>((resolve) => {
-      rl.question(`? Confirm changes? [y/N/p(review)]: `, (answer) => {
-        const normalized = answer.trim().toLowerCase();
-        if (normalized === 'y' || normalized === 'yes') {
-          resolve(true);
-        } else if (normalized === 'p' || normalized === 'preview' || normalized === 'v') {
-          if (fileExists && original !== null) {
-            renderSideBySideDiff(original, content, getLanguageFromFilename(filePath), filePath);
-          } else {
-            renderNewFileBlock(content, getLanguageFromFilename(filePath), filePath);
-          }
-          rl.question(`? Confirm writing changes to ${filePath}? [y/N]: `, (secondAnswer) => {
-            const normalizedSecond = secondAnswer.trim().toLowerCase();
-            resolve(normalizedSecond === 'y' || normalizedSecond === 'yes');
-          });
+    const actionVerb: 'write' | 'create' | 'modify' = fileExists ? 'modify' : 'create';
+
+    let userConfirmed = false;
+    while (true) {
+      const choice = await interactiveConfirmWrite(filePath, lineCount, actionVerb);
+      if (choice === 'y') {
+        userConfirmed = true;
+        break;
+      } else if (choice === 'n') {
+        userConfirmed = false;
+        break;
+      } else if (choice === 'p') {
+        if (fileExists && original !== null) {
+          renderSideBySideDiff(original, content, getLanguageFromFilename(filePath), filePath);
         } else {
-          resolve(false);
+          renderNewFileBlock(content, getLanguageFromFilename(filePath), filePath);
         }
-      });
-    });
+      }
+    }
     
     if (!userConfirmed) {
-      console.log(`  ${chalk.red('✗')} ${themeGreen('write')} rejected by user`);
+      printToolResult('skipped', `Skipped ${filePath}`);
       return {
         toolRun: false,
         nextPrompt: '',
@@ -925,7 +929,7 @@ async function handleToolCalls(
       };
     }
     
-    process.stdout.write(`  ${themeOrange('⠋')} ${themeGreen('write')} ${filePath} ...`);
+    process.stdout.write(`  ${themeOrange('⠋')} ${themeAccent('write')} ${filePath} ...`);
     try {
       indexer.backupBeforeWrite(absPath);
       
@@ -947,7 +951,7 @@ async function handleToolCalls(
       
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('write')} ${filePath} (completed)`);
+      printToolResult('success', `Wrote ${filePath} (${lineCount} lines)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully written and indexed at ${filePath}\n</tool_output>`,
@@ -956,7 +960,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('write')} ${filePath} (failed)`);
+      printToolResult('failure', `Wrote ${filePath} — failed: ${err.message}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError writing file: ${err.message}\n</tool_output>`,
@@ -982,7 +986,7 @@ async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('read')} ${filePath} ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('read')} ${filePath} ...`);
     
     let content = '';
     let success = false;
@@ -1005,9 +1009,9 @@ async function handleToolCalls(
     readline.clearLine(process.stdout, 0);
     readline.cursorTo(process.stdout, 0);
     if (success) {
-      console.log(`  ${themeGreen('✓')} ${themeGreen('read')} ${filePath} (completed)`);
+      printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines)`);
     } else {
-      console.log(`  ${chalk.red('✗')} ${themeGreen('read')} ${filePath} (failed)`);
+      printToolResult('failure', `Read ${filePath} (failed)`);
     }
     
     return {
@@ -1021,19 +1025,19 @@ async function handleToolCalls(
   if (searchQuery !== null) {
     const query = searchQuery.trim();
     if (!query) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('search')} complete: blocked (empty query)`);
+      printToolResult('failure', `Searched "${query}" (blocked: empty query)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError: Search query cannot be empty. Please provide specific keywords to search the codebase.\n</tool_output>`,
         consoleOutput: `\n[Search blocked: empty query]`
       };
     }
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('search')} index for "${query}" ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('search')} index for "${query}" ...`);
     const results = indexer.search(query);
     
     readline.clearLine(process.stdout, 0);
     readline.cursorTo(process.stdout, 0);
-    console.log(`  ${themeGreen('✓')} ${themeGreen('search')} complete: Found ${results.length} matches.`);
+    printToolResult('success', `Searched "${query}" (${results.length} results)`);
     
     const formatted = results.slice(0, 5).map(r => 
       `- ${r.relpath} (line ${r.start_line}-${r.end_line}, type ${r.chunk_type}):\n${r.content}`
@@ -1063,13 +1067,13 @@ async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('patch')} ${filePath} ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('patch')} ${filePath} ...`);
 
     try {
       if (!fs.existsSync(absPath)) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
-        console.log(`  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (failed)`);
+        printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
@@ -1088,7 +1092,7 @@ async function handleToolCalls(
       if (index === -1) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
-        console.log(`  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (failed)`);
+        printToolResult('failure', `Patched ${filePath} (failed: search string not found)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
@@ -1118,7 +1122,7 @@ async function handleToolCalls(
 
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('patch')} ${filePath} (completed)`);
+      printToolResult('success', `Patched ${filePath}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully patched at ${filePath}\n</tool_output>`,
@@ -1127,7 +1131,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('patch')} ${filePath} (failed)`);
+      printToolResult('failure', `Patched ${filePath} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError patching file: ${err.message}\n</tool_output>`,
@@ -1153,13 +1157,13 @@ async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('patch_blocks')} ${filePath} ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('patch_blocks')} ${filePath} ...`);
 
     try {
       if (!fs.existsSync(absPath)) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
-        console.log(`  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (failed)`);
+        printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: `File not found at ${filePath}`,
@@ -1181,7 +1185,7 @@ async function handleToolCalls(
       } catch (err: any) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
-        console.log(`  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (failed)`);
+        printToolResult('failure', `Patched ${filePath} (failed: applying blocks failed)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: err.message || String(err),
@@ -1211,7 +1215,7 @@ async function handleToolCalls(
 
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('patch_blocks')} ${filePath} (completed)`);
+      printToolResult('success', `Patched ${filePath}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nFile successfully patched using blocks at ${filePath}\n</tool_output>`,
@@ -1220,7 +1224,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('patch_blocks')} ${filePath} (failed)`);
+      printToolResult('failure', `Patched ${filePath} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError patching file: ${err.message}\n</tool_output>`,
@@ -1246,13 +1250,13 @@ async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('list_dir')} ${pathVal} ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('list_dir')} ${pathVal} ...`);
 
     try {
       if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
-        console.log(`  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (failed)`);
+        printToolResult('failure', `Listed directory ${pathVal} (failed: not found)`);
         const errObj = {
           error: `Directory not found at ${pathVal}`,
           code: "DIRECTORY_NOT_FOUND",
@@ -1269,7 +1273,7 @@ async function handleToolCalls(
 
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('list_dir')} ${pathVal} (completed)`);
+      printToolResult('success', `Listed directory ${pathVal}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
@@ -1278,7 +1282,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('list_dir')} ${pathVal} (failed)`);
+      printToolResult('failure', `Listed directory ${pathVal} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError listing directory: ${err.message}\n</tool_output>`,
@@ -1288,7 +1292,7 @@ async function handleToolCalls(
   }
 
   if (parseGitStatus(text)) {
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('git_status')} ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('git_status')} ...`);
 
     try {
       let isGit = false;
@@ -1300,7 +1304,7 @@ async function handleToolCalls(
       if (!isGit) {
         readline.clearLine(process.stdout, 0);
         readline.cursorTo(process.stdout, 0);
-        console.log(`  ${chalk.red('✗')} ${themeGreen('git_status')} (failed)`);
+        printToolResult('failure', `Ran git status (failed: not a git repo)`);
         const errObj = {
           error: "Not a git repository",
           code: "NOT_GIT_REPO"
@@ -1359,7 +1363,7 @@ async function handleToolCalls(
 
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('git_status')} (completed)`);
+      printToolResult('success', `Ran git status`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
@@ -1368,7 +1372,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('git_status')} (failed)`);
+      printToolResult('failure', `Ran git status (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError running git status: ${err.message}\n</tool_output>`,
@@ -1414,7 +1418,7 @@ async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('diagnostics')} (running "${commandToRun}") ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('diagnostics')} (running "${commandToRun}") ...`);
 
     try {
       const rawOutput = await sandbox.runCommand(commandToRun);
@@ -1429,7 +1433,7 @@ async function handleToolCalls(
 
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('diagnostics')} (completed)`);
+      printToolResult('success', `Ran diagnostics: ${commandToRun}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
@@ -1438,7 +1442,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('diagnostics')} (failed)`);
+      printToolResult('failure', `Ran diagnostics: ${commandToRun} (failed)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError running diagnostics: ${err.message}\n</tool_output>`,
@@ -1478,7 +1482,9 @@ async function handleToolCalls(
     }
 
     if (!fs.existsSync(absSource)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} (failed: not found)`);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      printToolResult('failure', `Moved ${sourcePath} (failed: source not found)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1491,7 +1497,9 @@ async function handleToolCalls(
     }
 
     if (fs.existsSync(absDest)) {
-      console.log(`\n  ${chalk.red('✗')} ${themeGreen('move')} -> ${destinationPath} (failed: destination already exists)`);
+      readline.clearLine(process.stdout, 0);
+      readline.cursorTo(process.stdout, 0);
+      printToolResult('failure', `Moved ${sourcePath} (failed: destination exists)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1503,7 +1511,7 @@ async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeGreen('move')} ${sourcePath} to ${destinationPath} ...`);
+    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('move')} ${sourcePath} to ${destinationPath} ...`);
 
     try {
       fs.mkdirSync(path.dirname(absDest), { recursive: true });
@@ -1515,7 +1523,7 @@ async function handleToolCalls(
 
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} ${themeGreen('move')} ${sourcePath} to ${destinationPath} (completed)`);
+      printToolResult('success', `Moved ${sourcePath} to ${destinationPath}`);
       
       return {
         toolRun: true,
@@ -1530,7 +1538,7 @@ async function handleToolCalls(
     } catch (err: any) {
       readline.clearLine(process.stdout, 0);
       readline.cursorTo(process.stdout, 0);
-      console.log(`  ${chalk.red('✗')} ${themeGreen('move')} ${sourcePath} -> ${destinationPath} (failed)`);
+      printToolResult('failure', `Moved ${sourcePath} to ${destinationPath} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1656,7 +1664,7 @@ function loadConfig(workspaceRoot: string): RuthenConfig {
       const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       return data || {};
     } catch (e: any) {
-      console.warn(chalk.yellow(`⚠ Warning: Failed to parse ruthen.json config: ${e.message}`));
+      printSystemMessage('warn', `Failed to parse ruthen.json config: ${e.message}`);
     }
   }
   return {};
@@ -1690,7 +1698,7 @@ async function startCli() {
   // 1. Discover local Ollama models
   const models = await ollama.listModels();
   if (models.length === 0) {
-    console.error(chalk.red('\n[Error] No local Ollama models detected. Ensure Ollama is running and you have downloaded a model (e.g. `ollama run qwen2.5-coder`).'));
+    printSystemMessage('error', 'No local Ollama models detected. Ensure Ollama is running and you have downloaded a model, for example: ollama run qwen2.5-coder.');
     process.exit(1);
   }
 
@@ -1700,7 +1708,7 @@ async function startCli() {
     if (matchIndex !== -1) {
       activeModel = models[matchIndex].name;
     } else {
-      console.warn(chalk.yellow(`⚠ Warning: Specified model "${activeModelArg}" not found in local library. Using default: ${activeModel}`));
+      printSystemMessage('warn', `Specified model "${activeModelArg}" not found in local library. Using default: ${activeModel}`);
     }
   }
 
@@ -1730,17 +1738,17 @@ async function startCli() {
       const absPath = path.resolve(entry.path);
       const rel = path.relative(absPath, homeDir);
       if (!rel.startsWith('..')) {
-        console.warn(chalk.yellow(`⚠ Warning: Allowed path "${entry.path}" is the home directory or a parent of the home directory with read-write permissions.`));
+        printSystemMessage('warn', `Allowed path "${entry.path}" is the home directory or a parent of the home directory with read-write permissions.`);
       }
     }
   }
 
   // 2. Initialize Indexer and Sandbox
   const indexer = new DirectiveIndexer(workspaceRoot);
-  await indexer.initialize();
+  await indexer.initialize({ silent: true });
 
   const sandbox = new DirectiveSandbox(workspaceRoot, activeAllowedPaths);
-  await sandbox.initialize();
+  await sandbox.initialize([], { silent: true });
 
   const gitBranch = getGitBranch(workspaceRoot);
   const fileCount = indexer['db'].getAllFiles().length;
@@ -1776,7 +1784,7 @@ async function startCli() {
   let compactThreshold = 0.8;
   if (config.compact_threshold !== undefined) {
     if (typeof config.compact_threshold !== 'number' || config.compact_threshold < 0.5 || config.compact_threshold > 0.95) {
-      console.error(chalk.red(`\n[Config Error] "compact_threshold" must be a number between 0.5 and 0.95. Received: ${config.compact_threshold}`));
+      printSystemMessage('error', `"compact_threshold" must be a number between 0.5 and 0.95. Received: ${config.compact_threshold}`);
       process.exit(1);
     }
     compactThreshold = config.compact_threshold;
@@ -1884,10 +1892,18 @@ Be specific. Use exact file names, function names, and line numbers where releva
         const saved = totalTokens - newTotal;
         lastInputTokens = newTotal;
 
+        const newPct = Math.round((newTotal / contextLimit) * 100);
+        const formatK = (tokens: number) => {
+          if (tokens >= 1000) {
+            return `${Math.round(tokens / 1000)}k`;
+          }
+          return tokens.toString();
+        };
+
         if (isAuto) {
-          console.log(chalk.yellow(`⚡ Context auto-compacted (was ${pct}% full). Saved ${saved.toLocaleString()} tokens.`));
+          printSystemMessage('info', `context compacted  ·  ${pct}% → ${newPct}%  ·  saved ${formatK(saved)} tokens`);
         } else {
-          console.log(chalk.green(`✓ Context compacted: ${totalTokens.toLocaleString()} → ${newTotal.toLocaleString()} tokens (saved ${saved.toLocaleString()})`));
+          printSystemMessage('info', `context compacted  ·  ${pct}% → ${newPct}%  ·  saved ${formatK(saved)} tokens`);
         }
         return true;
       } finally {
@@ -1903,9 +1919,9 @@ Be specific. Use exact file names, function names, and line numbers where releva
                       err.message?.includes('aborted') || 
                       err.message?.includes('Abort');
       if (isAbort) {
-        console.warn(chalk.yellow(`\n⚠ Warning: Compaction aborted by user. Context not compacted.`));
+        printSystemMessage('warn', 'Compaction aborted by user. Context not compacted.');
       } else {
-        console.warn(chalk.yellow(`⚠ Warning: Compaction failed during LLM summarization. Context not compacted. Error: ${err.message}`));
+        printSystemMessage('warn', `Compaction failed during LLM summarization. Context not compacted. Error: ${err.message}`);
       }
       return false;
     } finally {
@@ -1918,7 +1934,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
     const executeLoop = async () => {
       loopDepth++;
       if (loopDepth > 15) {
-        console.log(chalk.red(`\n⚠️  [System Guard] Maximum tool iteration depth (15) reached. Stopping loop to prevent resource drain.`));
+        printSystemMessage('guard', 'Maximum tool iteration depth of 15 reached. Stopping loop to prevent resource drain.');
         if (shouldExit) {
           indexer.close();
           sandbox.stop();
@@ -1995,7 +2011,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
               const contentSoFar = writeMatch[2];
               const charCount = contentSoFar.length;
               const lineCount = contentSoFar.split(/\r?\n/).length;
-              statusMsg = `${themeGreen('write')} ${fileName} (${themeGreen(charCount.toLocaleString())} chars, ${themeGreen(lineCount)} lines)...`;
+              statusMsg = `${themeAccent('write')} ${fileName} (${themeAccent(charCount.toLocaleString())} chars, ${themeAccent(lineCount)} lines)...`;
             } else {
               const runMatch = /<run_command\s*>([\s\S]*?)(?:<\/run_command>|$)/.exec(streamAccumulator);
               if (runMatch) {
@@ -2014,12 +2030,12 @@ Be specific. Use exact file names, function names, and line numbers where releva
                 }
                 
                 if (fileSoFar) {
-                  statusMsg = `${themeGreen('read')} ${fileSoFar}...`;
+                  statusMsg = `${themeAccent('read')} ${fileSoFar}...`;
                 } else {
                   const searchMatch = /<search_code\s*>([\s\S]*?)(?:<\/search_code>|$)/.exec(streamAccumulator);
                   if (searchMatch) {
                     const querySoFar = searchMatch[1].trim();
-                    statusMsg = `${themeGreen('search')} index for "${querySoFar}"...`;
+                    statusMsg = `${themeAccent('search')} index for "${querySoFar}"...`;
                   } else {
                     statusMsg = `preparing tool call...`;
                   }
@@ -2077,7 +2093,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
                 if (isFirstChunk) {
                   isFirstChunk = false;
                   spinner.stop();
-                  process.stdout.write(`${themeGreen('●')} `);
+                  process.stdout.write(`${themeAccent('●')} `);
                   printedStreamText += '● ';
                   if (bufferedText) {
                     let textToPrint = bufferedText;
@@ -2153,7 +2169,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             await new Promise(resolve => setTimeout(resolve, remaining));
             isFirstChunk = false;
             spinner.stop();
-            process.stdout.write(`${themeGreen('●')} `);
+            process.stdout.write(`${themeAccent('●')} `);
             printedStreamText += '● ';
             if (bufferedText) {
               let textToPrint = bufferedText;
@@ -2195,7 +2211,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
                         err.message?.includes('Abort');
 
         if (isAbort) {
-          console.log(themeRed('\n✗ Generation interrupted.'));
+          printSystemMessage('stop', 'Generation interrupted.');
           if (shouldExit) {
             indexer.close();
             sandbox.stop();
@@ -2207,7 +2223,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           return;
         }
 
-        console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
+        printSystemMessage('error', `Connection failed: ${err.message}`);
         if (shouldExit) {
           indexer.close();
           sandbox.stop();
@@ -2261,7 +2277,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
 
       if (cleanText) {
         const formatted = marked.parse(cleanText).toString().trim();
-        console.log(`${themeGreen('●')} ${formatted}`);
+        console.log(`${themeAccent('●')} ${formatted}`);
       }
 
       const toolResult = await handleToolCalls(modelResponse, sandbox, indexer, rl);
@@ -2308,7 +2324,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
       activeModel = oldModel;
       contextLimit = await ollama.getContextLimit(activeModel);
     } else {
-      console.warn(chalk.yellow(`⚠ Warning: Session was using "${oldModel}" which is no longer available locally. Continuing with "${activeModel}".`));
+      printSystemMessage('warn', `Session was using "${oldModel}" which is no longer available locally. Continuing with "${activeModel}".`);
     }
 
     // Reset lastInputTokens
@@ -2326,84 +2342,27 @@ Be specific. Use exact file names, function names, and line numbers where releva
     const msgCount = sessionData.messageCount;
     const cleanMsg = sessionData.firstMessage.replace(/\r?\n/g, ' ').trim();
     const truncated = cleanMsg.length > 50 ? cleanMsg.substring(0, 50) + '...' : cleanMsg;
-    console.log(chalk.green(`✓ Resumed session from ${relTime} (${msgCount} messages, "${truncated}")`));
+    console.log(chalk.cyan(`✓ Resumed session from ${relTime} (${msgCount} messages, "${truncated}")`));
     
     askQuestion();
   };
 
-  const askQuestion = () => {
-    const cols = process.stdout.columns || 80;
-    
-    const leftSide = '';
-    const wsName = path.basename(workspaceRoot);
-    const rightSide = `${themeGreen(wsName)} (${themePrimary(gitBranch)})`;
+  const askQuestion = async () => {
+    const input = await interactivePrompt();
+    const trimmed = input.trim();
+    if (!trimmed) {
+      askQuestion();
+      return;
+    }
 
-    const leftVisualLen = stripAnsi(leftSide).length;
-    const rightVisualLen = stripAnsi(rightSide).length;
-    const paddingLen = Math.max(cols - leftVisualLen - rightVisualLen, 1);
-    const statusBarText = leftSide + ' '.repeat(paddingLen) + rightSide;
+    console.log('  ' + themePrimary('❯') + ' ' + chalk.bgHex('#3A4454').hex('#E2E8F0')(' ' + input + ' '));
 
-    console.log(themeBorder('─'.repeat(cols)));
-    console.log(statusBarText);
+    currentOperation = trimmed.startsWith('/') ? trimmed.split(/\s+/)[0] : null;
 
-    rl.question(`${themePrimary.bold('unit01')} ${themeGreen('❯')} `, async (input) => {
-      const trimmed = input.trim();
-      if (!trimmed) {
-        askQuestion();
-        return;
-      }
-
-      currentOperation = trimmed.startsWith('/') ? trimmed.split(/\s+/)[0] : null;
-
-      if (trimmed.startsWith('/')) {
-        const parts = trimmed.split(/\s+/);
-        let command = parts[0].toLowerCase();
-        let arg = parts.slice(1).join(' ');
-
-        if (command === '/' || command === '/menu') {
-          const menuOptions = [
-            '🤖 Switch Model (/models)',
-            '🧠 Toggle Thinking (/thinking)',
-            '📊 Context Usage (/usage)',
-            '💾 Export Session (/export)',
-            '🔍 Preview Last File (/preview)',
-            '📝 View Recent Changes (/changes)',
-            '⏪ Revert Last Change (/undo)',
-            '🔎 Search Codebase (/search)',
-            '🧹 Clear History (/clear)',
-            '🗜️ Compact Context (/compact)',
-            'ℹ️ System Status (/status)',
-            '📁 List Indexed Files (/files)',
-            '🔄 Re-index Workspace (/reindex)',
-            '❓ Show Help (/help)',
-            '❌ Exit CLI (/exit)'
-          ];
-          const chosenIdx = await interactiveSelect('Command Menu:', menuOptions);
-          if (chosenIdx === -1) {
-            askQuestion();
-            return;
-          }
-          const cmdMapping = [
-            '/models',
-            '/thinking',
-            '/usage',
-            '/export',
-            '/preview',
-            '/changes',
-            '/undo',
-            '/search',
-            '/clear',
-            '/compact',
-            '/status',
-            '/files',
-            '/reindex',
-            '/help',
-            '/exit'
-          ];
-          command = cmdMapping[chosenIdx];
-          arg = '';
-          currentOperation = command;
-        }
+    if (trimmed.startsWith('/')) {
+      const parts = trimmed.split(/\s+/);
+      let command = parts[0].toLowerCase();
+      let arg = parts.slice(1).join(' ');
 
         if (command === '/exit' || command === '/quit') {
           console.log(chalk.yellow('Shutting down file watchers and sandbox proxies...'));
@@ -2555,7 +2514,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             const success = indexer.undoWrite(restoredPath);
             if (success) {
               sandbox.clearLoopHistory();
-              console.log(chalk.green(`Successfully restored backup and reverted changes for: ${path.basename(restoredPath)}`));
+              console.log(chalk.cyan(`Successfully restored backup and reverted changes for: ${path.basename(restoredPath)}`));
             } else {
               console.log(chalk.red(`Failed to restore backup for ${restoredPath}`));
             }
@@ -2567,39 +2526,44 @@ Be specific. Use exact file names, function names, and line numbers where releva
         }
 
         if (command === '/models') {
-          if (arg) {
-            const matchIndex = models.findIndex(m => m.name === arg);
-            const numVal = parseInt(arg, 10);
+          let cleanedArg = arg ? arg.trim() : '';
+          if (cleanedArg.startsWith('<') && cleanedArg.endsWith('>')) {
+            cleanedArg = cleanedArg.slice(1, -1).trim();
+          }
+
+          if (cleanedArg) {
+            const matchIndex = models.findIndex(m => m.name === cleanedArg);
+            const numVal = parseInt(cleanedArg, 10);
             const matchNum = !isNaN(numVal) && numVal > 0 && numVal <= models.length ? numVal - 1 : -1;
 
             const targetIdx = matchIndex !== -1 ? matchIndex : matchNum;
             if (targetIdx !== -1) {
               activeModel = models[targetIdx].name;
               contextLimit = await ollama.getContextLimit(activeModel);
-              console.log(chalk.green(`Switched to active model: ${activeModel}`));
+              console.log(chalk.cyan(`Switched to active model: ${activeModel}`));
               try {
                 sessionStore.save(sessionId, { startedAt: sessionStartTime, activeModel, conversationHistory });
               } catch (e) {}
             } else {
-              console.log(chalk.red(`Model "${arg}" not found in local library.`));
+              printSystemMessage('error', `Model "${cleanedArg}" not found in local library.`);
             }
             askQuestion();
           } else {
-            const modelOptions = models.map(m => `${m.name} (${m.details.parameter_size || 'unknown'})`);
-            const chosenIdx = await interactiveSelect('Select Active Model:', modelOptions);
-            if (chosenIdx === -1) {
-              askQuestion();
-              return;
-            }
-            if (chosenIdx >= 0 && chosenIdx < models.length) {
+            const options = models.map((m) => {
+              const pSize = m.details.parameter_size || 'unknown';
+              const activeIndicator = m.name === activeModel ? ' (active)' : '';
+              return `${m.name} (${pSize})${activeIndicator}`;
+            });
+            const chosenIdx = await interactiveSelect('Select Active Model:', options);
+            if (chosenIdx !== -1) {
               activeModel = models[chosenIdx].name;
               contextLimit = await ollama.getContextLimit(activeModel);
-              console.log(chalk.green(`Switched to active model: ${activeModel}`));
+              console.log(chalk.cyan(`Switched to active model: ${activeModel}`));
               try {
                 sessionStore.save(sessionId, { startedAt: sessionStartTime, activeModel, conversationHistory });
               } catch (e) {}
             } else {
-              console.log(chalk.red('Invalid selection. Keeping current model.'));
+              console.log(chalk.gray('Model selection cancelled.'));
             }
             askQuestion();
           }
@@ -2614,7 +2578,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           
           if (chosenIdx === 0) {
             thinkingEnabled = true;
-            console.log(chalk.green('🧠 Model thinking enabled (reasoning blocks will be displayed).'));
+            console.log(chalk.cyan('🧠 Model thinking enabled (reasoning blocks will be displayed).'));
           } else if (chosenIdx === 1) {
             thinkingEnabled = false;
             console.log(chalk.yellow('🧠 Model thinking disabled (reasoning blocks will be hidden).'));
@@ -2643,32 +2607,29 @@ Be specific. Use exact file names, function names, and line numbers where releva
           const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
           const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
           const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
-          
-          let progressColor = themeGreen;
           const ratio = Math.min(totalTokens / contextLimit, 1.0);
-          if (ratio >= 0.8) {
-            progressColor = chalk.red;
-          } else if (ratio >= 0.6) {
-            progressColor = chalk.yellow;
+          
+          const filesCount = indexer['db'].getAllFiles().length;
+          const ratioPct = Math.round(ratio * 100);
+          
+          let displayWorkspace = workspaceRoot;
+          if (workspaceRoot.startsWith(os.homedir())) {
+            displayWorkspace = '~' + workspaceRoot.slice(os.homedir().length);
           }
 
-          console.log(chalk.bold('\nUnit01 System Status:'));
-          console.log(`- Active Model: ${chalk.green(activeModel)}`);
-          console.log(`- Context Usage: ${progressColor(totalTokens.toLocaleString())} / ${chalk.gray(contextLimit.toLocaleString())} tokens (${progressColor(Math.round(ratio * 100) + '%')})`);
-          console.log(`- Compact Threshold: ${chalk.green(compactThreshold)}`);
-          console.log(`- Workspace Root: ${chalk.cyan(workspaceRoot)}`);
-          console.log(`- Git Branch: ${chalk.cyan(gitBranch)}`);
-          console.log(`- Egress Proxy Port: ${chalk.green(sandbox['proxyPort'] || 'inactive')}`);
-          console.log(`- Files Indexed: ${chalk.green(indexer['db'].getAllFiles().length)}`);
-          console.log(`- Allowed Paths:`);
-          if (activeAllowedPaths.length === 0) {
-            console.log(`  (none)`);
-          } else {
-            activeAllowedPaths.forEach(ap => {
-              console.log(`  - ${chalk.cyan(ap.path)} (${chalk.green(ap.mode)})`);
-            });
-          }
-          console.log();
+          const cols = process.stdout.columns || 80;
+          const rule = '  ' + '─'.repeat(Math.min(cols - 4, 40));
+          
+          console.log('\n' + rule);
+          console.log(`  ${themePrimary('◈')} ${themePrimary.bold('unit01')} ${themeGray(' ·  system status')}`);
+          console.log(rule);
+          console.log(`  ${themeGray('model').padEnd(12)} ${activeModel}`);
+          console.log(`  ${themeGray('context').padEnd(12)} ${totalTokens.toLocaleString()} / ${contextLimit.toLocaleString()} tokens  (${ratioPct}%)`);
+          console.log(`  ${themeGray('workspace').padEnd(12)} ${displayWorkspace}`);
+          console.log(`  ${themeGray('branch').padEnd(12)} ${gitBranch}`);
+          console.log(`  ${themeGray('files').padEnd(12)} ${filesCount}`);
+          console.log(rule + '\n');
+          
           askQuestion();
           return;
         }
@@ -2681,29 +2642,31 @@ Be specific. Use exact file names, function names, and line numbers where releva
           const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
           const ratio = Math.min(totalTokens / contextLimit, 1.0);
           const pct = Math.round(ratio * 100);
-          const remaining = Math.max(0, contextLimit - totalTokens);
-
-          let progressColor = themeGreen;
-          if (ratio >= 0.8) {
-            progressColor = chalk.red;
-          } else if (ratio >= 0.6) {
-            progressColor = chalk.yellow;
-          }
-
-          console.log(chalk.bold('\nContext Window Usage:'));
-          console.log(`- Active Model:     ${chalk.cyan(activeModel)}`);
-          console.log(`- Context Limit:    ${chalk.cyan(contextLimit.toLocaleString())} tokens`);
-          console.log(`- Total Usage:      ${progressColor(totalTokens.toLocaleString())} / ${contextLimit.toLocaleString()} tokens (${progressColor(pct + '%')})`);
-          console.log(`- System Context:   ${chalk.gray(systemPromptLength.toLocaleString())} tokens (instructions, repo map, recent changes)`);
-          console.log(`- Messages History: ${chalk.gray(historyLength.toLocaleString())} tokens (${conversationHistory.length} messages)`);
-          console.log(`- Remaining space:  ${progressColor(remaining.toLocaleString())} tokens`);
           
-          // Visual progress bar
-          const barWidth = 40;
+          let fillColor = themeGold;
+          if (ratio >= 0.8) {
+            fillColor = themeRed;
+          } else if (ratio >= 0.6) {
+            fillColor = themeGold;
+          }
+          
+          const barWidth = 20;
           const filledWidth = Math.round(ratio * barWidth);
           const emptyWidth = barWidth - filledWidth;
-          const bar = progressColor('█'.repeat(filledWidth)) + chalk.gray('░'.repeat(emptyWidth));
-          console.log(`  [${bar}]`);
+          const bar = fillColor('█'.repeat(filledWidth)) + themeGray('░'.repeat(emptyWidth));
+          
+          const formatK = (tokens: number) => {
+            if (tokens >= 1000) {
+              return `${Math.round(tokens / 1000)}k`;
+            }
+            return tokens.toString();
+          };
+          
+          const cols = process.stdout.columns || 80;
+          const rule = '  ' + '─'.repeat(Math.min(cols - 4, 40));
+          console.log('\n  ' + themeGray('context window'));
+          console.log(rule);
+          console.log(`  [${bar}]  ${pct}%  ${themeGray('·')}  ${formatK(totalTokens)} / ${formatK(contextLimit)}`);
           console.log();
 
           askQuestion();
@@ -2725,7 +2688,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             try {
               fs.mkdirSync(sessionDir, { recursive: true });
             } catch (e: any) {
-              console.error(chalk.red(`✗ Failed to create sessions directory: ${e.message}`));
+              printSystemMessage('error', `Failed to create sessions directory: ${e.message}`);
             }
           }
 
@@ -3103,9 +3066,9 @@ Be specific. Use exact file names, function names, and line numbers where releva
               displayPath = '~' + displayPath.slice(homeDir.length);
             }
 
-            console.log(chalk.green(`✓ Session exported to ${displayPath} (${sizeKb} KB)`));
+            console.log(chalk.cyan(`✓ Session exported to ${displayPath} (${sizeKb} KB)`));
           } catch (e: any) {
-            console.error(chalk.red(`✗ Failed to write export file: ${e.message}`));
+            printSystemMessage('error', `Failed to write export file: ${e.message}`);
           }
 
           askQuestion();
@@ -3127,44 +3090,50 @@ Be specific. Use exact file names, function names, and line numbers where releva
         if (command === '/reindex') {
           console.log(chalk.yellow('Re-scanning workspace and rebuilding index...'));
           await indexer.initialize();
-          console.log(chalk.green('Index successfully rebuilt.'));
+          console.log(chalk.cyan('Index successfully rebuilt.'));
           askQuestion();
           return;
         }
 
         if (command === '/help') {
-          console.log(chalk.bold('\nUnit01 CLI Help Menu'));
-          console.log('Commands:');
-          console.log(`  ${chalk.cyan('/models')}            - Switch the active Ollama model`);
-          console.log(`  ${chalk.cyan('/thinking')}          - Toggle showing/hiding LLM thinking blocks`);
-          console.log(`  ${chalk.cyan('/usage')}             - Show the context usage for the active model`);
-          console.log(`  ${chalk.cyan('/export [path]')}     - Export current session to a markdown file`);
-          console.log(`  ${chalk.cyan('/preview')}           - Preview side-by-side diff of the last written file`);
-          console.log(`  ${chalk.cyan('/changes')}           - View list of recently modified files`);
-          console.log(`  ${chalk.cyan('/undo')}              - Revert the last file modification`);
-          console.log(`  ${chalk.cyan('/search <query>')}    - Search codebase chunks using keyword index`);
-          console.log(`  ${chalk.cyan('/clear')}             - Clear conversation history`);
-          console.log(`  ${chalk.cyan('/compact')}           - Summarise and compress conversation history to free context space`);
-          console.log(`  ${chalk.cyan('/status')}            - Show system status`);
-          console.log(`  ${chalk.cyan('/files')}             - List all currently indexed files`);
-          console.log(`  ${chalk.cyan('/reindex')}           - Force full codebase scan and rebuild repo map`);
-          console.log(`  ${chalk.cyan('/help')}              - Show this help menu`);
-          console.log(`  ${chalk.cyan('/exit, /quit')}       - Exit the application`);
-          console.log();
+          const cols = process.stdout.columns || 80;
+          const rule = '  ' + '─'.repeat(Math.min(cols - 4, 40));
+          console.log('\n' + rule);
+          console.log(`  ${themePrimary('◈')} ${themePrimary.bold('unit01')} ${themeGray(' ·  help')}`);
+          console.log(rule);
+          
+          const helpCommands = [
+            { cmd: '/models', desc: 'switch the active model' },
+            { cmd: '/thinking', desc: 'toggle reasoning blocks' },
+            { cmd: '/status', desc: 'system info' },
+            { cmd: '/usage', desc: 'context window usage' },
+            { cmd: '/sessions', desc: 'browse saved sessions' },
+            { cmd: '/compact', desc: 'compress context' },
+            { cmd: '/clear', desc: 'clear conversation' },
+            { cmd: '/help', desc: 'show this menu' },
+            { cmd: '/exit', desc: 'quit unit01' },
+            { cmd: '/files', desc: 'list indexed files' },
+            { cmd: '/reindex', desc: 're-index workspace' },
+            { cmd: '/export', desc: 'export session' },
+            { cmd: '/preview', desc: 'preview last file' },
+            { cmd: '/changes', desc: 'view recent changes' },
+            { cmd: '/undo', desc: 'revert last change' },
+            { cmd: '/search', desc: 'search codebase' }
+          ];
+
+          for (const item of helpCommands) {
+            console.log(`  ${themePrimary(item.cmd.padEnd(14))}${themeGray(item.desc)}`);
+          }
+          console.log(rule + '\n');
+          
           askQuestion();
           return;
         }
 
-        console.log(chalk.red(`Unknown command: ${command}`));
+        printSystemMessage('error', `Unknown command: ${command}`);
         askQuestion();
         return;
       }
-
-
-
-      readline.moveCursor(process.stdout, 0, -1);
-      readline.clearLine(process.stdout, 0);
-      console.log(`${themePrimary.bold('unit01')} ${themeGreen('❯')} ${chalk.bgHex('#2B2B2B').white(' ' + input + ' ')}`);
 
       conversationHistory.push({ role: 'user', content: trimmed });
 
@@ -3173,7 +3142,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
       const runAgentLoop = async (shouldExit = false) => {
         loopDepth++;
         if (loopDepth > 15) {
-          console.log(chalk.red(`\n⚠️  [System Guard] Maximum tool iteration depth (15) reached. Stopping loop to prevent resource drain.`));
+          printSystemMessage('guard', 'Maximum tool iteration depth of 15 reached. Stopping loop to prevent resource drain.');
           if (shouldExit) {
             indexer.close();
             sandbox.stop();
@@ -3251,7 +3220,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
                 const contentSoFar = writeMatch[2];
                 const charCount = contentSoFar.length;
                 const lineCount = contentSoFar.split(/\r?\n/).length;
-                statusMsg = `${themeGreen('write')} ${fileName} (${themeGreen(charCount.toLocaleString())} chars, ${themeGreen(lineCount)} lines)...`;
+                statusMsg = `${themeAccent('write')} ${fileName} (${themeAccent(charCount.toLocaleString())} chars, ${themeAccent(lineCount)} lines)...`;
               } else {
                 const runMatch = /<run_command\s*>([\s\S]*?)(?:<\/run_command>|$)/.exec(streamAccumulator);
                 if (runMatch) {
@@ -3271,12 +3240,12 @@ Be specific. Use exact file names, function names, and line numbers where releva
                   }
                   
                   if (fileSoFar) {
-                    statusMsg = `${themeGreen('read')} ${fileSoFar}...`;
+                    statusMsg = `${themeAccent('read')} ${fileSoFar}...`;
                   } else {
                     const searchMatch = /<search_code\s*>([\s\S]*?)(?:<\/search_code>|$)/.exec(streamAccumulator);
                     if (searchMatch) {
                       const querySoFar = searchMatch[1].trim();
-                      statusMsg = `${themeGreen('search')} index for "${querySoFar}"...`;
+                      statusMsg = `${themeAccent('search')} index for "${querySoFar}"...`;
                     } else {
                       statusMsg = `preparing tool call...`;
                     }
@@ -3337,7 +3306,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
                   if (isFirstChunk) {
                     isFirstChunk = false;
                     spinner.stop();
-                    process.stdout.write(`${themeGreen('●')} `);
+                    process.stdout.write(`${themeAccent('●')} `);
                     printedStreamText += '● ';
                     if (bufferedText) {
                       let textToPrint = bufferedText;
@@ -3414,7 +3383,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
               await new Promise(resolve => setTimeout(resolve, remaining));
               isFirstChunk = false;
               spinner.stop();
-              process.stdout.write(`${themeGreen('●')} `);
+              process.stdout.write(`${themeAccent('●')} `);
               printedStreamText += '● ';
               if (bufferedText) {
                 let textToPrint = bufferedText;
@@ -3451,7 +3420,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
               readline.cursorTo(process.stdout, 0);
               readline.clearScreenDown(process.stdout);
             }
-            console.log(themeRed('\n✗ [System Guard] Generation aborted: text repetition loop detected.'));
+            printSystemMessage('guard', 'Generation aborted: text repetition loop detected.');
             conversationHistory.push({
               role: 'system',
               content: '[SYSTEM] Generation aborted due to repeating text. Please generate your response concisely without repetitions.'
@@ -3478,7 +3447,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
                           err.message?.includes('Abort');
 
           if (isAbort) {
-            console.log(themeRed('\n✗ Generation interrupted.'));
+            printSystemMessage('stop', 'Generation interrupted.');
             if (shouldExit) {
               indexer.close();
               sandbox.stop();
@@ -3490,7 +3459,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             return;
           }
 
-          console.error(chalk.red(`\n[Error] Connection failed: ${err.message}`));
+          printSystemMessage('error', `Connection failed: ${err.message}`);
           if (shouldExit) {
             indexer.close();
             sandbox.stop();
@@ -3548,7 +3517,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
 
         if (cleanText) {
           const formatted = marked.parse(cleanText).toString().trim();
-          console.log(`${themeGreen('●')} ${formatted}`);
+          console.log(`${themeAccent('●')} ${formatted}`);
         }
 
         // Parse tool calls in output
@@ -3583,7 +3552,6 @@ Be specific. Use exact file names, function names, and line numbers where releva
       };
 
       await runAgentLoop(false);
-    });
   };
 
   if (nonInteractivePrompt) {
@@ -3595,5 +3563,5 @@ Be specific. Use exact file names, function names, and line numbers where releva
 }
 
 startCli().catch(err => {
-  console.error(chalk.red('CLI failed to initialize:'), err);
+  printSystemMessage('error', `CLI failed to initialize: ${err.message || err}`);
 });

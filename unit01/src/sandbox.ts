@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 import chalk from 'chalk';
 import { EgressProxy, TIER1_DOMAINS, detectTier2Domains } from './proxy.js';
 import { AllowedPath } from './types.js';
+import { printSystemMessage } from './ui.js';
 
 const themePrimary = chalk.hex('#9333EA');
 
@@ -550,7 +551,7 @@ export class DirectiveSandbox {
       for (const entry of this.allowedPaths) {
         const absPath = path.resolve(entry.path);
         if (!fs.existsSync(absPath)) {
-          console.warn(`⚠ Warning: allowed path ${absPath} does not exist, skipping mount.`);
+          printSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
           continue;
         }
         if (entry.mode === 'rw') {
@@ -583,7 +584,7 @@ ${seatbeltMounts}`;
       for (const entry of this.allowedPaths) {
         const absPath = path.resolve(entry.path);
         if (!fs.existsSync(absPath)) {
-          console.warn(`⚠ Warning: allowed path ${absPath} does not exist, skipping mount.`);
+          printSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
           continue;
         }
         if (entry.mode === 'rw') {
@@ -606,7 +607,7 @@ ${seatbeltMounts}`;
         '/bin/sh', '-c', innerCommand
       ];
     } else {
-      console.warn('[Directive AI Sandbox] Sandboxing engines (bwrap / sandbox-exec) not available. Running in un-isolated mode with resource limits.');
+      printSystemMessage('warn', 'Sandboxing engines bwrap or sandbox-exec not available. Running in un-isolated mode with resource limits.');
     }
 
     // 6. Spawn process with proxy configuration
@@ -638,7 +639,7 @@ ${seatbeltMounts}`;
       // Implement timeout logic: 30 seconds SIGTERM -> wait 2s -> SIGKILL
       let killed = false;
       const timeoutTimer = setTimeout(() => {
-        console.warn(`[Directive AI Sandbox] Command timed out after 30s: "${trimmedCommand}". Sending SIGTERM...`);
+        printSystemMessage('warn', `Command timed out after 30s: "${trimmedCommand}". Sending SIGTERM...`);
         killed = true;
         child.kill('SIGTERM');
 

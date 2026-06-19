@@ -6,8 +6,8 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "npx tsc",
-    "start": "npx tsc && node dist/index.js",
-    "dev": "tsx src/index.ts"
+    "start": "npx tsc && node --no-warnings dist/index.js",
+    "dev": "node --no-warnings --import tsx src/index.ts"
   },
   "dependencies": {
     "blessed": "^0.1.81",

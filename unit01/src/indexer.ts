@@ -4,7 +4,7 @@ import * as crypto from 'crypto';
 import chalk from 'chalk';
 import { IndexerDB, ChunkRecord } from './db.js';
 
-const themeGreen = chalk.hex('#22C55E');
+const themeAccent = chalk.hex('#38BDF8');
 import { chunkFile } from './chunker.js';
 import { buildRepoMap } from './repomap.js';
 import { FileWatcher } from './watcher.js';
@@ -53,7 +53,7 @@ export class DirectiveIndexer {
   public async initialize(options?: { silent?: boolean; onFileIndexed?: (relPath: string) => void }) {
     const silent = options?.silent ?? false;
     if (!silent) {
-      console.log(`  ${themeGreen('index')} workspace: ${this.workspaceRoot}`);
+      console.log(`  ${themeAccent('index')} workspace: ${this.workspaceRoot}`);
     }
     
     const scannedFiles = new Set<string>();
@@ -109,7 +109,7 @@ export class DirectiveIndexer {
     for (const dbFile of allDbFiles) {
       if (!scannedFiles.has(dbFile.path)) {
         if (!silent) {
-          console.log(`  ${themeGreen('index')} Pruning: ${dbFile.path}`);
+          console.log(`  ${themeAccent('index')} Pruning: ${dbFile.path}`);
         }
         this.db.removeFile(dbFile.path);
       }
@@ -130,7 +130,7 @@ export class DirectiveIndexer {
     );
     this.watcher.start();
     if (!silent) {
-      console.log(`  ${themeGreen('index')} Initial scan complete and background watcher started.`);
+      console.log(`  ${themeAccent('index')} Initial scan complete and background watcher started.`);
     }
   }
 
@@ -153,7 +153,7 @@ export class DirectiveIndexer {
       }
 
       if (!silent) {
-        console.log(`  ${themeGreen('index')} Indexing: ${relpath}`);
+        console.log(`  ${themeAccent('index')} Indexing: ${relpath}`);
       }
       const chunks = chunkFile(filePath, relpath, content);
       
