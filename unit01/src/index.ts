@@ -2267,14 +2267,6 @@ interface RuthenConfig {
   compact_threshold?: number;
 }
 
-interface SelectableModel {
-  name: string;
-  displayName: string;
-  isLocalGguf: boolean;
-  ggufPath?: string;
-  parameterSize: string;
-}
-
 function loadConfig(workspaceRoot: string): RuthenConfig {
   const configPath = path.join(workspaceRoot, 'ruthen.json');
   if (fs.existsSync(configPath)) {
@@ -2313,114 +2305,20 @@ async function startCli() {
     }
   }
 
-  // 1. Discover local Ollama models and models directory GGUF files
-  const ollamaModels = await ollama.listModels();
-  const modelsDir = path.join(workspaceRoot, 'models');
-  if (!fs.existsSync(modelsDir)) {
-    fs.mkdirSync(modelsDir, { recursive: true });
-  }
-
-  const localFiles = fs.readdirSync(modelsDir).filter(file => file.endsWith('.gguf'));
-  const models: SelectableModel[] = [];
-
-  for (const m of ollamaModels) {
-    models.push({
-      name: m.name,
-      displayName: m.name,
-      isLocalGguf: m.name.startsWith('local-'),
-      parameterSize: m.details.parameter_size || 'unknown'
-    });
-  }
-
-  for (const file of localFiles) {
-    const cleanName = 'local-' + file.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/\.gguf$/, '');
-    const exists = models.some(m => m.name === cleanName);
-    if (!exists) {
-      const stats = fs.statSync(path.join(modelsDir, file));
-      const sizeGB = (stats.size / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
-      models.push({
-        name: cleanName,
-        displayName: `${file} (unregistered GGUF)`,
-        isLocalGguf: true,
-        ggufPath: path.join(modelsDir, file),
-        parameterSize: sizeGB
-      });
-    } else {
-      const match = models.find(m => m.name === cleanName);
-      if (match) {
-        match.displayName = `${file} (GGUF)`;
-      }
-    }
-  }
-
+  // 1. Discover local Ollama models
+  const models = await ollama.listModels();
   if (models.length === 0) {
-    console.error(chalk.red('\n[Error] No models detected. Drop a .gguf file into the models/ directory or run a model via Ollama (e.g. `ollama run qwen2.5-coder`).'));
+    console.error(chalk.red('\n[Error] No local Ollama models detected. Ensure Ollama is running and you have downloaded a model (e.g. `ollama run qwen2.5-coder`).'));
     process.exit(1);
   }
 
   let activeModel = models[0].name;
-  let initialGgufPath = models[0].ggufPath;
-
   if (activeModelArg) {
     const matchIndex = models.findIndex(m => m.name === activeModelArg);
     if (matchIndex !== -1) {
       activeModel = models[matchIndex].name;
-      initialGgufPath = models[matchIndex].ggufPath;
     } else {
       console.warn(chalk.yellow(`⚠ Warning: Specified model "${activeModelArg}" not found in local library. Using default: ${activeModel}`));
-    }
-  }
-
-  const activateModel = async (target: SelectableModel) => {
-    if (target.ggufPath) {
-      const fileBase = path.basename(target.ggufPath);
-      process.stdout.write(`\n  ${themeOrange('⠋')} Registering local GGUF file in Ollama: ${fileBase} ...`);
-      try {
-        await ollama.createModel(target.name, target.ggufPath, (status) => {
-          readline.clearLine(process.stdout, 0);
-          readline.cursorTo(process.stdout, 0);
-          process.stdout.write(`  ${themeOrange('⠋')} Registering model (${status}) ...`);
-        });
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        console.log(`  ${themeGreen('✓')} Registered successfully.`);
-        delete target.ggufPath;
-        target.displayName = `${fileBase} (GGUF)`;
-      } catch (err: any) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        console.log(chalk.red(`  ✗ Failed to register model: ${err.message}`));
-        return false;
-      }
-    }
-    activeModel = target.name;
-    contextLimit = await ollama.getContextLimit(activeModel);
-    console.log(chalk.green(`Switched to active model: ${activeModel}`));
-    return true;
-  };
-
-  if (initialGgufPath) {
-    console.log(`\n  ${themeOrange('⠋')} Registering local GGUF file in Ollama: ${path.basename(initialGgufPath)} ...`);
-    try {
-      await ollama.createModel(activeModel, initialGgufPath, (status) => {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        process.stdout.write(`  ${themeOrange('⠋')} Registering model (${status}) ...`);
-      });
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      console.log(`  ${themeGreen('✓')} Registered successfully.`);
-      
-      const match = models.find(m => m.name === activeModel);
-      if (match) {
-        delete match.ggufPath;
-        match.displayName = `${path.basename(initialGgufPath)} (GGUF)`;
-      }
-    } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      console.error(chalk.red(`\n[Error] Failed to register GGUF model: ${err.message}`));
-      process.exit(1);
     }
   }
 
@@ -3157,16 +3055,20 @@ Be specific. Use exact file names, function names, and line numbers where releva
 
             const targetIdx = matchIndex !== -1 ? matchIndex : matchNum;
             if (targetIdx !== -1) {
-              await activateModel(models[targetIdx]);
+              activeModel = models[targetIdx].name;
+              contextLimit = await ollama.getContextLimit(activeModel);
+              console.log(chalk.green(`Switched to active model: ${activeModel}`));
             } else {
               console.log(chalk.red(`Model "${arg}" not found in local library.`));
             }
             askQuestion();
           } else {
-            const modelOptions = models.map(m => `${m.displayName} (${m.parameterSize})`);
+            const modelOptions = models.map(m => `${m.name} (${m.details.parameter_size || 'unknown'})`);
             const chosenIdx = await interactiveSelect('Select Active Model:', modelOptions);
             if (chosenIdx >= 0 && chosenIdx < models.length) {
-              await activateModel(models[chosenIdx]);
+              activeModel = models[chosenIdx].name;
+              contextLimit = await ollama.getContextLimit(activeModel);
+              console.log(chalk.green(`Switched to active model: ${activeModel}`));
             } else {
               console.log(chalk.red('Invalid selection. Keeping current model.'));
             }
