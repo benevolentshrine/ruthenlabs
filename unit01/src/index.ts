@@ -1671,7 +1671,7 @@ function loadConfig(workspaceRoot: string): RuthenConfig {
 }
 
 async function startCli() {
-  const workspaceRoot = path.resolve(__dirname, '..');
+  let workspaceRoot = process.cwd();
 
   // Parse command line arguments
   const args = process.argv.slice(2);
@@ -1692,7 +1692,30 @@ async function startCli() {
     } else if (args[i] === '--allow-read' && i + 1 < args.length) {
       cliAllowedPaths.push({ path: args[i + 1], mode: 'ro' });
       i++;
+    } else if (args[i] === '--workspace' && i + 1 < args.length) {
+      workspaceRoot = path.resolve(args[i + 1]);
+      i++;
     }
+  }
+
+  // Validate workspaceRoot
+  let workspaceValid = false;
+  try {
+    if (fs.existsSync(workspaceRoot) && fs.statSync(workspaceRoot).isDirectory()) {
+      const testFilePath = path.join(workspaceRoot, '.ruthen-write-test');
+      fs.writeFileSync(testFilePath, 'test', 'utf8');
+      fs.unlinkSync(testFilePath);
+      workspaceValid = true;
+    }
+  } catch (err) {
+    // Treat any error as invalid/not writable
+  }
+
+  if (!workspaceValid) {
+    console.error(chalk.red(`[Error] Workspace root "${workspaceRoot}" is not accessible or not writable.
+This usually means the CLI was run from a location where it doesn't have write permissions, or the working directory wasn't resolved correctly.
+Try running with an explicit path: unit01 --workspace /path/to/your/project`));
+    process.exit(1);
   }
 
   // 1. Discover local Ollama models
