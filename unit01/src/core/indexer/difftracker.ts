@@ -1,4 +1,4 @@
-import { ChunkRecord } from './db.js';
+import { ChunkRecord } from '../database/db.js';
 
 export interface DiffLogEntry {
   filepath: string;

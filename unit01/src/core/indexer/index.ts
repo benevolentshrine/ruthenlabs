@@ -2,14 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import chalk from 'chalk';
-import { IndexerDB, ChunkRecord } from './db.js';
-
-const themeAccent = chalk.hex('#38BDF8');
+import { IndexerDB, ChunkRecord } from '../database/db.js';
 import { chunkFile } from './chunker.js';
 import { buildRepoMap } from './repomap.js';
 import { FileWatcher } from './watcher.js';
 import { DiffTracker } from './difftracker.js';
-import { ShadowBackupManager } from './backup.js';
+import { ShadowBackupManager } from '../database/backup.js';
+
+const themeAccent = chalk.hex('#38BDF8');
 
 const IGNORE_PATTERNS = [
   'node_modules',

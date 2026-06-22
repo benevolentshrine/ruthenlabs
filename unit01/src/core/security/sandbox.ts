@@ -3,12 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import chalk from 'chalk';
 import { EgressProxy, TIER1_DOMAINS, detectTier2Domains } from './proxy.js';
 import { AllowedPath } from './types.js';
-import { printSystemMessage } from './ui.js';
-
-const themePrimary = chalk.hex('#9333EA');
 
 const BLACKLIST = new Set(['sudo', 'su', 'docker', 'podman', 'mount', 'umount', 'nsenter', 'unshare']);
 
@@ -110,12 +106,6 @@ const RUNNERS = new Set([
 const SCRIPT_EXTS = new Set([
   '.py', '.js', '.ts', '.sh', '.bash', '.jsx', '.tsx', '.rb', '.pl', '.php', '.pyw', '.command'
 ]);
-
-function isPathInside(parent: string, child: string): boolean {
-  const relative = path.relative(path.resolve(parent), path.resolve(child));
-  if (relative === '') return true;
-  return !relative.startsWith('..') && !path.isAbsolute(relative);
-}
 
 function splitCommands(command: string): string[] {
   const cmds: string[] = [];
@@ -273,11 +263,17 @@ export class DirectiveSandbox {
   private writtenFiles = new Set<string>();
   private sessionStartTime: number;
   private allowedPaths: AllowedPath[] = [];
+  private onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void;
 
-  constructor(workspaceRoot: string, allowedPaths: AllowedPath[] = []) {
+  constructor(
+    workspaceRoot: string,
+    allowedPaths: AllowedPath[] = [],
+    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void
+  ) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.sessionStartTime = Date.now();
     this.allowedPaths = allowedPaths;
+    this.onSystemMessage = onSystemMessage;
   }
 
   public updateAllowedPaths(allowedPaths: AllowedPath[]) {
@@ -437,7 +433,11 @@ export class DirectiveSandbox {
     this.egressProxy = new EgressProxy(allowed);
     this.proxyPort = await this.egressProxy.start();
     if (!options?.silent) {
-      console.log(`  ${themePrimary('sandbox')} Egress proxy started on port ${this.proxyPort}`);
+      if (this.onSystemMessage) {
+        this.onSystemMessage('info', `Egress proxy started on port ${this.proxyPort}`);
+      } else {
+        console.log(`  [Directive Sandbox] Egress proxy started on port ${this.proxyPort}`);
+      }
     }
   }
 
@@ -529,9 +529,6 @@ export class DirectiveSandbox {
     }
 
     // 4. Set up resource limit ulimit prefix
-    // Increase file descriptor limit to 2048. Avoid ulimit -v (virtual memory) and ulimit -u (user processes)
-    // on Linux because modern runtimes (Node/Bun/V8) require larger virtual memory mapping and setting ulimit -u
-    // restricts total user processes globally, causing shell forks to fail.
     const ulimitPrefix = 'ulimit -n 2048';
     const innerCommand = `${ulimitPrefix} && ${trimmedCommand}`;
 
@@ -551,7 +548,9 @@ export class DirectiveSandbox {
       for (const entry of this.allowedPaths) {
         const absPath = path.resolve(entry.path);
         if (!fs.existsSync(absPath)) {
-          printSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
+          if (this.onSystemMessage) {
+            this.onSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
+          }
           continue;
         }
         if (entry.mode === 'rw') {
@@ -584,7 +583,9 @@ ${seatbeltMounts}`;
       for (const entry of this.allowedPaths) {
         const absPath = path.resolve(entry.path);
         if (!fs.existsSync(absPath)) {
-          printSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
+          if (this.onSystemMessage) {
+            this.onSystemMessage('warn', `allowed path ${absPath} does not exist, skipping mount.`);
+          }
           continue;
         }
         if (entry.mode === 'rw') {
@@ -607,7 +608,9 @@ ${seatbeltMounts}`;
         '/bin/sh', '-c', innerCommand
       ];
     } else {
-      printSystemMessage('warn', 'Sandboxing engines bwrap or sandbox-exec not available. Running in un-isolated mode with resource limits.');
+      if (this.onSystemMessage) {
+        this.onSystemMessage('warn', 'Sandboxing engines bwrap or sandbox-exec not available. Running in un-isolated mode with resource limits.');
+      }
     }
 
     // 6. Spawn process with proxy configuration
@@ -639,7 +642,9 @@ ${seatbeltMounts}`;
       // Implement timeout logic: 30 seconds SIGTERM -> wait 2s -> SIGKILL
       let killed = false;
       const timeoutTimer = setTimeout(() => {
-        printSystemMessage('warn', `Command timed out after 30s: "${trimmedCommand}". Sending SIGTERM...`);
+        if (this.onSystemMessage) {
+          this.onSystemMessage('warn', `Command timed out after 30s: "${trimmedCommand}". Sending SIGTERM...`);
+        }
         killed = true;
         child.kill('SIGTERM');
 

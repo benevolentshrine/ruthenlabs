@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { IndexerDB, ChunkRecord } from './db.js';
+import { IndexerDB, ChunkRecord } from '../database/db.js';
 
 // Rough token estimation: 4 characters per token
 const MAX_CHAR_LIMIT = 1500 * 4;

@@ -5,7 +5,7 @@ import TypeScriptPkg from 'tree-sitter-typescript';
 import Python from 'tree-sitter-python';
 import Rust from 'tree-sitter-rust';
 import Go from 'tree-sitter-go';
-import { ChunkRecord } from './db.js';
+import { ChunkRecord } from '../database/db.js';
 
 const { typescript, tsx } = TypeScriptPkg;
 

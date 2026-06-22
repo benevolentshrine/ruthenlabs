@@ -1,0 +1,85 @@
+import { getCredential } from '../vault.js';
+import { getFromKeychain } from '../keychain.js';
+
+/**
+ * Retrieve Notion integration token from keychain (macOS) or encrypted vault (Linux).
+ */
+export function getNotionToken(): string | null {
+  if (process.platform === 'darwin') {
+    return getFromKeychain('notion-token');
+  }
+  try {
+    return getCredential('notion-token');
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Append content blocks (e.g. paragraphs, headings) as children to a Notion block/page.
+ */
+export async function appendNotionBlocks(blockId: string, children: any[]): Promise<any> {
+  const token = getNotionToken();
+  if (!token) throw new Error('Notion is not connected. Use /connect notion first.');
+
+  const response = await fetch(`https://api.notion.com/v1/blocks/${blockId}/children`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ children })
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Notion API error: Status ${response.status} - ${errText}`);
+  }
+  return await response.json();
+}
+
+/**
+ * Query a Notion database.
+ */
+export async function queryNotionDatabase(databaseId: string, filter?: any): Promise<any[]> {
+  const token = getNotionToken();
+  if (!token) throw new Error('Notion is not connected. Use /connect notion first.');
+
+  const response = await fetch(`https://api.notion.com/v1/databases/${databaseId}/query`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Notion-Version': '2022-06-28',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(filter ? { filter } : {})
+  });
+
+  if (!response.ok) {
+    throw new Error(`Notion API error: Status ${response.status}`);
+  }
+  const data = (await response.json()) as any;
+  return data.results || [];
+}
+
+/**
+ * Fetch a single page from Notion.
+ */
+export async function fetchNotionPage(pageId: string): Promise<any> {
+  const token = getNotionToken();
+  if (!token) throw new Error('Notion is not connected. Use /connect notion first.');
+
+  const response = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Notion-Version': '2022-06-28'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Notion API error: Status ${response.status}`);
+  }
+  return await response.json();
+}

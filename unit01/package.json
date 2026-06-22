@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Directive AI Indexer & Sandbox - Unit 01",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/cli/index.js",
   "scripts": {
     "build": "npx tsc",
-    "start": "npx tsc && node --no-warnings dist/index.js",
-    "dev": "node --no-warnings --import tsx src/index.ts"
+    "start": "npx tsc && node --no-warnings dist/cli/index.js",
+    "dev": "node --no-warnings --import tsx src/cli/index.ts"
   },
   "dependencies": {
     "blessed": "^0.1.81",

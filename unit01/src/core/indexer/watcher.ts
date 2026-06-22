@@ -2,7 +2,7 @@ import chokidar from 'chokidar';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { IndexerDB } from './db.js';
+import { IndexerDB } from '../database/db.js';
 import { chunkFile } from './chunker.js';
 import { DiffTracker } from './difftracker.js';
 
