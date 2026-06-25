@@ -223,31 +223,30 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 ---
 
-### Pillar 5: Multi-Model Routing & Autopilot Pipeline
+### Pillar 5: Autopilot Pipeline (Plan-Code-Test-Healing Loop)
 
-Instead of sequential prompt hacking under the name of "multi-agent swarms," Unit01 Connect routes tasks to the appropriate model based on complexity. This optimization matches local compute limitations with task requirements.
+To increase developer velocity, Unit01 Connect introduces an autonomous background execution loop. When tasked with complex changes, the active local model can plan, edit, run tests, and automatically heal itself if errors occur, without manual developer intervention.
 
 ```mermaid
 graph TD
-    UserReq["User Prompt / File Task"] --> Classify{"Task Complexity Classifier"}
-
-    Classify -->|Low Complexity: Indexing/Scanning/Completions| LocalFast["Local Fast Model (e.g., Qwen 2.5 Coder 1.5B/3B)"]
-    Classify -->|Medium Complexity: Feature Writing/Refactoring| LocalMain["Local Main Model (e.g., Qwen 2.5 Coder 7B/9B)"]
-    Classify -->|High Complexity: Architecture/Deep Logic| CloudFrontier["Optional Cloud Frontier (e.g., Claude 3.5 Sonnet / DeepSeek-R1)"]
-
-    LocalFast --> Loop["Structured Build Pipeline (Plan-Code-Test-Healing Loop)"]
-    LocalMain --> Loop
-    CloudFrontier --> Loop
+    UserReq["User Prompt / File Task"] --> Plan["1. Generate Structured Implementation Plan"]
+    Plan --> Edit["2. Write Incremental Code Modifications"]
+    Edit --> Test["3. Execute Test Verification Command"]
+    Test -->|Pass| Revert["4. Merge & Re-index Workspace"]
+    Test -->|Fail| Heal{"5. Under Max Iterations (5)?"}
+    Heal -->|Yes| Correct["6. Feed Error Output to Healing Loop"]
+    Correct --> Edit
+    Heal -->|No| Halt["Halt & Report Failure Logs"]
 ```
 
-#### A. Structured Build Pipeline (Plan-Code-Test-Healing Loop)
+#### A. Structured Build Pipeline Flow
 The core automation flow that ensures compilation safety and self-healing:
 1. **Planning Step:** The model generates a structured implementation plan (steps, modified files, test changes).
-2. **Code Edit Step:** Edits are written to a temporary git worktree to isolate the workspace.
+2. **Code Edit Step:** Edits are written to the workspace (or a temporary git worktree) to isolate the changes.
 3. **Compilation & Testing Step:** The runner compiles the project and executes the local test suite in background mode.
 4. **Self-Healing Loop:**
    * If tests pass: Merges modifications back to the main working directory and prompts the user for confirmation.
-   * If tests fail: Extracts stdout/stderr error logs, feeds them back to the routing model, makes code adjustments, and re-compiles.
+   * If tests fail: Extracts stdout/stderr error logs, feeds them back to the active local model with debugging instructions, makes code adjustments, and re-compiles.
    * **Hard Cap:** Maximum of 5 self-healing iterations. If unresolved, it halts, presents the failure log, and returns control to the developer.
 
 ---
@@ -261,7 +260,7 @@ The core automation flow that ensures compilation safety and self-healing:
 | **Search Engine** | Standard keyword FTS5 scanner | Hybrid Semantic + FTS5 search (Local ONNX) |
 | **Context Retention** | Single-session history | Persistent SQLite Project Memory |
 | **Audit Trails** | None | Structured Local Audit Log (`/audit`) |
-| **Routing & Autopilot** | Foreground execution on a single model | Multi-Model Routing & Plan-Code-Test Loop |
+| **Autopilot Execution** | Foreground execution only | Autonomous Plan-Code-Test-Healing Loop |
 | **Data Privacy** | Local execution | Local execution + Strict Web Search snippet isolation |
 
 ---
@@ -296,12 +295,12 @@ The core automation flow that ensures compilation safety and self-healing:
 * **Cons:**
   * Reverting external APIs (like Slack posts or GitHub comments) depends on server APIs, which don't always support deletions.
 
-### 5. Multi-Model Routing & Autopilot Pipeline
+### 5. Autopilot Pipeline (Plan-Code-Test-Healing Loop)
 * **Pros:**
-  * Optimized context limits: handles simple tasks on local chips and routes difficult code to cloud engines.
-  * Self-healing loop fixes compile bugs without user input.
+  * Background execution fixes compile bugs and verifies tests without user input.
+  * Ensures codebase safety by testing changes before merging.
 * **Cons:**
-  * Cloud failover requires developers to manage API keys, introducing configuration steps.
+  * Repetitive test suite runs can increase token usage and execution time if the codebase is very large.
 
 ---
 

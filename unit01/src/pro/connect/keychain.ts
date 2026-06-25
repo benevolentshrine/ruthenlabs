@@ -1,13 +1,12 @@
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 /**
  * Save a credential token to the macOS Keychain.
  */
 export function saveToKeychain(service: string, token: string): void {
   try {
-    const escapedToken = token.replace(/'/g, "'\\''");
     // -a: Account, -s: Service, -w: Password data, -U: Update if exists
-    execSync(`security add-generic-password -a "unit01" -s "unit01-${service}" -w '${escapedToken}' -U`, { stdio: 'ignore' });
+    execFileSync('security', ['add-generic-password', '-a', 'unit01', '-s', `unit01-${service}`, '-w', token, '-U'], { stdio: 'ignore' });
   } catch (err) {
     throw new Error(`Failed to save credential for ${service} to macOS Keychain.`);
   }
@@ -18,7 +17,7 @@ export function saveToKeychain(service: string, token: string): void {
  */
 export function getFromKeychain(service: string): string | null {
   try {
-    const output = execSync(`security find-generic-password -a "unit01" -s "unit01-${service}" -w`, { encoding: 'utf8' });
+    const output = execFileSync('security', ['find-generic-password', '-a', 'unit01', '-s', `unit01-${service}`, '-w'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     return output.trim();
   } catch (err) {
     return null;
@@ -30,7 +29,7 @@ export function getFromKeychain(service: string): string | null {
  */
 export function deleteFromKeychain(service: string): void {
   try {
-    execSync(`security delete-generic-password -a "unit01" -s "unit01-${service}"`, { stdio: 'ignore' });
+    execFileSync('security', ['delete-generic-password', '-a', 'unit01', '-s', `unit01-${service}`], { stdio: 'ignore' });
   } catch (err) {
     // Ignore errors if the item does not exist
   }

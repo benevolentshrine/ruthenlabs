@@ -20,6 +20,7 @@ interface VaultData {
   password_vault: EncryptedPayload;
   recovery_vault: EncryptedPayload;
   credentials: Record<string, EncryptedPayload>;
+  scrypt_params?: { N: number; r: number; p: number };
 }
 
 /**
@@ -72,8 +73,9 @@ function decrypt(payload: EncryptedPayload, key: Buffer): string {
 /**
  * Derive a 256-bit key from a password/key and a salt using Scrypt.
  */
-function deriveKey(secret: string, salt: Buffer): Buffer {
-  return crypto.scryptSync(secret, salt, 32, { N: 16384, r: 8, p: 1 });
+function deriveKey(secret: string, salt: Buffer, params?: { N: number; r: number; p: number }): Buffer {
+  const scryptOpts = params || { N: 16384, r: 8, p: 1 };
+  return crypto.scryptSync(secret, salt, 32, scryptOpts);
 }
 
 /**
@@ -89,9 +91,10 @@ export function initializeVault(password: string): string {
   const vaultKey = crypto.randomBytes(32); // The core key that encrypts all credentials
   const recoveryKey = generateRecoveryKey();
 
-  // Derive encryption keys for locking the vaultKey
-  const passwordKey = deriveKey(password, salt);
-  const recoveryKeyDerived = deriveKey(recoveryKey, salt);
+  // Derive encryption keys for locking the vaultKey using hardened scrypt params
+  const scryptParams = { N: 65536, r: 8, p: 1 };
+  const passwordKey = deriveKey(password, salt, scryptParams);
+  const recoveryKeyDerived = deriveKey(recoveryKey, salt, scryptParams);
 
   // Encrypt the vaultKey using both keys
   const passwordVault = encrypt(vaultKey.toString('hex'), passwordKey);
@@ -101,7 +104,8 @@ export function initializeVault(password: string): string {
     salt: salt.toString('hex'),
     password_vault: passwordVault,
     recovery_vault: recoveryVault,
-    credentials: {}
+    credentials: {},
+    scrypt_params: scryptParams
   };
 
   fs.writeFileSync(VAULT_FILE, JSON.stringify(vaultData, null, 2), { mode: 0o600 });
@@ -124,17 +128,23 @@ export function vaultExists(): boolean {
  * Caches the decrypted Vault Master Key in session memory.
  */
 export function unlockWithPassword(password: string): boolean {
+  if (!vaultExists()) return false;
+  let data: VaultData;
   try {
-    if (!vaultExists()) return false;
-    const data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')) as VaultData;
-    const salt = Buffer.from(data.salt, 'hex');
-    const passwordKey = deriveKey(password, salt);
-    
+    data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf-8')) as VaultData;
+  } catch (err: any) {
+    throw new Error(`Vault file is corrupted or inaccessible: ${err.message}`);
+  }
+
+  const salt = Buffer.from(data.salt, 'hex');
+  const passwordKey = deriveKey(password, salt, data.scrypt_params);
+  
+  try {
     const decryptedVaultKeyHex = decrypt(data.password_vault, passwordKey);
     sessionVaultKey = Buffer.from(decryptedVaultKeyHex, 'hex');
     return true;
   } catch (err) {
-    return false;
+    return false; // Wrong password
   }
 }
 
@@ -143,17 +153,23 @@ export function unlockWithPassword(password: string): boolean {
  * Caches the decrypted Vault Master Key in session memory.
  */
 export function unlockWithRecoveryKey(recoveryKey: string): boolean {
+  if (!vaultExists()) return false;
+  let data: VaultData;
   try {
-    if (!vaultExists()) return false;
-    const data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')) as VaultData;
-    const salt = Buffer.from(data.salt, 'hex');
-    const recoveryKeyDerived = deriveKey(recoveryKey, salt);
+    data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf-8')) as VaultData;
+  } catch (err: any) {
+    throw new Error(`Vault file is corrupted or inaccessible: ${err.message}`);
+  }
 
+  const salt = Buffer.from(data.salt, 'hex');
+  const recoveryKeyDerived = deriveKey(recoveryKey, salt, data.scrypt_params);
+
+  try {
     const decryptedVaultKeyHex = decrypt(data.recovery_vault, recoveryKeyDerived);
     sessionVaultKey = Buffer.from(decryptedVaultKeyHex, 'hex');
     return true;
   } catch (err) {
-    return false;
+    return false; // Wrong recovery key
   }
 }
 
@@ -161,25 +177,32 @@ export function unlockWithRecoveryKey(recoveryKey: string): boolean {
  * Reset the vault's Master Password using the Master Recovery Key.
  */
 export function resetVaultPassword(recoveryKey: string, newPassword: string): boolean {
+  if (!unlockWithRecoveryKey(recoveryKey)) {
+    return false;
+  }
+  if (!sessionVaultKey) return false;
+
+  let data: VaultData;
   try {
-    if (!unlockWithRecoveryKey(recoveryKey)) {
-      return false;
-    }
-    if (!sessionVaultKey) return false;
+    data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf-8')) as VaultData;
+  } catch (err: any) {
+    throw new Error(`Vault file is corrupted or inaccessible: ${err.message}`);
+  }
 
-    const data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')) as VaultData;
-    const salt = Buffer.from(data.salt, 'hex');
+  const salt = Buffer.from(data.salt, 'hex');
 
-    // Re-derive password key and re-encrypt the Vault Master Key
-    const newPasswordKey = deriveKey(newPassword, salt);
-    const newPasswordVault = encrypt(sessionVaultKey.toString('hex'), newPasswordKey);
+  // Re-derive password key and re-encrypt the Vault Master Key using vault's parameters
+  const scryptParams = data.scrypt_params || { N: 16384, r: 8, p: 1 };
+  const newPasswordKey = deriveKey(newPassword, salt, scryptParams);
+  const newPasswordVault = encrypt(sessionVaultKey.toString('hex'), newPasswordKey);
 
-    data.password_vault = newPasswordVault;
+  data.password_vault = newPasswordVault;
 
+  try {
     fs.writeFileSync(VAULT_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
     return true;
-  } catch (err) {
-    return false;
+  } catch (err: any) {
+    throw new Error(`Failed to write to vault file: ${err.message}`);
   }
 }
 
@@ -191,10 +214,20 @@ export function saveCredential(service: string, token: string): void {
     throw new Error('Vault is locked. Unlock the vault before saving credentials.');
   }
 
-  const data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')) as VaultData;
+  let data: VaultData;
+  try {
+    data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf-8')) as VaultData;
+  } catch (err: any) {
+    throw new Error(`Vault file is corrupted or inaccessible: ${err.message}`);
+  }
+
   data.credentials[service] = encrypt(token, sessionVaultKey);
   
-  fs.writeFileSync(VAULT_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  try {
+    fs.writeFileSync(VAULT_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  } catch (err: any) {
+    throw new Error(`Failed to write to vault file: ${err.message}`);
+  }
 }
 
 /**
@@ -205,13 +238,20 @@ export function getCredential(service: string): string | null {
     throw new Error('Vault is locked. Unlock the vault before retrieving credentials.');
   }
 
+  let data: VaultData;
   try {
-    const data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')) as VaultData;
-    const payload = data.credentials[service];
-    if (!payload) return null;
+    data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf-8')) as VaultData;
+  } catch (err: any) {
+    throw new Error(`Vault file is corrupted or inaccessible: ${err.message}`);
+  }
+
+  const payload = data.credentials[service];
+  if (!payload) return null;
+
+  try {
     return decrypt(payload, sessionVaultKey);
-  } catch (err) {
-    return null;
+  } catch (err: any) {
+    throw new Error(`Failed to decrypt credential for ${service}: ${err.message}`);
   }
 }
 
@@ -223,10 +263,20 @@ export function deleteCredential(service: string): void {
     throw new Error('Vault is locked. Unlock the vault before modifying credentials.');
   }
 
-  const data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf8')) as VaultData;
+  let data: VaultData;
+  try {
+    data = JSON.parse(fs.readFileSync(VAULT_FILE, 'utf-8')) as VaultData;
+  } catch (err: any) {
+    throw new Error(`Vault file is corrupted or inaccessible: ${err.message}`);
+  }
+
   if (data.credentials[service]) {
     delete data.credentials[service];
-    fs.writeFileSync(VAULT_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+    try {
+      fs.writeFileSync(VAULT_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+    } catch (err: any) {
+      throw new Error(`Failed to write to vault file: ${err.message}`);
+    }
   }
 }
 

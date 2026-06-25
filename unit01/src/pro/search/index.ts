@@ -6,8 +6,8 @@ import { calculateCosineSimilarity, fuseRRF } from './hybrid.js';
  * Scan all chunks in the SQLite database and generate vector embeddings
  * for any chunk that does not have one yet.
  */
-export async function indexMissingEmbeddings(db: IndexerDB): Promise<void> {
-  const isAvailable = await ensureEmbeddingModel();
+export async function indexMissingEmbeddings(db: IndexerDB, silent: boolean = false): Promise<void> {
+  const isAvailable = await ensureEmbeddingModel(silent);
   if (!isAvailable) {
     // Gracefully degrade if Ollama is offline or embedding model cannot be pulled
     return;
@@ -19,7 +19,9 @@ export async function indexMissingEmbeddings(db: IndexerDB): Promise<void> {
 
   if (missing.length === 0) return;
 
-  console.log(`  🔎 [pro search] Generating embeddings for ${missing.length} new chunks...`);
+  if (!silent) {
+    console.log(`  ⚙️  [code index] Updating database vector index (${missing.length} new chunks)...`);
+  }
 
   // Batch process to prevent local server exhaustion
   const batchSize = 10;
@@ -34,7 +36,6 @@ export async function indexMissingEmbeddings(db: IndexerDB): Promise<void> {
           const embeddingStr = JSON.stringify(vector);
           
           // Execute database update
-          // @ts-ignore (Omit strict type warnings for manual query executes)
           db.db.prepare('UPDATE chunks SET embedding = ? WHERE id = ?').run(embeddingStr, chunk.id);
         }
       })

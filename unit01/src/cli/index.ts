@@ -1,3 +1,4 @@
+#!/usr/bin/env -S node --no-warnings
 import '../core/warnings.js';
 import * as readline from 'readline';
 import * as path from 'path';
@@ -40,18 +41,36 @@ import {
   hasRepetitionLoop,
   renderMarkdown
 } from './views/chat.js';
-import { interactivePrompt } from './prompt.js';
+import { interactivePrompt, setPromptStatus } from './prompt.js';
 import { getRelativeTime } from './views/components.js';
 import { getLanguageFromFilename } from './parser.js';
 
-// System prompt instructing local model on tool-calling behavior
-const SYSTEM_INSTRUCTIONS = `You are Unit01, a directive AI coding assistant.
-You can execute tools by wrapping commands in specific XML tags. Here are concrete examples of how to invoke them:
+let originalLog = console.log;
 
-- To run a shell command: <run_command>npm test</run_command>
-- To read a file: <read_file>src/db.ts</read_file>
-- To write or overwrite a new file: <write_file path="src/main.ts">console.log("hello");</write_file>
-- To search the codebase: <search_code>DatabaseSync</search_code>
+// System prompt instructing local model on tool-calling behavior
+const SYSTEM_INSTRUCTIONS = `<system_persona>
+You are Unit01, a directive AI coding assistant designed to build and debug projects in a local sandboxed environment.
+Your primary method of action is executing tools via XML tags. Keep your explanations concise, professional, and code-focused.
+</system_persona>
+
+<tool_definitions>
+You can invoke the following tools by wrapping the command in XML tags. You must write the actual paths (do not use placeholders like "relative_path"):
+
+- To run a shell command:
+  <run_command>npm test</run_command>
+
+- To read a file:
+  <read_file>src/db.ts</read_file>
+
+- To write or overwrite a new file:
+  <write_file path="src/main.ts">console.log("hello");</write_file>
+
+- To search the codebase:
+  <search_code>DatabaseSync</search_code>
+
+- To search the web:
+  <web_search>recent AI news 2026</web_search>
+
 - To patch a single exact string occurrence in a file:
   <patch_file path="src/main.ts" search="console.log(&quot;hello&quot;);" replace="console.log(&quot;hi&quot;);" />
   Or nested format:
@@ -59,6 +78,7 @@ You can execute tools by wrapping commands in specific XML tags. Here are concre
     <search>console.log("hello");</search>
     <replace>console.log("hi");</replace>
   </patch_file>
+
 - To perform multi-block edits on an existing file:
   <patch_file_blocks path="src/main.ts">
   <<<<<<< ORIGINAL
@@ -67,33 +87,67 @@ You can execute tools by wrapping commands in specific XML tags. Here are concre
   console.log("hi");
   >>>>>>> UPDATED
   </patch_file_blocks>
-- To list directory contents directly: <list_dir path="src" recursive="false" />
-- To view structured git status: <git_status />
-- To run project compilation/linter diagnostics: <diagnostics /> or <diagnostics command="npm run lint" />
-- To rename or move a file: <move_file source_path="old.py" destination_path="new.py" />
-- To ask the developer a question or request path permission (substitute the target path dynamically):
-  <question options="Allow read-write, Allow read-only, Deny">I need access to /path/to/directory to complete this task. Grant access?</question>
 
-Rules:
+- To list directory contents directly:
+  <list_dir path="src" recursive="false" />
+
+- To view structured git status:
+  <git_status />
+
+- To run project compilation/linter diagnostics:
+  <diagnostics /> or <diagnostics command="npm run lint" />
+
+- To rename or move a file:
+  <move_file source_path="old.py" destination_path="new.py" />
+
+- To ask the developer a question or request path permission:
+  <question options="Allow read-write, Allow read-only, Deny">I need access to /path/to/directory to complete this task. Grant access?</question>
+</tool_definitions>
+
+<behavioral_rules>
 1. Execute only ONE tool at a time.
 2. Once you write a tool call tag, stop outputting text immediately. Wait for the tool output to be returned to you in a <tool_output> block. Do NOT write any conversational text, preambles, or introductory explanations (such as "To read the file...", "You can run this command...", etc.) before writing the XML tool tag. Simply output the XML tool tag directly.
 3. Do not write placeholders like "relative_path". Write the actual path directly.
-4. Keep your explanations concise, professional, and code-focused.
-5. Before executing any file, ensure it has been written using write_file first. Always use absolute paths.
-6. Tool Selection Priority:
+4. Before executing any file, ensure it has been written using write_file first. Always use absolute paths.
+5. Tool Selection Priority:
    - Use patch_file_blocks as the default tool to edit existing files.
    - Use patch_file for simple, single exact replacements.
    - Use write_file only when creating new files. Never write_file on an existing file.
    - Use move_file to rename or move files. Never use cp + rm or mv in run_command.
    - You MUST use the <question> tool to request path access if you need to access files outside the workspace. Do NOT request path access, ask questions, or clarify requirements via plain conversational text, as the user has no way to grant permissions or respond unless you invoke the <question> tool tag.
-7. Complex Task / New Project Workflow:
+6. Complex Task / New Project Workflow:
    - When asked to create a new application, website, game, or implement a large feature, DO NOT write files immediately.
    - First, present a clear architectural plan detailing the files you plan to create/modify and libraries you need. Wait for user approval or feedback.
    - After approval, implement the code incrementally—write or edit only ONE file per turn, starting with the base configuration and core logic.
    - Keep code modular and clean. Separate concerns (e.g., separate UI rendering from core logic) to prevent massive single-file dumps.
-8. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="${os.homedir()}" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the question tool (e.g., <question options="Allow read-write, Allow read-only, Deny">I need access to ${os.homedir()} to complete this task. Grant access?</question>). You MUST use the <question> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
-9. When using the <question> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "${os.homedir()}").
-`;
+7. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="${os.homedir()}" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the question tool (e.g., <question options="Allow read-write, Allow read-only, Deny">I need access to ${os.homedir()} to complete this task. Grant access?</question>). You MUST use the <question> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
+8. When using the <question> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "${os.homedir()}").
+9. Web Search & Code Confirmation Flow: When searching the web for code, libraries, or general solutions (using <web_search>), do NOT write files or execute other tools immediately after receiving the search results. First, present the findings and the code inside the chat area (e.g., 'I found this code, it is X lines long, here is how it works...'). Then, explicitly ask the user what they want to do with the code (e.g., write it to a file, modify it, or explain it), and wait for their input before taking any action on the codebase files.
+10. Give me in the Chat Area Rule: If the user asks to see code, write code 'in the chat', 'show me', or uses similar phrases requesting visibility in the conversation window, you are strictly prohibited from using <write_file> or <patch_file_blocks> to modify the workspace files. You must only print the code inside markdown code blocks in your chat response. You are only allowed to write or edit workspace files if the user explicitly instructs you to save or write it to a file (e.g., 'write this to src/calculator.py').
+</behavioral_rules>`;
+
+const PERSONALITY_TONES: Record<string, { label: string; instruction: string }> = {
+  vanilla: {
+    label: 'Vanilla (Standard Professional)',
+    instruction: 'Voice/Tone: Maintain a standard, helpful, and professional coding assistant tone. Keep explanations clear, concise, and focused on the codebase.'
+  },
+  homie: {
+    label: 'The Homie (Street-Smart/Hood)',
+    instruction: 'Voice/Tone: Talk like a supportive friend from the hood. Use informal language, call the user "cuh", prioritize the grind, and keep it encouraging.'
+  },
+  savage: {
+    label: 'The Savage Senior (Cynical Lead)',
+    instruction: 'Voice/Tone: Act like a cynical, grumpy senior developer. Complain about sloppy code, roast bad style choices slightly, but write perfect, high-performance solutions.'
+  },
+  zen: {
+    label: 'The Zen Monk (Minimalist Architect)',
+    instruction: 'Voice/Tone: Speak in a calm, philosophical, and minimalist manner. Use short, wise phrases. Advocate for deleting code, avoiding dependencies, and clean designs.'
+  },
+  terminator: {
+    label: 'The Terminator (Max Speed)',
+    instruction: 'Voice/Tone: Act as a pure command-line machine. Write absolutely zero conversational text—output ONLY the required code blocks and XML tool tags.'
+  }
+};
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -109,36 +163,61 @@ function getGitBranch(workspaceRoot: string): string {
   }
 }
 
-interface RuthenConfig {
+function detectProjectType(workspaceRoot: string): string | null {
+  if (fs.existsSync(path.join(workspaceRoot, 'package.json'))) return 'Node.js';
+  if (fs.existsSync(path.join(workspaceRoot, 'Cargo.toml'))) return 'Rust';
+  if (fs.existsSync(path.join(workspaceRoot, 'go.mod'))) return 'Go';
+  if (fs.existsSync(path.join(workspaceRoot, 'pyproject.toml'))) return 'Python';
+  if (fs.existsSync(path.join(workspaceRoot, 'setup.py'))) return 'Python';
+  if (fs.existsSync(path.join(workspaceRoot, 'Gemfile'))) return 'Ruby';
+  if (fs.existsSync(path.join(workspaceRoot, 'CMakeLists.txt'))) return 'C/C++';
+  if (fs.existsSync(path.join(workspaceRoot, 'composer.json'))) return 'PHP';
+  return null;
+}
+
+interface Unit01Config {
   allowed_paths?: AllowedPath[];
   compact_threshold?: number;
   test_command?: string;
+  personality?: string;
+  strict_sandbox?: boolean;
 }
 
-function loadConfig(workspaceRoot: string): RuthenConfig {
-  const configPath = path.join(workspaceRoot, 'ruthen.json');
+function loadConfig(workspaceRoot: string): Unit01Config {
+  const configPath = path.join(workspaceRoot, 'unit01.json');
   if (fs.existsSync(configPath)) {
     try {
       const data = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       return data || {};
     } catch (e: any) {
-      printSystemMessage('warn', `Failed to parse ruthen.json config: ${e.message}`);
+      printSystemMessage('warn', `Failed to parse unit01.json config: ${e.message}`);
     }
   }
   return {};
 }
 
 async function startCli() {
-  // Determine root directory (upwards relative to current module)
-  const currentFilePath = new URL(import.meta.url).pathname;
-  const currentDir = path.dirname(currentFilePath);
-  let workspaceRoot = path.resolve(currentDir, '..', '..');
+  // Enable global raw mode startup buffer
+  const { startStartupBuffer } = await import('./prompt.js');
+  startStartupBuffer();
+
+  // Override console.log to print with carriage returns in raw mode
+  originalLog = console.log;
+  console.log = (...args: any[]) => {
+    const str = args.join(' ').replace(/\r?\n/g, '\r\n') + '\r\n';
+    process.stdout.write(str);
+  };
+
+  // Default to current working directory; --workspace flag overrides
+  let workspaceRoot = process.cwd();
 
   // Parse command line arguments
   const args = process.argv.slice(2);
   let activeModelArg: string | null = null;
   let nonInteractivePrompt: string | null = null;
   const cliAllowedPaths: AllowedPath[] = [];
+
+  let continueSession = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--workspace' && i + 1 < args.length) {
@@ -156,6 +235,8 @@ async function startCli() {
     } else if (args[i] === '--allow-read' && i + 1 < args.length) {
       cliAllowedPaths.push({ path: args[i + 1], mode: 'ro' });
       i++;
+    } else if (args[i] === '-c' || args[i] === '--continue') {
+      continueSession = true;
     }
   }
 
@@ -166,7 +247,9 @@ async function startCli() {
     process.exit(1);
   }
 
-  let activeModel = models[0].name;
+  // Filter out embedding-only models (e.g. nomic-embed-text) for chat default
+  const chatModels = models.filter(m => !m.name.toLowerCase().includes('embed'));
+  let activeModel = (chatModels.length > 0 ? chatModels[0] : models[0]).name;
   if (activeModelArg) {
     const matchIndex = models.findIndex(m => m.name === activeModelArg);
     if (matchIndex !== -1) {
@@ -181,6 +264,7 @@ async function startCli() {
 
   // Load config and merge allowed paths
   const config = loadConfig(workspaceRoot);
+  let activePersonality = config.personality || 'vanilla';
   const rawAllowed = [...(config.allowed_paths || []), ...cliAllowedPaths];
   const resolvedAllowedPaths: AllowedPath[] = [];
   for (const item of rawAllowed) {
@@ -228,19 +312,20 @@ async function startCli() {
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
 
-  // Connect Tier Feature: Local Semantic Search Indexing
+  // Connect Tier Feature: Local Semantic Search Indexing (silent on startup)
   try {
     const { indexMissingEmbeddings } = await import('../pro/search/index.js');
-    await indexMissingEmbeddings(indexer['db']);
+    await indexMissingEmbeddings(indexer.db, true);
   } catch (e) {}
 
-  const filesCount = indexer['db'].getAllFiles().length;
+  const filesCount = indexer.db.getAllFiles().length;
 
   // Setup sandbox with warning callback
   const sandbox = new DirectiveSandbox(
     workspaceRoot,
     state.activeAllowedPaths,
-    (type, msg) => printSystemMessage(type, msg)
+    (type, msg) => printSystemMessage(type, msg),
+    config.strict_sandbox || false
   );
   await sandbox.initialize([], { silent: true });
 
@@ -254,6 +339,41 @@ async function startCli() {
 
   // Print Welcome Banner
   printWelcomeBanner(workspaceRoot, activeModel, contextLimit, filesCount);
+
+  // Project type detection
+  const projectType = detectProjectType(workspaceRoot);
+
+  // First-run detection: no config file AND no existing sessions
+  const existingSessions = sessionStore.list(workspaceRoot).filter(s => s.id !== sessionId);
+  const isFirstRun = !fs.existsSync(path.join(workspaceRoot, 'unit01.json')) && existingSessions.length === 0;
+
+  if (isFirstRun) {
+    const hintLines: string[] = [];
+    if (projectType) {
+      hintLines.push(`📦 ${chalk.hex('#38BDF8')(projectType)} project detected`);
+    }
+    hintLines.push(`◈ Type ${chalk.cyan('/')} to see commands  ·  type anything to begin`);
+    hintLines.push(`◈ Press ${chalk.cyan('Escape')} to stop generation`);
+    console.log('  ' + themeGray('Welcome to unit01 — the local-first AI coding agent.'));
+    for (const hint of hintLines) {
+      console.log('  ' + themeGray(hint));
+    }
+    console.log('');
+  } else if (existingSessions.length > 0) {
+    // Show latest session resume hint for returning users
+    const latest = existingSessions[0];
+    const relTime = getRelativeTime(latest.lastUpdatedAt);
+    const firstMsg = latest.firstMessage.replace(/\r?\n/g, ' ').trim();
+    const truncated = firstMsg.length > 60 ? firstMsg.substring(0, 60) + '...' : firstMsg;
+    const sessionLabel = firstMsg ? `"${themePrimary(truncated)}"` : themeGray('(empty session)');
+    console.log(`  ${themeGray('⤿')} ${themeGray('Last session')} ${themeGray(relTime)} ${themeGray('·')} ${sessionLabel}`);
+    console.log(`  ${themeGray('  Type')} ${chalk.cyan('/sessions')} ${themeGray('to browse all, or just start typing.')}`);
+    console.log('');
+  } else if (projectType) {
+    // Not first run but has project type — show a single-line hint
+    console.log(`  ${themeGray('📦')} ${themeGray(projectType)} ${themeGray('project')}  ·  ${themeGray('type')} ${chalk.cyan('/')} ${themeGray('to see commands')}`);
+    console.log('');
+  }
 
   // Helper functions
   const runCompaction = async (isAuto: boolean): Promise<boolean> => {
@@ -427,14 +547,56 @@ Be specific. Use exact file names, function names, and line numbers where releva
   };
 
   const askQuestion = async () => {
-    const input = await interactivePrompt();
+    // Restore original console.log once prompt loop starts
+    console.log = originalLog;
+
+    // Update status bar before rendering prompt
+    const activeRepoMap = indexer.getRepoMap();
+    const activeChanges = indexer.getRecentChanges();
+    const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
+    const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+    const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
+    const ctxPct = contextLimit > 0 ? Math.round(Math.min(totalTokens / contextLimit, 1.0) * 100) + '%' : '?';
+    setPromptStatus(activeModel, ctxPct, gitBranch);
+
+    // Flush any pending data in stdin that accumulated
+    try {
+      const stdin = process.stdin;
+      if (typeof stdin.setRawMode === 'function') {
+        const wasRaw = stdin.isRaw;
+        stdin.setRawMode(true);
+        while (stdin.read() !== null) {}
+        stdin.setRawMode(wasRaw);
+      }
+    } catch (e) {}
+
+    let input = '';
+    if (state.isNonInteractive) {
+      input = nonInteractivePrompt!;
+    } else {
+      input = await interactivePrompt();
+    }
     const trimmed = input.trim();
     if (!trimmed) {
-      askQuestion();
+      setTimeout(askQuestion, 10);
       return;
     }
 
-    console.log('  ' + themePrimary('❯') + ' ' + chalk.bgHex('#3A4454').hex('#E2E8F0')(' ' + input + ' '));
+    if (!trimmed.startsWith('/')) {
+      const cols = process.stdout.columns || 80;
+      if (input.includes('\n') || input.includes('\r')) {
+        const lines = input.split(/\r?\n/);
+        const formatted = lines.map((line, idx) => {
+          const displayLine = line.length > cols - 4 ? line.slice(0, cols - 6) + '…' : line;
+          if (idx === 0) return '  ' + themePrimary('❯') + ' ' + displayLine;
+          return '    ' + displayLine;
+        }).join('\n');
+        console.log(formatted);
+      } else {
+        const displayText = input.length > cols - 6 ? input.slice(0, cols - 8) + '…' : input;
+        console.log('  ' + themePrimary('❯') + ' ' + chalk.bgHex('#3A4454').hex('#E2E8F0')(' ' + displayText + ' '));
+      }
+    }
 
     currentOperation = trimmed.startsWith('/') ? trimmed.split(/\s+/)[0] : null;
 
@@ -449,6 +611,54 @@ Be specific. Use exact file names, function names, and line numbers where releva
         sandbox.stop();
         rl.close();
         process.exit(0);
+      }
+
+      if (command === '/init') {
+        const sep = '  ' + '─'.repeat(Math.min(process.stdout.columns || 80, 50));
+        console.log('\n' + sep);
+        console.log(`  ${themePrimary('◈')} ${themePrimary.bold('unit01 init')} ${themeGray('·  workspace setup wizard')}`);
+        console.log(sep);
+
+        // 1. Project type
+        const projType = detectProjectType(workspaceRoot);
+        if (projType) {
+          console.log(`  ${themeGray('📦')} ${themeGray('Project:')} ${chalk.hex('#38BDF8')(projType)}`);
+        } else {
+          console.log(`  ${themeGray('📁')} ${themeGray('No recognized project type detected')}`);
+        }
+
+        // 2. Show current model info
+        const ctxK = contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k` : `${contextLimit}`;
+        console.log(`  ${themeGray('🧠')} ${themeGray('Model:')} ${themePrimary(activeModel)} ${themeGray('(' + ctxK + ' ctx)')}`);
+
+        // 3. Pick a personality
+        const personalityKeys = Object.keys(PERSONALITY_TONES);
+        const personalityLabels = personalityKeys.map(k => PERSONALITY_TONES[k].label);
+        console.log(`  ${themeGray('🎭')} ${themeGray('Personality:')}`);
+        const chosenPersonalityIdx = await interactiveSelect('Select conversation personality:', personalityLabels);
+        const chosenPersonality = chosenPersonalityIdx === -1 ? 'vanilla' : personalityKeys[chosenPersonalityIdx];
+        if (chosenPersonalityIdx === -1) {
+          console.log(`  ${themeGray('  →')} ${themePrimary('vanilla')} ${themeGray('(default)')}`);
+        } else {
+          console.log(`  ${themeGray('  →')} ${themePrimary(personalityLabels[chosenPersonalityIdx])}`);
+        }
+        activePersonality = chosenPersonality;
+
+        // 4. Write config
+        const configPath = path.join(workspaceRoot, 'unit01.json');
+        const existingConfig = loadConfig(workspaceRoot);
+        const newConfig: Unit01Config = {
+          ...existingConfig,
+          personality: chosenPersonality,
+          allowed_paths: existingConfig.allowed_paths || [{ path: workspaceRoot, mode: 'rw' }],
+          compact_threshold: existingConfig.compact_threshold || 0.8
+        };
+        fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf8');
+        console.log(`  ${chalk.green('✓')} ${themeGray('Config written to')} ${chalk.cyan('unit01.json')}`);
+        console.log(sep + '\n');
+        console.log(`  ${themeGray('You\'re all set. Type')} ${chalk.cyan('/')} ${themeGray('to see commands.')}\n`);
+        askQuestion();
+        return;
       }
 
       if (command === '/clear') {
@@ -612,15 +822,15 @@ Be specific. Use exact file names, function names, and line numbers where releva
             }
           }
 
-          const services = ['GitHub', 'GitLab', 'Slack', 'Notion', 'Discord', 'Telegram', 'Web Search'];
-          const serviceKeys = ['github', 'gitlab', 'slack', 'notion', 'discord', 'telegram', 'web-search'];
+          const services = ['GitHub', 'Slack', 'Notion', 'Discord', 'Telegram', 'Tavily Search', 'Exa Search', 'Jina Reader', 'Serper.dev Search', 'Pro License'];
+          const serviceKeys = ['github', 'slack', 'notion', 'discord', 'telegram', 'tavily', 'exa', 'jina', 'serper', 'pro-license'];
           
           const { isServiceConnected } = await import('../pro/connect/index.js');
           
           const options = services.map((svc, i) => {
-            const connected = isServiceConnected(serviceKeys[i]);
-            const status = connected ? chalk.green('✓ Connected') : themeGray('Not Connected');
-            return `${svc.padEnd(12)} [${status}]`;
+             const connected = isServiceConnected(serviceKeys[i]);
+             const status = connected ? chalk.green('✓ Connected') : themeGray('Not Connected');
+             return `${svc.padEnd(20)} [${status}]`;
           });
 
           console.log(`\n  ॐ  ${themePrimary.bold('unit01 connect')}  ${themeGray('·  Select Service to Authenticate')}`);
@@ -645,10 +855,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             if (actionIdx === 1) {
               const { disconnectService } = await import('../pro/connect/index.js');
               disconnectService(service);
-              if (service === 'web-search') {
-                disconnectService('google-api-key');
-                disconnectService('google-cx');
-              } else if (service === 'github') {
+              if (service === 'github') {
                 disconnectService('github-token');
               } else if (service === 'slack') {
                 disconnectService('slack-token');
@@ -662,7 +869,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
 
               try {
                 const { AuditLogStore } = await import('../pro/audit/index.js');
-                const auditStore = new AuditLogStore(indexer['db']);
+                const auditStore = new AuditLogStore(indexer.db);
                 auditStore.logAction({
                   service: 'connect',
                   operation: 'disconnect',
@@ -682,105 +889,58 @@ Be specific. Use exact file names, function names, and line numbers where releva
             }
           }
 
-          if (service === 'web-search') {
-            await new Promise<void>((resolve) => {
-              rl.question('🔑 Enter Google Custom Search API Key (or press Enter to go back): ', (keyInput) => {
-                const key = keyInput.trim();
-                if (!key || key === '/back') {
-                  console.log(chalk.gray('Cancelled.'));
-                  runConnectMenu().then(resolve);
-                  return;
-                }
-                rl.question('🔑 Enter Google Search Engine ID (CX) (or press Enter to go back): ', async (cxInput) => {
-                  const cx = cxInput.trim();
-                  if (!cx || cx === '/back') {
-                    console.log(chalk.gray('Cancelled.'));
-                    runConnectMenu().then(resolve);
-                    return;
-                  }
+          const keyNameMap: Record<string, string> = {
+            github: 'github-token',
+            slack: 'slack-token',
+            discord: 'discord-token',
+            telegram: 'telegram-token',
+            notion: 'notion-token'
+          };
+          const storageKey = keyNameMap[service] || service;
+          const isApiKey = ['tavily', 'exa', 'jina', 'serper', 'pro-license'].includes(service);
+          const promptMsg = isApiKey 
+            ? `🔑 Enter ${serviceName} API Key/Token (or press Enter to go back): `
+            : `🔑 Enter ${serviceName} Personal Access Token (or press Enter to go back): `;
 
-                  process.stdout.write(`\n  ${themeOrange('⠋')} Validating Web Search credentials...`);
-                  const { connectService } = await import('../pro/connect/index.js');
-                  try {
-                    await connectService('google-api-key', key);
-                    await connectService('google-cx', cx);
+          await new Promise<void>((resolve) => {
+            rl.question(promptMsg, async (tokenInput) => {
+              const token = tokenInput.trim();
+              if (!token || token === '/back') {
+                console.log(chalk.gray('Cancelled.'));
+                runConnectMenu().then(resolve);
+                return;
+              }
 
-                    try {
-                      const { AuditLogStore } = await import('../pro/audit/index.js');
-                      const auditStore = new AuditLogStore(indexer['db']);
-                      auditStore.logAction({
-                        service: 'connect',
-                        operation: 'connect',
-                        target: 'web-search',
-                        payload_summary: `Connected Google Web Search`,
-                        payload_hash: crypto.createHash('sha256').update(key + cx).digest('hex'),
-                        status: 'completed'
-                      });
-                    } catch (_) {}
+              process.stdout.write(`\n  ${themeOrange('⠋')} Validating ${serviceName} credentials...`);
+              const { connectService } = await import('../pro/connect/index.js');
+              try {
+                await connectService(service, token);
+                await connectService(storageKey, token);
 
-                    readline.clearLine(process.stdout, 0);
-                    readline.cursorTo(process.stdout, 0);
-                    console.log(chalk.green(`✓ Successfully connected Google Web Search!`));
-                  } catch (e: any) {
-                    readline.clearLine(process.stdout, 0);
-                    readline.cursorTo(process.stdout, 0);
-                    console.log(chalk.red(`✗ Failed: ${e.message}`));
-                  }
-                  resolve();
-                });
-              });
-            });
-          } else {
-            const keyNameMap: Record<string, string> = {
-              github: 'github-token',
-              slack: 'slack-token',
-              discord: 'discord-token',
-              telegram: 'telegram-token',
-              notion: 'notion-token',
-              gitlab: 'gitlab-token'
-            };
-            const storageKey = keyNameMap[service] || service;
-
-            await new Promise<void>((resolve) => {
-              rl.question(`🔑 Enter ${serviceName} Personal Access Token (or press Enter to go back): `, async (tokenInput) => {
-                const token = tokenInput.trim();
-                if (!token || token === '/back') {
-                  console.log(chalk.gray('Cancelled.'));
-                  runConnectMenu().then(resolve);
-                  return;
-                }
-
-                process.stdout.write(`\n  ${themeOrange('⠋')} Validating ${serviceName} credentials...`);
-                const { connectService } = await import('../pro/connect/index.js');
                 try {
-                  await connectService(service, token);
-                  await connectService(storageKey, token);
+                  const { AuditLogStore } = await import('../pro/audit/index.js');
+                  const auditStore = new AuditLogStore(indexer.db);
+                  auditStore.logAction({
+                    service: 'connect',
+                    operation: 'connect',
+                    target: service,
+                    payload_summary: `Connected ${serviceName}`,
+                    payload_hash: crypto.createHash('sha256').update(token).digest('hex'),
+                    status: 'completed'
+                  });
+                } catch (_) {}
 
-                  try {
-                    const { AuditLogStore } = await import('../pro/audit/index.js');
-                    const auditStore = new AuditLogStore(indexer['db']);
-                    auditStore.logAction({
-                      service: 'connect',
-                      operation: 'connect',
-                      target: service,
-                      payload_summary: `Connected ${serviceName}`,
-                      payload_hash: crypto.createHash('sha256').update(token).digest('hex'),
-                      status: 'completed'
-                    });
-                  } catch (_) {}
-
-                  readline.clearLine(process.stdout, 0);
-                  readline.cursorTo(process.stdout, 0);
-                  console.log(chalk.green(`✓ Successfully connected ${serviceName}!`));
-                } catch (e: any) {
-                  readline.clearLine(process.stdout, 0);
-                  readline.cursorTo(process.stdout, 0);
-                  console.log(chalk.red(`✗ Failed: ${e.message}`));
-                }
-                resolve();
-              });
+                readline.clearLine(process.stdout, 0);
+                readline.cursorTo(process.stdout, 0);
+                console.log(chalk.green(`✓ Successfully connected ${serviceName}!`));
+              } catch (e: any) {
+                readline.clearLine(process.stdout, 0);
+                readline.cursorTo(process.stdout, 0);
+                console.log(chalk.red(`✗ Failed: ${e.message}`));
+              }
+              resolve();
             });
-          }
+          });
         };
 
         await runConnectMenu();
@@ -795,7 +955,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
 
         try {
           const { AuditLogStore } = await import('../pro/audit/index.js');
-          const auditStore = new AuditLogStore(indexer['db']);
+          const auditStore = new AuditLogStore(indexer.db);
 
           if (subCommand === 'list' || !subCommand) {
             const logs = auditStore.getRecentLogs(15);
@@ -947,7 +1107,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
       }
 
       if (command === '/undo') {
-        const dbBackup = indexer['db']['db'].prepare('SELECT original_path FROM shadow_backups LIMIT 1').get() as { original_path: string } | undefined;
+        const dbBackup = indexer.db.db.prepare('SELECT original_path FROM shadow_backups LIMIT 1').get() as { original_path: string } | undefined;
         if (dbBackup) {
           const restoredPath = dbBackup.original_path;
           const success = indexer.undoWrite(restoredPath);
@@ -1009,6 +1169,43 @@ Be specific. Use exact file names, function names, and line numbers where releva
         return;
       }
 
+      if (command === '/personality') {
+        let cleanedArg = arg ? arg.trim() : '';
+        if (cleanedArg.startsWith('<') && cleanedArg.endsWith('>')) {
+          cleanedArg = cleanedArg.slice(1, -1).trim();
+        }
+
+        const personalityKeys = Object.keys(PERSONALITY_TONES);
+
+        if (cleanedArg) {
+          const matchKey = personalityKeys.find(
+            k => k === cleanedArg || PERSONALITY_TONES[k].label.toLowerCase().includes(cleanedArg.toLowerCase())
+          );
+          if (matchKey) {
+            activePersonality = matchKey;
+            console.log(chalk.cyan(`Switched to active personality: ${PERSONALITY_TONES[matchKey].label}`));
+          } else {
+            printSystemMessage('error', `Personality "${cleanedArg}" not found. Available keys: ${personalityKeys.join(', ')}`);
+          }
+          askQuestion();
+        } else {
+          const options = personalityKeys.map((k) => {
+            const activeIndicator = k === activePersonality ? ' (active)' : '';
+            return `${PERSONALITY_TONES[k].label}${activeIndicator}`;
+          });
+          const chosenIdx = await interactiveSelect('Select Active Personality:', options);
+          if (chosenIdx !== -1) {
+            const selectedKey = personalityKeys[chosenIdx];
+            activePersonality = selectedKey;
+            console.log(chalk.cyan(`Switched to active personality: ${PERSONALITY_TONES[selectedKey].label}`));
+          } else {
+            console.log(chalk.gray('Personality selection cancelled.'));
+          }
+          askQuestion();
+        }
+        return;
+      }
+
       if (command === '/thinking') {
         const chosenIdx = await interactiveSelect('Model Thinking Mode:', [
           `Enable Thinking  ${thinkingEnabled ? '✓' : ''}`,
@@ -1048,7 +1245,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
         const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
         const ratio = Math.min(totalTokens / contextLimit, 1.0);
         
-        const filesCount = indexer['db'].getAllFiles().length;
+        const filesCount = indexer.db.getAllFiles().length;
         const ratioPct = Math.round(ratio * 100);
         
         let displayWorkspace = workspaceRoot;
@@ -1113,7 +1310,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
       }
 
       if (command === '/files') {
-        const allFiles = indexer['db'].getAllFiles();
+        const allFiles = indexer.db.getAllFiles();
         console.log(chalk.bold(`\nIndexed Files (${allFiles.length}):`));
         allFiles.forEach(f => {
           const rel = path.relative(workspaceRoot, f.path);
@@ -1128,45 +1325,6 @@ Be specific. Use exact file names, function names, and line numbers where releva
         console.log(chalk.yellow('Re-scanning workspace and rebuilding index...'));
         await indexer.initialize();
         console.log(chalk.cyan('Index successfully rebuilt.'));
-        askQuestion();
-        return;
-      }
-
-      if (command === '/help') {
-        const cols = process.stdout.columns || 80;
-        const rule = '  ' + '─'.repeat(Math.min(cols - 4, 40));
-        console.log('\n' + rule);
-        console.log(`  ${themePrimary('◈')} ${themePrimary.bold('unit01')} ${themeGray(' ·  help')}`);
-        console.log(rule);
-        
-        const helpCommands = [
-          { cmd: '/models', desc: 'switch the active model' },
-          { cmd: '/thinking', desc: 'toggle reasoning blocks' },
-          { cmd: '/status', desc: 'system info' },
-          { cmd: '/usage', desc: 'context window usage' },
-          { cmd: '/sessions', desc: 'browse saved sessions' },
-          { cmd: '/compact', desc: 'compress context' },
-          { cmd: '/clear', desc: 'clear conversation' },
-          { cmd: '/connect', desc: 'manage secure service connections' },
-          { cmd: '/audit', desc: 'view and undo secure audit trail actions' },
-          { cmd: '/autopilot', desc: 'toggle Plan-Code-Test self-healing pipeline' },
-          { cmd: '/reset-password', desc: 'reset vault password (Linux)' },
-          { cmd: '/help', desc: 'show this menu' },
-          { cmd: '/exit', desc: 'quit unit01' },
-          { cmd: '/files', desc: 'list indexed files' },
-          { cmd: '/reindex', desc: 're-index workspace' },
-          { cmd: '/export', desc: 'export session' },
-          { cmd: '/preview', desc: 'preview last file' },
-          { cmd: '/changes', desc: 'view recent changes' },
-          { cmd: '/undo', desc: 'revert last change' },
-          { cmd: '/search', desc: 'search codebase' }
-        ];
-
-        for (const item of helpCommands) {
-          console.log(`  ${themePrimary(item.cmd.padEnd(14))}${themeGray(item.desc)}`);
-        }
-        console.log(rule + '\n');
-        
         askQuestion();
         return;
       }
@@ -1204,26 +1362,19 @@ Be specific. Use exact file names, function names, and line numbers where releva
       const currentRepoMap = indexer.getRepoMap();
       const currentChanges = indexer.getRecentChanges();
 
-      let routedModel = activeModel;
-      try {
-        const { routeTaskModel } = await import('../pro/autopilot/index.js');
-        const target = routeTaskModel(conversationHistory[conversationHistory.length - 1]?.content || '', activeModel);
-        routedModel = target.modelName;
-        if (target.tier !== 'local-main') {
-          console.log(chalk.cyan(`  🧠 [Autopilot Router] ${target.reason} (routed to ${routedModel})`));
-        }
-      } catch (e) {}
+      const routedModel = activeModel;
 
       let memoryBlock = '';
       try {
         const { ProjectMemoryStore } = await import('../pro/memory/index.js');
-        const memoryStore = new ProjectMemoryStore(indexer['db']);
+        const memoryStore = new ProjectMemoryStore(indexer.db);
         memoryBlock = memoryStore.generateMemoryContextBlock();
       } catch (e) {}
       
+      const toneBlock = PERSONALITY_TONES[activePersonality]?.instruction || PERSONALITY_TONES['vanilla'].instruction;
       const systemMessage = {
         role: 'system',
-        content: `${SYSTEM_INSTRUCTIONS}\n\n[Active Repository Map]\n${currentRepoMap}\n\n${currentChanges}${memoryBlock}`
+        content: `${SYSTEM_INSTRUCTIONS}\n\n<conversational_tone>\n${toneBlock}\n</conversational_tone>\n\n[Active Repository Map]\n${currentRepoMap}\n\n${currentChanges}${memoryBlock}`
       };
 
       const activePayload = [systemMessage, ...conversationHistory];
@@ -1542,6 +1693,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             try {
               stdin.removeListener('keypress', onKeypress);
               stdin.setRawMode(wasRaw);
+              stdin.pause(); // Reset flowing mode so next interactivePrompt gets clean data events
             } catch (_) {}
           }
         }
@@ -1553,13 +1705,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             readline.cursorTo(process.stdout, 0);
             readline.moveCursor(process.stdout, 0, -1);
           }
-          const cols = process.stdout.columns || 80;
-          const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
-          if (linesToClear > 0) {
-            readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
-            readline.cursorTo(process.stdout, 0);
-            readline.clearScreenDown(process.stdout);
-          }
+          process.stdout.write('\n');
           printSystemMessage('guard', 'Generation aborted: text repetition loop detected.');
           conversationHistory.push({
             role: 'system',
@@ -1574,13 +1720,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           readline.cursorTo(process.stdout, 0);
           readline.moveCursor(process.stdout, 0, -1);
         }
-        const cols = process.stdout.columns || 80;
-        const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
-        if (linesToClear > 0) {
-          readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
-          readline.cursorTo(process.stdout, 0);
-          readline.clearScreenDown(process.stdout);
-        }
+        process.stdout.write('\n');
 
         const isAbort = err.name === 'AbortError' || 
                         err.message?.includes('aborted') || 
@@ -1618,50 +1758,8 @@ Be specific. Use exact file names, function names, and line numbers where releva
         readline.moveCursor(process.stdout, 0, -1);
       }
 
-      // Clear raw stream output and print formatted markdown response
-      const cols = process.stdout.columns || 80;
-      const linesToClear = printedStreamText ? countVisualLines(printedStreamText, cols) : 0;
-      if (linesToClear > 0) {
-        readline.moveCursor(process.stdout, 0, -(linesToClear - 1));
-        readline.cursorTo(process.stdout, 0);
-        readline.clearScreenDown(process.stdout);
-      }
-
-      // Strip tool tags so only the explanation text is rendered as markdown
-      let cleanText = modelResponse
-        .replace(/<run_command\s*>[\s\S]*?(?:<\/run_command>|$)/g, '')
-        .replace(/<read_file\s*[^>]*>[\s\S]*?(?:<\/read_file>|$)/g, '')
-        .replace(/<search_code\s*>[\s\S]*?(?:<\/search_code>|$)/g, '')
-        .replace(/<web_search\s*>[\s\S]*?(?:<\/web_search>|$)/g, '')
-        .replace(/<write_file\s*[^>]*>[\s\S]*?(?:<\/write_file>|$)/g, '')
-        .replace(/<patch_file\s*[^>]*>[\s\S]*?(?:<\/patch_file>|$)/g, '')
-        .replace(/<patch_file_blocks\s*[^>]*>[\s\S]*?(?:<\/patch_file_blocks>|$)/g, '')
-        .replace(/<list_dir\s*[^>]*>[\s\S]*?(?:<\/list_dir>|$)/g, '')
-        .replace(/<git_status\s*[^>]*>[\s\S]*?(?:<\/git_status>|$)/g, '')
-        .replace(/<diagnostics\s*[^>]*>[\s\S]*?(?:<\/diagnostics>|$)/g, '')
-        .replace(/<move_file\s*[^>]*>[\s\S]*?(?:<\/move_file>|$)/g, '')
-        .replace(/<(?:path_)?question\s*[^>]*\/>/g, '')
-        .replace(/<(?:path_)?question\s*[^>]*>[\s\S]*?(?:<\/(?:path_)?question>|$)/g, '')
-        .replace(/<decision\s*[^>]*>[\s\S]*?(?:<\/decision>|$)/g, '')
-        .replace(/<convention\s*[^>]*>[\s\S]*?(?:<\/convention>|$)/g, '')
-        .trim();
-
-      if (!thinkingEnabled) {
-        cleanText = cleanText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      } else {
-        // Format think blocks nicely in slate-gray side-bordered box
-        cleanText = cleanText.replace(/<think>([\s\S]*?)<\/think>/g, (_, thinkContent) => {
-          const trimmed = thinkContent.trim();
-          if (!trimmed) return '';
-          const bordered = trimmed.split('\n').map((l: string) => `  ${themeGray('│')} ${themeGray.italic(l)}`).join('\n');
-          return `\n\n  ${themeGray.bold('🧠 Thinking:')}\n${bordered}\n\n`;
-        }).trim();
-      }
-
-      if (cleanText && !isGui) {
-        const formatted = renderMarkdown(cleanText);
-        console.log(`${themeAccent('●')} ${formatted}`);
-      }
+      // Terminate the streaming output line cleanly
+      process.stdout.write('\n');
 
       // Connect Tier: Auto-intercept decisions & conventions tags in model response
       try {
@@ -1671,7 +1769,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           const summary = decisionMatch[2];
           const rationale = decisionMatch[3].trim();
           const { ProjectMemoryStore } = await import('../pro/memory/index.js');
-          const memoryStore = new ProjectMemoryStore(indexer['db']);
+          const memoryStore = new ProjectMemoryStore(indexer.db);
           memoryStore.logDecision({
             category,
             summary,
@@ -1686,7 +1784,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
           const key = conventionMatch[1];
           const pattern = conventionMatch[2].trim();
           const { ProjectMemoryStore } = await import('../pro/memory/index.js');
-          const memoryStore = new ProjectMemoryStore(indexer['db']);
+          const memoryStore = new ProjectMemoryStore(indexer.db);
           memoryStore.upsertConvention(key, pattern);
           console.log(chalk.cyan(`  🧠 [Project Memory] Saved coding convention: [${key}]`));
         }
@@ -1695,7 +1793,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
       // Connect Tier Feature: Local Semantic Search background indexing updates
       try {
         const { indexMissingEmbeddings } = await import('../pro/search/index.js');
-        await indexMissingEmbeddings(indexer['db']);
+        await indexMissingEmbeddings(indexer.db);
       } catch (e) {}
 
       // Parse tool calls in output
@@ -1716,7 +1814,7 @@ Be specific. Use exact file names, function names, and line numbers where releva
             },
             async (errorLog) => {
               console.log(chalk.red(`🤖 [Autopilot] Self-healing iteration triggered. Feeding error output back to model.`));
-              toolResult.nextPrompt = `<tool_output>\nVerification command failed:\n${errorLog}\n\nPlease self-heal and resolve this compilation/test failure by adjusting the code.\n</tool_output>`;
+              toolResult.nextPrompt = `<tool_output>\nVerification command failed:\n${errorLog}\n\n[Self-Healing Mode Instructions]\nYou are now in self-healing mode. To resolve this:\n1. Carefully analyze the error log and identify the failing file, line, and symbol.\n2. Read the surrounding lines of the failing file before writing a patch.\n3. Fix ONLY the root cause of the compilation failure or test assertion error. Do not make unrelated changes.\n4. Avoid repetitive edits—if your previous patch failed, try a different code structure or inspect imported files.\n</tool_output>`;
               return true;
             }
           );
@@ -1758,12 +1856,20 @@ Be specific. Use exact file names, function names, and line numbers where releva
     await runAgentLoop(state.isNonInteractive);
   };
 
-  if (state.isNonInteractive) {
-    conversationHistory.push({ role: 'user', content: nonInteractivePrompt! });
-    await runCompaction(true); // run dynamic context estimation checks
-  } else {
-    askQuestion();
+  // Auto-continue last session on -c / --continue flag
+  if (continueSession) {
+    const sessions = sessionStore.list(workspaceRoot).filter(s => s.id !== sessionId);
+    if (sessions.length > 0) {
+      const latest = sessions[0];
+      console.log(`  ${chalk.cyan('⤿ Continuing last session')} ${themeGray('(' + getRelativeTime(latest.lastUpdatedAt) + ')')}\n`);
+      await resumeSession(latest);
+      return;
+    } else {
+      console.log(`  ${themeGray('No previous sessions to resume. Starting fresh.')}\n`);
+    }
   }
+
+  askQuestion();
 }
 
 startCli().catch(err => {

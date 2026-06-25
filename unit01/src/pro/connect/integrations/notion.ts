@@ -1,5 +1,6 @@
 import { getCredential } from '../vault.js';
 import { getFromKeychain } from '../keychain.js';
+import { disconnectService } from '../index.js';
 
 /**
  * Retrieve Notion integration token from keychain (macOS) or encrypted vault (Linux).
@@ -32,6 +33,12 @@ export async function appendNotionBlocks(blockId: string, children: any[]): Prom
     body: JSON.stringify({ children })
   });
 
+  if (response.status === 401) {
+    disconnectService('notion');
+    disconnectService('notion-token');
+    throw new Error('[Authentication Error] Stored token for notion is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect notion" to re-authenticate.');
+  }
+
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`Notion API error: Status ${response.status} - ${errText}`);
@@ -56,6 +63,12 @@ export async function queryNotionDatabase(databaseId: string, filter?: any): Pro
     body: JSON.stringify(filter ? { filter } : {})
   });
 
+  if (response.status === 401) {
+    disconnectService('notion');
+    disconnectService('notion-token');
+    throw new Error('[Authentication Error] Stored token for notion is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect notion" to re-authenticate.');
+  }
+
   if (!response.ok) {
     throw new Error(`Notion API error: Status ${response.status}`);
   }
@@ -77,6 +90,12 @@ export async function fetchNotionPage(pageId: string): Promise<any> {
       'Notion-Version': '2022-06-28'
     }
   });
+
+  if (response.status === 401) {
+    disconnectService('notion');
+    disconnectService('notion-token');
+    throw new Error('[Authentication Error] Stored token for notion is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect notion" to re-authenticate.');
+  }
 
   if (!response.ok) {
     throw new Error(`Notion API error: Status ${response.status}`);

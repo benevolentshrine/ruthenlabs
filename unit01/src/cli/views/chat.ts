@@ -64,17 +64,28 @@ export function renderMarkdown(markdown: string): string {
 }
 
 // Note: This function contains a hardcoded list of tool tag names that must be kept in sync manually if new tools are added elsewhere in the codebase.
-export function processChunk(chunk: string, state: { buffer: string; suppressed: boolean; inCodeBlock?: boolean }): string {
-  if (state.suppressed) {
-    return '';
+// Note: This function contains a hardcoded list of tool tag names that must be kept in sync manually if new tools are added elsewhere in the codebase.
+export function processChunk(
+  chunk: string, 
+  state: { 
+    buffer: string; 
+    suppressed: boolean; 
+    inCodeBlock?: boolean;
+    inThink?: boolean;
+    codeBuffer?: string;
+    printedCodeLinesCount?: number;
+    currentIncompleteLine?: string;
+    lineBuffer?: string;
+    language?: string;
   }
-  
-  if (state.inCodeBlock === undefined) {
-    state.inCodeBlock = false;
-  }
-
-  let full = state.buffer + chunk;
-  let result = '';
+): string {
+  if (state.inCodeBlock === undefined) state.inCodeBlock = false;
+  if (state.inThink === undefined) state.inThink = false;
+  if (state.codeBuffer === undefined) state.codeBuffer = '';
+  if (state.printedCodeLinesCount === undefined) state.printedCodeLinesCount = 0;
+  if (state.currentIncompleteLine === undefined) state.currentIncompleteLine = '';
+  if (state.lineBuffer === undefined) state.lineBuffer = '';
+  if (state.language === undefined) state.language = '';
 
   const toolTags = [
     '<run_command',
@@ -91,29 +102,79 @@ export function processChunk(chunk: string, state: { buffer: string; suppressed:
     '<path_question'
   ];
 
-  while (full.length > 0) {
-    if (state.inCodeBlock) {
-      // In a code block, suppress all output until we see a closing ```
-      const closeIdx = full.indexOf('```');
+  // We append incoming chunk to state.buffer
+  state.buffer += chunk;
+
+  while (state.buffer.length > 0) {
+    if (state.suppressed) {
+      // Once suppressed, return nothing. Clearing/resetting is managed at the end of the streaming loop in index.ts
+      return '';
+    }
+
+    if (state.inThink) {
+      const closeIdx = state.buffer.indexOf('</think>');
       if (closeIdx !== -1) {
-        state.inCodeBlock = false;
-        full = full.substring(closeIdx + 3);
+        const thinkPart = state.buffer.substring(0, closeIdx);
+        processThinkText(thinkPart, true);
+
+        state.inThink = false;
+        state.buffer = state.buffer.substring(closeIdx + 8);
+        process.stdout.write('\n'); // blank line after thinking
       } else {
-        // Keep partial trailing backticks in the buffer
-        const match = /`{1,2}$/.exec(full);
-        if (match) {
-          state.buffer = match[0];
-        } else {
-          state.buffer = '';
+        const partialTagMatch = /<\/t?h?i?n?k?>?$/.exec(state.buffer);
+        let processLen = state.buffer.length;
+        if (partialTagMatch) {
+          processLen = partialTagMatch.index;
         }
-        return result;
+        if (processLen > 0) {
+          const thinkPart = state.buffer.substring(0, processLen);
+          processThinkText(thinkPart, false);
+          state.buffer = state.buffer.substring(processLen);
+        }
+        return '';
+      }
+    } else if (state.inCodeBlock) {
+      // Check if we see the end of code block
+      const closeIdx = state.buffer.indexOf('```');
+      if (closeIdx !== -1) {
+        // Process any code text before the closing ```
+        const codePart = state.buffer.substring(0, closeIdx);
+        processCodeText(codePart, true);
+
+        state.inCodeBlock = false;
+        state.buffer = state.buffer.substring(closeIdx + 3);
+        
+        // Print bottom rule
+        const cols = process.stdout.columns || 80;
+        const ruleLen = Math.max(cols - 4, 20);
+        process.stdout.write('\r\u001b[K  ' + themeBorder('─'.repeat(ruleLen)) + '\n\n');
+        
+        // Reset code state
+        state.codeBuffer = '';
+        state.printedCodeLinesCount = 0;
+        state.currentIncompleteLine = '';
+        state.language = '';
+      } else {
+        // No closing ``` yet. Process all code text we have, keeping trailing backticks in buffer
+        const backtickMatch = /`{1,2}$/.exec(state.buffer);
+        let processLen = state.buffer.length;
+        if (backtickMatch) {
+          processLen = backtickMatch.index;
+        }
+        if (processLen > 0) {
+          const codePart = state.buffer.substring(0, processLen);
+          processCodeText(codePart, false);
+          state.buffer = state.buffer.substring(processLen);
+        }
+        return '';
       }
     } else {
+      // Look for tool tags, code block start, or think block start
       let earliestIdx = -1;
-      let matchType: 'tool' | 'code' = 'tool';
+      let matchType: 'tool' | 'code' | 'think' = 'tool';
 
       for (const tag of toolTags) {
-        const idx = full.indexOf(tag);
+        const idx = state.buffer.indexOf(tag);
         if (idx !== -1) {
           if (earliestIdx === -1 || idx < earliestIdx) {
             earliestIdx = idx;
@@ -122,7 +183,7 @@ export function processChunk(chunk: string, state: { buffer: string; suppressed:
         }
       }
 
-      const codeIdx = full.indexOf('```');
+      const codeIdx = state.buffer.indexOf('```');
       if (codeIdx !== -1) {
         if (earliestIdx === -1 || codeIdx < earliestIdx) {
           earliestIdx = codeIdx;
@@ -130,45 +191,223 @@ export function processChunk(chunk: string, state: { buffer: string; suppressed:
         }
       }
 
+      const thinkIdx = state.buffer.indexOf('<think>');
+      if (thinkIdx !== -1) {
+        if (earliestIdx === -1 || thinkIdx < earliestIdx) {
+          earliestIdx = thinkIdx;
+          matchType = 'think';
+        }
+      }
+
       if (earliestIdx !== -1) {
         if (matchType === 'tool') {
+          // Process text before the tool tag
+          const before = state.buffer.substring(0, earliestIdx);
+          processNormalText(before);
+
           state.suppressed = true;
           state.buffer = '';
-          result += full.substring(0, earliestIdx);
-          return result;
-        } else {
-          result += full.substring(0, earliestIdx);
+          return '';
+        } else if (matchType === 'code') {
+          // Process text before code block
+          const before = state.buffer.substring(0, earliestIdx);
+          processNormalText(before);
+
           state.inCodeBlock = true;
-          full = full.substring(earliestIdx + 3);
+          const startPart = state.buffer.substring(earliestIdx + 3);
+          const newlineIdx = startPart.indexOf('\n');
+          let lang = '';
+          let consumeLen = 3;
+          if (newlineIdx !== -1 && newlineIdx < 20) {
+            lang = startPart.substring(0, newlineIdx).trim();
+            consumeLen += newlineIdx + 1;
+          }
+          state.language = lang;
+
+          // Print top rule
+          const cols = process.stdout.columns || 80;
+          const ruleLen = Math.max(cols - 4, 20);
+          const topRule = '  ' + (lang
+            ? themePrimary(lang) + ' ' + themeBorder('─'.repeat(Math.max(ruleLen - lang.length - 1, 0)))
+            : themeBorder('─'.repeat(ruleLen)));
+          
+          process.stdout.write('\r\u001b[K' + topRule + '\n');
+
+          state.buffer = startPart.substring(lang ? newlineIdx + 1 : 0);
+        } else {
+          // Process text before think block
+          const before = state.buffer.substring(0, earliestIdx);
+          processNormalText(before);
+
+          state.inThink = true;
+          process.stdout.write('\n  ' + themeGray.bold('🧠 Thinking:') + '\n');
+          state.buffer = state.buffer.substring(earliestIdx + 7);
         }
       } else {
-        const tagMatch = /<[a-zA-Z_]*$/.exec(full);
+        // No match. Check if we have partial tags at the end of the buffer
+        const tagMatch = /<[a-zA-Z_]*$/.exec(state.buffer);
         if (tagMatch) {
           const partial = tagMatch[0];
           const isPrefix = toolTags.some(t => t.startsWith(partial));
           if (isPrefix) {
+            const before = state.buffer.substring(0, tagMatch.index);
+            processNormalText(before);
             state.buffer = partial;
-            result += full.substring(0, tagMatch.index);
-            return result;
+            return '';
           }
         }
 
-        const codeMatch = /`{1,2}$/.exec(full);
+        const codeMatch = /`{1,2}$/.exec(state.buffer);
         if (codeMatch) {
+          const before = state.buffer.substring(0, codeMatch.index);
+          processNormalText(before);
           state.buffer = codeMatch[0];
-          result += full.substring(0, codeMatch.index);
-          return result;
+          return '';
         }
 
-        result += full;
+        const thinkMatch = /<t?h?i?n?k?>?$/.exec(state.buffer);
+        if (thinkMatch) {
+          const partial = thinkMatch[0];
+          if ('<think>'.startsWith(partial)) {
+            const before = state.buffer.substring(0, thinkMatch.index);
+            processNormalText(before);
+            state.buffer = partial;
+            return '';
+          }
+        }
+
+        // Output everything as normal text
+        processNormalText(state.buffer);
         state.buffer = '';
-        return result;
       }
     }
   }
 
-  state.buffer = '';
-  return result;
+  return '';
+
+  // Helper to process think block content
+  function processThinkText(text: string, isClosing: boolean) {
+    let combined = state.currentIncompleteLine + text;
+    const lines = combined.split('\n');
+    const completeLinesCount = lines.length - 1;
+
+    for (let i = 0; i < completeLinesCount; i++) {
+      const line = lines[i];
+      process.stdout.write('\r\u001b[K');
+      process.stdout.write(`  ${themeGray('│')} ${themeGray.italic(line)}\n`);
+    }
+
+    const lastLine = lines[lines.length - 1];
+    state.currentIncompleteLine = lastLine;
+
+    if (isClosing && lastLine !== undefined) {
+      process.stdout.write('\r\u001b[K');
+      process.stdout.write(`  ${themeGray('│')} ${themeGray.italic(lastLine)}\n`);
+      state.currentIncompleteLine = '';
+    } else if (!isClosing && lastLine) {
+      process.stdout.write('\r\u001b[K');
+      process.stdout.write(`  ${themeGray('│')} ${themeGray.italic(lastLine)}`);
+    }
+  }
+
+  // Helper to process code block content
+  function processCodeText(text: string, isClosing: boolean) {
+    let combined = state.currentIncompleteLine + text;
+    const lines = combined.split('\n');
+    const completeLinesCount = lines.length - 1;
+
+    for (let i = 0; i < completeLinesCount; i++) {
+      const line = lines[i];
+      process.stdout.write('\r\u001b[K');
+      state.codeBuffer += (state.codeBuffer ? '\n' : '') + line;
+
+      let highlighted = state.codeBuffer!;
+      if (state.language) {
+        try {
+          highlighted = highlightCli(state.codeBuffer!, { language: state.language });
+        } catch (_) {
+          highlighted = themeAccentLight(state.codeBuffer!);
+        }
+      } else {
+        highlighted = themeAccentLight(state.codeBuffer!);
+      }
+
+      const highlightedLines = highlighted.split('\n');
+      const newLineToPrint = highlightedLines[state.printedCodeLinesCount!] || line;
+      process.stdout.write('  ' + newLineToPrint + '\n');
+      state.printedCodeLinesCount!++;
+    }
+
+    const lastLine = lines[lines.length - 1];
+    state.currentIncompleteLine = lastLine;
+
+    if (isClosing && lastLine !== undefined) {
+      process.stdout.write('\r\u001b[K');
+      state.codeBuffer += (state.codeBuffer ? '\n' : '') + lastLine;
+      let highlighted = state.codeBuffer!;
+      if (state.language) {
+        try {
+          highlighted = highlightCli(state.codeBuffer!, { language: state.language });
+        } catch (_) {
+          highlighted = themeAccentLight(state.codeBuffer!);
+        }
+      } else {
+        highlighted = themeAccentLight(state.codeBuffer!);
+      }
+      const highlightedLines = highlighted.split('\n');
+      const newLineToPrint = highlightedLines[state.printedCodeLinesCount!] || lastLine;
+      process.stdout.write('  ' + newLineToPrint + '\n');
+      state.printedCodeLinesCount!++;
+      state.currentIncompleteLine = '';
+    } else if (!isClosing && lastLine) {
+      process.stdout.write('\r\u001b[K');
+      process.stdout.write('  ' + themeAccentLight(lastLine));
+    }
+  }
+
+  // Helper to process normal markdown text
+  function processNormalText(text: string) {
+    let combined = state.lineBuffer + text;
+    const lines = combined.split('\n');
+    const completeLinesCount = lines.length - 1;
+
+    for (let i = 0; i < completeLinesCount; i++) {
+      const line = lines[i];
+      process.stdout.write('\r\u001b[K');
+      const formatted = formatNormalLine(line);
+      process.stdout.write(formatted + '\n');
+    }
+
+    const lastLine = lines[lines.length - 1];
+    state.lineBuffer = lastLine;
+    if (lastLine) {
+      process.stdout.write('\r\u001b[K');
+      process.stdout.write(formatNormalLine(lastLine));
+    }
+  }
+
+  function formatNormalLine(line: string): string {
+    if (line.startsWith('# ')) {
+      return themePrimary.bold(line.substring(2));
+    }
+    if (line.startsWith('## ')) {
+      return themePrimary.bold(line.substring(3));
+    }
+    if (line.startsWith('### ')) {
+      return themePrimary.bold(line.substring(4));
+    }
+    if (line.startsWith('* ')) {
+      return `${themeGold('·')} ${line.substring(2)}`;
+    }
+    if (line.startsWith('- ')) {
+      return `${themeGold('·')} ${line.substring(2)}`;
+    }
+
+    return line
+      .replace(/\*\*([^*]+)\*\*/g, (_, text) => chalk.bold(text))
+      .replace(/\*([^*]+)\*/g, (_, text) => chalk.italic(text))
+      .replace(/`([^`]+)`/g, (_, text) => themeAccentLight.bgHex(themeBg)(' ' + text + ' '));
+  }
 }
 
 export function hasRepetitionLoop(text: string): boolean {

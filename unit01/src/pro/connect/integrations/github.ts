@@ -1,5 +1,6 @@
 import { getCredential } from '../vault.js';
 import { getFromKeychain } from '../keychain.js';
+import { disconnectService } from '../index.js';
 
 /**
  * Retrieve GitHub token from keychain (macOS) or encrypted vault (Linux).
@@ -33,6 +34,12 @@ export async function createGitHubIssue(owner: string, repo: string, title: stri
     body: JSON.stringify({ title, body })
   });
 
+  if (response.status === 401) {
+    disconnectService('github');
+    disconnectService('github-token');
+    throw new Error('[Authentication Error] Stored token for github is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect github" to re-authenticate.');
+  }
+
   if (!response.ok) {
     throw new Error(`GitHub API error: Status ${response.status} ${response.statusText}`);
   }
@@ -64,6 +71,12 @@ export async function createGitHubPullRequest(
     body: JSON.stringify({ title, head, base, body })
   });
 
+  if (response.status === 401) {
+    disconnectService('github');
+    disconnectService('github-token');
+    throw new Error('[Authentication Error] Stored token for github is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect github" to re-authenticate.');
+  }
+
   if (!response.ok) {
     const errorDetails = await response.text();
     throw new Error(`GitHub PR API error: Status ${response.status} - ${errorDetails}`);
@@ -86,6 +99,12 @@ export async function fetchGitHubPullRequest(owner: string, repo: string, pullNu
       'X-GitHub-Api-Version': '2022-11-28'
     }
   });
+
+  if (response.status === 401) {
+    disconnectService('github');
+    disconnectService('github-token');
+    throw new Error('[Authentication Error] Stored token for github is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect github" to re-authenticate.');
+  }
 
   if (!response.ok) {
     throw new Error(`GitHub PR API error: Status ${response.status}`);

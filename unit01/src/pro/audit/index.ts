@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { IndexerDB } from '../../core/database/db.js';
 import { initializeAuditSchema } from './schema.js';
 import { disconnectService } from '../connect/index.js';
+import { ShadowBackupManager } from '../../core/database/backup.js';
 
 export interface AuditRecord {
   id: string;
@@ -20,7 +21,6 @@ export class AuditLogStore {
 
   constructor(db: IndexerDB) {
     this.db = db;
-    // @ts-ignore
     initializeAuditSchema(this.db.db);
   }
 
@@ -31,7 +31,6 @@ export class AuditLogStore {
     const id = crypto.randomUUID();
     const timestamp = Date.now();
 
-    // @ts-ignore
     this.db.db.prepare(`
       INSERT INTO audit_logs (id, timestamp, service, operation, target, payload_summary, payload_hash, status, duration_ms)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -54,7 +53,6 @@ export class AuditLogStore {
    * Fetch the last N audit log entries.
    */
   public getRecentLogs(limit = 15): AuditRecord[] {
-    // @ts-ignore
     return this.db.db.prepare('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT ?').all(limit) as AuditRecord[];
   }
 
@@ -62,7 +60,6 @@ export class AuditLogStore {
    * Load details of a specific audit log by ID.
    */
   public getLogDetails(id: string): AuditRecord | null {
-    // @ts-ignore
     const row = this.db.db.prepare('SELECT * FROM audit_logs WHERE id = ?').get(id) as AuditRecord | undefined;
     return row || null;
   }
@@ -86,9 +83,9 @@ export class AuditLogStore {
       switch (record.service.toLowerCase()) {
         case 'file_write':
         case 'file_patch': {
-          // Trigger indexer restoration
-          // @ts-ignore (Accessing backup helpers bound on indexer)
-          const restored = this.db.undoWrite(record.target);
+          // Trigger indexer restoration via ShadowBackupManager
+          const backupManager = new ShadowBackupManager(this.db);
+          const restored = backupManager.restoreBackup(record.target);
           if (restored) {
             this.updateStatus(id, 'failed'); // Mark as reverted state
             return { success: true, message: `Successfully reverted file edits on ${record.target}.` };
@@ -116,7 +113,6 @@ export class AuditLogStore {
    * Update status of an audit log entry.
    */
   private updateStatus(id: string, status: string): void {
-    // @ts-ignore
     this.db.db.prepare('UPDATE audit_logs SET status = ? WHERE id = ?').run(status, id);
   }
 }

@@ -12,7 +12,8 @@ import {
   themeRed,
   isGui,
   guiEmit,
-  stripAnsi
+  stripAnsi,
+  getCols
 } from './theme.js';
 
 export function getRelativeTime(timestamp: number): string {
@@ -127,10 +128,22 @@ export function interactiveSelect(title: string, options: string[]): Promise<num
       process.stdin.on('data', onData);
     });
   }
+
+  // Flush stdin backlog
+  try {
+    const stdin = process.stdin;
+    if (typeof stdin.setRawMode === 'function') {
+      const wasRaw = stdin.isRaw;
+      stdin.setRawMode(true);
+      while (stdin.read() !== null) {}
+      stdin.setRawMode(wasRaw);
+    }
+  } catch (e) {}
+
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const stdout = process.stdout;
-    const cols = process.stdout.columns || 80;
+    const cols = getCols();
 
     if (typeof stdin.setRawMode !== 'function') {
       // Non-TTY fallback
@@ -169,7 +182,9 @@ export function interactiveSelect(title: string, options: string[]): Promise<num
 
     render();
 
+    const startTime = Date.now();
     const onKeypress = (str: any, key: any) => {
+      if (Date.now() - startTime < 100) return;
       if (!key) return;
       if (key.ctrl && key.name === 'c') { cleanup(); process.exit(0); }
       if (key.name === 'escape' || key.name === 'q') { cleanup(); resolve(-1); }
@@ -267,7 +282,9 @@ export function interactiveConfirmWrite(filePath: string, lineCount: number, act
 
     render();
 
+    const startTime = Date.now();
     const onKeypress = (str: any, key: any) => {
+      if (Date.now() - startTime < 100) return;
       if (!key) return;
       if (key.ctrl && key.name === 'c') {
         cleanup();
@@ -323,9 +340,6 @@ export function printWelcomeBanner(workspaceRoot: string, modelName: string, con
     });
     return;
   }
-  const ctxK = contextLimit >= 1000 ? `${Math.round(contextLimit / 1000)}k ctx` : `${contextLimit} ctx`;
-  const metaParts = [modelName, ctxK, workspaceRoot, `${fileCount} files`].filter(Boolean);
-  const meta = metaParts.join('  ·  ');
 
   console.log('');
   console.log(themePrimary('  █     █  █▄  █  █  ███████  ▄████▄    ██ '));
@@ -333,8 +347,6 @@ export function printWelcomeBanner(workspaceRoot: string, modelName: string, con
   console.log(themePrimary('  █     █  █ ███  █     █    ██    ██   ██ '));
   console.log(themePrimary('  █     █  █  ██  █     █    ██    ██   ██ '));
   console.log(themePrimary('   █████   █   █  █     █     ▀████▀    ██ '));
-  console.log('');
-  console.log('  ' + themeGray(meta));
   console.log('');
 }
 

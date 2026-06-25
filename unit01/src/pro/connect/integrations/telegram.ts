@@ -1,5 +1,6 @@
 import { getCredential } from '../vault.js';
 import { getFromKeychain } from '../keychain.js';
+import { disconnectService } from '../index.js';
 
 /**
  * Retrieve Telegram token from keychain (macOS) or encrypted vault (Linux).
@@ -34,8 +35,19 @@ export async function postTelegramMessage(chatId: string, text: string): Promise
     })
   });
 
+  if (response.status === 401) {
+    disconnectService('telegram');
+    disconnectService('telegram-token');
+    throw new Error('[Authentication Error] Stored token for telegram is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect telegram" to re-authenticate.');
+  }
+
   const data = (await response.json()) as any;
   if (!data.ok) {
+    if (data.error_code === 401 || data.description === 'Unauthorized' || data.description?.includes('invalid')) {
+      disconnectService('telegram');
+      disconnectService('telegram-token');
+      throw new Error('[Authentication Error] Stored token for telegram is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect telegram" to re-authenticate.');
+    }
     throw new Error(`Telegram API error: ${data.description}`);
   }
   return data.result;
@@ -52,8 +64,19 @@ export async function fetchTelegramUpdates(limit = 10): Promise<any[]> {
     method: 'GET'
   });
 
+  if (response.status === 401) {
+    disconnectService('telegram');
+    disconnectService('telegram-token');
+    throw new Error('[Authentication Error] Stored token for telegram is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect telegram" to re-authenticate.');
+  }
+
   const data = (await response.json()) as any;
   if (!data.ok) {
+    if (data.error_code === 401 || data.description === 'Unauthorized' || data.description?.includes('invalid')) {
+      disconnectService('telegram');
+      disconnectService('telegram-token');
+      throw new Error('[Authentication Error] Stored token for telegram is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect telegram" to re-authenticate.');
+    }
     throw new Error(`Telegram API error: ${data.description}`);
   }
   return data.result || [];

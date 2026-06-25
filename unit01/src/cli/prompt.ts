@@ -1,5 +1,53 @@
 import * as readline from 'readline';
-import { themePrimary, themeBorder, themeGold, isGui, guiEmit } from './views/theme.js';
+import chalk from 'chalk';
+import { themePrimary, themeGold, themeGray, isGui, guiEmit, stripAnsi, themeBg } from './views/theme.js';
+
+/**
+ * Startup buffer: captures keystrokes typed during initialization
+ * so they aren't lost before the interactive prompt starts.
+ */
+let startupBuffer = '';
+let startupListening = false;
+const inputHistory: string[] = [];
+const MAX_HISTORY = 50;
+
+// Status bar state (set from index.ts via setPromptStatus)
+let promptStatusModel = '';
+let promptStatusContext = '';
+let promptStatusBranch = '';
+
+export function setPromptStatus(model: string, contextPct: string, branch: string) {
+  promptStatusModel = model;
+  promptStatusContext = contextPct;
+  promptStatusBranch = branch;
+}
+
+export function startStartupBuffer() {
+  if (startupListening) return;
+  const stdin = process.stdin;
+  if (typeof stdin.setRawMode !== 'function') return;
+  
+  startupListening = true;
+  const wasRaw = stdin.isRaw;
+  stdin.setRawMode(true);
+  stdin.resume();
+  
+  stdin.on('data', (data: Buffer) => {
+    if (startupListening) {
+      startupBuffer += data.toString();
+    }
+  });
+  
+  // Restore original raw mode after setup — the prompt will re-enter raw mode
+  stdin.setRawMode(wasRaw);
+}
+
+export function consumeStartupBuffer(): string {
+  startupListening = false;
+  const buf = startupBuffer;
+  startupBuffer = '';
+  return buf;
+}
 
 /**
  * Contained prompt input zone (Components #4, #5, #19).
@@ -48,6 +96,9 @@ export function interactivePrompt(): Promise<string> {
     let cursorOffset = 0;
     let showPopup = true;
     let lastLinesPrinted = 0;
+    let lastCursorLine = 0;     // where we left the cursor (index within lines), for clearance
+    let historyIndex = -1;
+    let selectedPopupIndex = 0;
     
     // Prompt symbol color pulse state
     let isGold = true;
@@ -57,36 +108,38 @@ export function interactivePrompt(): Promise<string> {
     }, 600);
 
     const commands = [
-      '/models', '/thinking', '/status', '/usage', '/sessions', 
-      '/compact', '/clear', '/help', '/exit', '/quit', 
-      '/files', '/reindex', '/export', '/preview', '/changes', 
-      '/undo', '/search', '/connect'
+      { name: '/init', desc: 'workspace setup wizard' },
+      { name: '/models', desc: 'switch the active model' },
+      { name: '/thinking', desc: 'toggle reasoning blocks' },
+      { name: '/personality', desc: 'switch conversation personality' },
+      { name: '/status', desc: 'system info' },
+      { name: '/usage', desc: 'context window usage' },
+      { name: '/compact', desc: 'compress conversation context' },
+      { name: '/search', desc: 'search codebase (BM25)' },
+      { name: '/files', desc: 'list all indexed files' },
+      { name: '/reindex', desc: 'rebuild code index' },
+      { name: '/preview', desc: 'preview last file diff' },
+      { name: '/undo', desc: 'revert last file write' },
+      { name: '/changes', desc: 'view recent file changes' },
+      { name: '/clear', desc: 'clear conversation history' },
+      { name: '/sessions', desc: 'browse and resume sessions' },
+      { name: '/export', desc: 'export current session' },
+      { name: '/exit', desc: 'quit unit01' },
     ];
 
     const getPopupMatches = () => {
       if (!showPopup || !currentInput.startsWith('/')) return [];
       const query = currentInput.toLowerCase();
-      const all = commands.filter(c => c.startsWith(query));
-      
-      const filtered: string[] = [];
-      let currentLen = 6; // visual indent + border │
-      for (const cmd of all) {
-        const cmdLen = cmd.length + 4; // command name + space padding
-        if (currentLen + cmdLen < cols - 5) {
-          filtered.push(cmd);
-          currentLen += cmdLen;
-        } else {
-          break;
-        }
-      }
-      return filtered;
+      const all = commands.filter(c => c.name.startsWith(query));
+      // Limit to 15 items so it doesn't overflow the terminal
+      return all.slice(0, 15);
     };
 
     const redraw = () => {
-      // Clear previously printed lines
+      // Clear previously printed lines — cursor is at lastCursorLine, go up to line 0
       if (lastLinesPrinted > 0) {
-        readline.moveCursor(stdout, 0, -(lastLinesPrinted - 2));
         readline.cursorTo(stdout, 0);
+        readline.moveCursor(stdout, 0, -lastCursorLine);
         readline.clearScreenDown(stdout);
       }
 
@@ -95,32 +148,83 @@ export function interactivePrompt(): Promise<string> {
       let lines = [];
 
       if (hasPopup) {
-        // Line 1: Popup matches
-        const styledMatches = matches.map(match => {
+        // Vertical popup: each command on its own line, selected highlighted
+        for (let i = 0; i < matches.length; i++) {
+          const match = matches[i];
           const matchedPart = themeGold.bold(currentInput);
-          const restPart = themePrimary(match.slice(currentInput.length));
-          return matchedPart + restPart;
-        }).join('    ');
-        lines.push(`  ${themeBorder('│')} ${styledMatches}`);
+          const restPart = themePrimary(match.name.slice(currentInput.length));
+          const desc = themeGray(match.desc);
+          const cursor = i === selectedPopupIndex ? themeGold('❯') : ' ';
+          lines.push(`  ${cursor} ${matchedPart}${restPart}  ${desc}`);
+        }
       }
 
-      // Border rule
-      lines.push(themeBorder('─'.repeat(cols)));
-
-      // Input line
+      // Input line (full-width background, wraps naturally when long)
       const promptSymbol = isGold ? themeGold('❯') : themePrimary('❯');
-      lines.push(`  ${promptSymbol} ${currentInput}`);
+      const prefixAnsi = `  ${promptSymbol} `;
+      const prefixLen = stripAnsi(prefixAnsi).length; // 4
+      const inputPlain = currentInput || (hasPopup ? '' : themeGray('Type a message or  /  to see commands'));
+      const fullPlainLen = prefixLen + stripAnsi(inputPlain).length;
 
-      // Bottom rule
-      lines.push(themeBorder('─'.repeat(cols)));
+      // Wrapped input lines + cursor position within them
+      let inputLineCount: number;
+      let cursorInputLine: number;  // 0-indexed from top of input block
+      let cursorCol: number;       // column within that line
+
+      if (fullPlainLen <= cols) {
+        // Single line — no wrapping
+        const content = prefixAnsi + inputPlain;
+        const padded = content + ' '.repeat(cols - stripAnsi(content).length);
+        lines.push(chalk.bgHex(themeBg)(padded));
+        inputLineCount = 1;
+        cursorInputLine = 0;
+        cursorCol = prefixLen + cursorOffset;
+      } else {
+        // First line: prefix + as many input chars as fit
+        const firstLineChars = cols - prefixLen;
+        const firstRaw = inputPlain.slice(0, firstLineChars);
+        const firstContent = prefixAnsi + firstRaw;
+        const firstPadded = firstContent + ' '.repeat(cols - stripAnsi(firstContent).length);
+        lines.push(chalk.bgHex(themeBg)(firstPadded));
+
+        // Remaining wrapped lines
+        let remaining = inputPlain.slice(firstLineChars);
+        while (remaining.length > 0) {
+          const chunk = remaining.slice(0, cols);
+          const padded = chunk + ' '.repeat(cols - stripAnsi(chunk).length);
+          lines.push(chalk.bgHex(themeBg)(padded));
+          remaining = remaining.slice(cols);
+        }
+
+        inputLineCount = 1 + Math.ceil((stripAnsi(inputPlain).length - firstLineChars) / cols);
+
+        // Compute cursor position among wrapped lines
+        if (cursorOffset <= firstLineChars) {
+          cursorInputLine = 0;
+          cursorCol = prefixLen + cursorOffset;
+        } else {
+          const offsetInRemaining = cursorOffset - firstLineChars;
+          cursorInputLine = 1 + Math.floor(offsetInRemaining / cols);
+          cursorCol = offsetInRemaining % cols;
+        }
+      }
+
+      // Status bar (1 line — always present for stable layout)
+      const statusText = promptStatusModel
+        ? `${promptStatusModel}  ${themeGray('·')}  ${promptStatusContext}  ${themeGray('·')}  ${promptStatusBranch}`
+        : '';
+      lines.push(`  ${themeGray(statusText)}`);
 
       // Print all lines
       stdout.write(lines.join('\r\n') + '\r\n');
       lastLinesPrinted = lines.length;
 
-      // Position terminal cursor on the input line (which is the second line from bottom)
-      readline.moveCursor(stdout, 0, -2);
-      readline.cursorTo(stdout, 4 + cursorOffset);
+      // Position terminal cursor on the right wrapped line + column
+      const popupLineCount = hasPopup ? matches.length : 0;
+      const cursorLineIndex = popupLineCount + cursorInputLine;
+      readline.moveCursor(stdout, 0, -(lastLinesPrinted - cursorLineIndex));
+      readline.cursorTo(stdout, cursorCol);
+      lastCursorLine = cursorLineIndex;
       stdout.write('\u001b[?25h'); // show cursor
     };
 
@@ -133,6 +237,9 @@ export function interactivePrompt(): Promise<string> {
       }
 
       if (key && key.name === 'escape') {
+        // Exit command mode: clear input and hide popup
+        currentInput = '';
+        cursorOffset = 0;
         showPopup = false;
         redraw();
         return;
@@ -141,17 +248,78 @@ export function interactivePrompt(): Promise<string> {
       if (key && key.name === 'tab') {
         const matches = getPopupMatches();
         if (matches.length > 0) {
-          currentInput = matches[0];
-          cursorOffset = currentInput.length;
-          redraw();
+          // Tab executes the selected command directly
+          currentInput = matches[selectedPopupIndex >= matches.length ? 0 : selectedPopupIndex].name;
+          cleanup();
+          const trimmed = currentInput.trim();
+          if (trimmed && (inputHistory.length === 0 || inputHistory[inputHistory.length - 1] !== trimmed)) {
+            inputHistory.push(trimmed);
+            if (inputHistory.length > MAX_HISTORY) inputHistory.shift();
+          }
+          resolve(currentInput);
+          return;
         }
         return;
       }
 
       if (key && (key.name === 'return' || key.name === 'enter')) {
-        readline.moveCursor(stdout, 0, -1);
+        // If popup is visible, Enter executes the selected command
+        const matches = getPopupMatches();
+        if (matches.length > 0) {
+          currentInput = matches[selectedPopupIndex >= matches.length ? 0 : selectedPopupIndex].name;
+        }
         cleanup();
+        // Push to history (skip empty and duplicates)
+        const trimmed = currentInput.trim();
+        if (trimmed && (inputHistory.length === 0 || inputHistory[inputHistory.length - 1] !== trimmed)) {
+          inputHistory.push(trimmed);
+          if (inputHistory.length > MAX_HISTORY) inputHistory.shift();
+        }
         resolve(currentInput);
+        return;
+      }
+
+      if (key && key.name === 'up') {
+        const matches = getPopupMatches();
+        if (matches.length > 0) {
+          // Navigate popup
+          selectedPopupIndex = (selectedPopupIndex - 1 + matches.length) % matches.length;
+          redraw();
+          return;
+        }
+        // Fallback: navigate history
+        if (inputHistory.length > 0 && historyIndex < inputHistory.length - 1) {
+          historyIndex++;
+          currentInput = inputHistory[inputHistory.length - 1 - historyIndex];
+          cursorOffset = currentInput.length;
+          showPopup = false;
+          redraw();
+        }
+        return;
+      }
+
+      if (key && key.name === 'down') {
+        const matches = getPopupMatches();
+        if (matches.length > 0) {
+          // Navigate popup
+          selectedPopupIndex = (selectedPopupIndex + 1) % matches.length;
+          redraw();
+          return;
+        }
+        // Fallback: navigate history
+        if (historyIndex > 0) {
+          historyIndex--;
+          currentInput = inputHistory[inputHistory.length - 1 - historyIndex];
+          cursorOffset = currentInput.length;
+          showPopup = false;
+          redraw();
+        } else if (historyIndex === 0) {
+          historyIndex = -1;
+          currentInput = '';
+          cursorOffset = 0;
+          showPopup = true;
+          redraw();
+        }
         return;
       }
 
@@ -159,6 +327,7 @@ export function interactivePrompt(): Promise<string> {
         if (cursorOffset > 0) {
           currentInput = currentInput.slice(0, cursorOffset - 1) + currentInput.slice(cursorOffset);
           cursorOffset--;
+          selectedPopupIndex = 0;
           showPopup = true;
           redraw();
         }
@@ -185,6 +354,7 @@ export function interactivePrompt(): Promise<string> {
       if (str && str.length === 1 && str.charCodeAt(0) >= 32) {
         currentInput = currentInput.slice(0, cursorOffset) + str + currentInput.slice(cursorOffset);
         cursorOffset++;
+        selectedPopupIndex = 0;
         showPopup = true;
         redraw();
       }
@@ -196,9 +366,10 @@ export function interactivePrompt(): Promise<string> {
       stdin.setRawMode(wasRaw);
       
       // Clear the prompt input zone completely from terminal
+      // Cursor is at lastCursorLine — go up to line 0, then clear everything down
       if (lastLinesPrinted > 0) {
         readline.cursorTo(stdout, 0);
-        readline.moveCursor(stdout, 0, -(lastLinesPrinted - 2));
+        readline.moveCursor(stdout, 0, -lastCursorLine);
         readline.clearScreenDown(stdout);
       }
       stdout.write('\u001b[?25h'); // restore cursor

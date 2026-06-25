@@ -264,16 +264,19 @@ export class DirectiveSandbox {
   private sessionStartTime: number;
   private allowedPaths: AllowedPath[] = [];
   private onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void;
+  private strictSandbox: boolean;
 
   constructor(
     workspaceRoot: string,
     allowedPaths: AllowedPath[] = [],
-    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void
+    onSystemMessage?: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void,
+    strictSandbox: boolean = false
   ) {
     this.workspaceRoot = path.resolve(workspaceRoot);
     this.sessionStartTime = Date.now();
     this.allowedPaths = allowedPaths;
     this.onSystemMessage = onSystemMessage;
+    this.strictSandbox = strictSandbox;
   }
 
   public updateAllowedPaths(allowedPaths: AllowedPath[]) {
@@ -608,6 +611,9 @@ ${seatbeltMounts}`;
         '/bin/sh', '-c', innerCommand
       ];
     } else {
+      if (this.strictSandbox) {
+        return '[DIRECTIVE AI] Sandboxing is strictly required, but neither bwrap nor sandbox-exec is available. Terminating command execution (fails closed).';
+      }
       if (this.onSystemMessage) {
         this.onSystemMessage('warn', 'Sandboxing engines bwrap or sandbox-exec not available. Running in un-isolated mode with resource limits.');
       }
@@ -664,8 +670,12 @@ ${seatbeltMounts}`;
         if (tempSeatbeltProfile && fs.existsSync(tempSeatbeltProfile)) {
           try {
             fs.unlinkSync(tempSeatbeltProfile);
-          } catch (e) {
-            // ignore
+          } catch (e: any) {
+            if (this.onSystemMessage) {
+              this.onSystemMessage('warn', `Failed to delete temporary seatbelt profile: ${e.message}`);
+            } else {
+              console.warn(`[Directive Sandbox] Failed to delete temporary seatbelt profile: ${e.message}`);
+            }
           }
         }
 
@@ -691,8 +701,12 @@ ${seatbeltMounts}`;
         if (tempSeatbeltProfile && fs.existsSync(tempSeatbeltProfile)) {
           try {
             fs.unlinkSync(tempSeatbeltProfile);
-          } catch (e) {
-            // ignore
+          } catch (e: any) {
+            if (this.onSystemMessage) {
+              this.onSystemMessage('warn', `Failed to delete temporary seatbelt profile: ${e.message}`);
+            } else {
+              console.warn(`[Directive Sandbox] Failed to delete temporary seatbelt profile: ${e.message}`);
+            }
           }
         }
         resolve(`[Directive AI Sandbox] Execution failed to start: ${err.message}`);

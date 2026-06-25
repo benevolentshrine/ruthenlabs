@@ -34,14 +34,16 @@ export async function generateLocalEmbedding(text: string): Promise<number[] | n
 /**
  * Trigger an automatic download of the nomic-embed-text model if not present.
  */
-export async function ensureEmbeddingModel(): Promise<boolean> {
+export async function ensureEmbeddingModel(silent: boolean = false): Promise<boolean> {
   try {
     const list = await ollama.listModels();
     const hasEmbedModel = list.some(m => m.name.startsWith(EMBEDDING_MODEL));
     if (hasEmbedModel) return true;
 
     // Pull model asynchronously
-    console.log(`  🔎 [pro search] Pulling ${EMBEDDING_MODEL} embedding model...`);
+    if (!silent) {
+      console.log(`  🔎 [code index] Pulling ${EMBEDDING_MODEL} embedding model...`);
+    }
     const res = await fetch('http://127.0.0.1:11434/api/pull', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

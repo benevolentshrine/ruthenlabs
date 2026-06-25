@@ -30,7 +30,7 @@ export interface ChunkRecord {
   start_line: number;
   end_line: number;
   content: string;
-  chunk_type: 'function' | 'class' | 'module' | 'file';
+  chunk_type: 'function' | 'class' | 'module';
   name: string;
   embedding?: string | null;
 }
@@ -42,7 +42,7 @@ export interface ShadowBackupRecord {
 }
 
 export class IndexerDB {
-  private db: any;
+  public db: any;
   public workspaceRoot: string;
 
   constructor(workspaceRoot: string) {
@@ -51,9 +51,9 @@ export class IndexerDB {
     const home = homedir();
     let baseDir: string;
     if (process.platform === 'darwin') {
-      baseDir = path.join(home, 'Library', 'Application Support', 'com.ruthenlabs.indexer');
+      baseDir = path.join(home, 'Library', 'Application Support', 'com.nayalabs.unit01');
     } else {
-      baseDir = path.join(home, '.local', 'share', 'com.ruthenlabs.indexer');
+      baseDir = path.join(home, '.local', 'share', 'com.nayalabs.unit01');
     }
     const dbDir = path.join(baseDir, hash);
     if (!fs.existsSync(dbDir)) {

@@ -24,7 +24,6 @@ export class ProjectMemoryStore {
 
   constructor(db: IndexerDB) {
     this.db = db;
-    // @ts-ignore
     initializeMemorySchema(this.db.db);
   }
 
@@ -36,7 +35,6 @@ export class ProjectMemoryStore {
     const timestamp = Date.now();
     const contextFilesStr = JSON.stringify(decision.context_files);
 
-    // @ts-ignore
     this.db.db.prepare(`
       INSERT INTO project_decisions (id, timestamp, category, summary, rationale, context_files, active_session_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -58,7 +56,6 @@ export class ProjectMemoryStore {
    */
   public upsertConvention(key: string, pattern: string): void {
     const now = Date.now();
-    // @ts-ignore
     this.db.db.prepare(`
       INSERT INTO user_conventions (key, pattern, created_at, last_triggered)
       VALUES (?, ?, ?, ?)
@@ -72,7 +69,6 @@ export class ProjectMemoryStore {
    * Fetch all stored decisions.
    */
   public getAllDecisions(): ProjectDecision[] {
-    // @ts-ignore
     const rows = this.db.db.prepare('SELECT * FROM project_decisions ORDER BY timestamp DESC').all() as any[];
     return rows.map(r => ({
       id: r.id,
@@ -89,7 +85,6 @@ export class ProjectMemoryStore {
    * Fetch all active coding conventions.
    */
   public getAllConventions(): UserConvention[] {
-    // @ts-ignore
     return this.db.db.prepare('SELECT * FROM user_conventions ORDER BY last_triggered DESC').all() as UserConvention[];
   }
 

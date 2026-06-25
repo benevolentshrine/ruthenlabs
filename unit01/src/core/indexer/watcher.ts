@@ -14,7 +14,7 @@ const IGNORE_PATTERNS = [
   '__pycache__',
   '.next',
   '.svelte-kit',
-  '.ruthen'
+  '.unit01'
 ];
 
 function computeHash(content: string): string {

@@ -1,5 +1,6 @@
 import { getCredential } from '../vault.js';
 import { getFromKeychain } from '../keychain.js';
+import { disconnectService } from '../index.js';
 
 /**
  * Retrieve Discord bot token from keychain (macOS) or encrypted vault (Linux).
@@ -31,6 +32,12 @@ export async function postDiscordMessage(channelId: string, content: string): Pr
     body: JSON.stringify({ content })
   });
 
+  if (response.status === 401) {
+    disconnectService('discord');
+    disconnectService('discord-token');
+    throw new Error('[Authentication Error] Stored token for discord is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect discord" to re-authenticate.');
+  }
+
   if (!response.ok) {
     throw new Error(`Discord API error: Status ${response.status} ${response.statusText}`);
   }
@@ -50,6 +57,12 @@ export async function fetchDiscordMessages(channelId: string, limit = 10): Promi
       'Authorization': `Bot ${token}`
     }
   });
+
+  if (response.status === 401) {
+    disconnectService('discord');
+    disconnectService('discord-token');
+    throw new Error('[Authentication Error] Stored token for discord is invalid or expired. We have cleared it from your secure vault/keychain. Please run "/connect discord" to re-authenticate.');
+  }
 
   if (!response.ok) {
     throw new Error(`Discord API error: Status ${response.status}`);

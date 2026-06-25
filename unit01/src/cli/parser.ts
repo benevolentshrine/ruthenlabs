@@ -239,14 +239,6 @@ export function parsePatchFileBlocks(text: string): { filePath: string; diff: st
   return null;
 }
 
-const HALLUCINATED_TAGS = new Set([
-  'delete_file', 'remove_file', 'create_file', 'copy_file', 'rename_file', 'list_files',
-  'read_directory', 'list_directory', 'create_directory', 'make_directory', 'delete_directory',
-  'delete_folder', 'move_folder', 'create_folder', 'rename_folder', 'list_folder',
-  'run_script', 'exec_command', 'execute_command', 'execute_script',
-  'mkdir', 'rm', 'mv', 'cp', 'ls', 'cd', 'pwd', 'file_write', 'file_read', 'file_delete',
-  'write_directory', 'patch_file', 'edit_file', 'modify_file'
-]);
 
 export const TOOL_SIGNATURES: Record<string, { desc: string; args: string }> = {
   'run_command': {
@@ -425,16 +417,6 @@ export function validateToolCall(tagName: string, attributesStr: string): string
   return null;
 }
 
-export function isHallocinatedTool(tagName: string): boolean {
-  const clean = tagName.toLowerCase().replace(/^\//, ''); // strip leading slash for closing tags
-  if (HALLUCINATED_TAGS.has(clean)) return true;
-  if (clean.endsWith('_file') || clean.endsWith('_dir') || clean.endsWith('_directory') || clean.endsWith('_folder') || clean.endsWith('_command') || clean.endsWith('_path')) {
-    // Exclude allowed tags
-    const allowed = new Set(['run_command', 'read_file', 'write_file', 'search_code', 'think']);
-    return !allowed.has(clean);
-  }
-  return false;
-}
 
 
 export function applySearchReplaceBlocks(content: string, blocksStr: string): string {

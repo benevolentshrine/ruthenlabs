@@ -51,10 +51,44 @@ export async function validateServiceToken(service: string, token: string): Prom
         });
         return res.ok;
       }
-      case 'web-search':
-      case 'google-api-key': {
-        // Just verify non-empty for custom Google keys
-        return token.trim().length > 10;
+      case 'tavily': {
+        const res = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: token, query: 'test', num_results: 1 })
+        });
+        return res.ok;
+      }
+      case 'exa': {
+        const res = await fetch('https://api.exa.ai/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': token
+          },
+          body: JSON.stringify({ query: 'test', numResults: 1 })
+        });
+        return res.ok;
+      }
+      case 'jina': {
+        const res = await fetch('https://r.jina.ai/https://example.com', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        return res.ok;
+      }
+      case 'serper': {
+        const res = await fetch('https://google.serper.dev/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': token
+          },
+          body: JSON.stringify({ q: 'test', num: 1 })
+        });
+        return res.ok;
+      }
+      case 'pro-license': {
+        return token.startsWith('unit01-pro-') || token.trim().length > 10;
       }
       default:
         return true; // Auto-pass for un-validated services

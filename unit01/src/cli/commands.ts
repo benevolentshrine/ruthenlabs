@@ -104,7 +104,7 @@ export async function handleToolCalls(
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
-        const auditStore = new AuditLogStore(indexer['db']);
+        const auditStore = new AuditLogStore(indexer.db);
         const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
         auditStore.logAction({
           service: 'shell',
@@ -127,7 +127,7 @@ export async function handleToolCalls(
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
-        const auditStore = new AuditLogStore(indexer['db']);
+        const auditStore = new AuditLogStore(indexer.db);
         const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
         auditStore.logAction({
           service: 'shell',
@@ -152,7 +152,7 @@ export async function handleToolCalls(
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
-        const auditStore = new AuditLogStore(indexer['db']);
+        const auditStore = new AuditLogStore(indexer.db);
         const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
         auditStore.logAction({
           service: 'shell',
@@ -175,7 +175,7 @@ export async function handleToolCalls(
     try {
       const crypto = await import('crypto');
       const { AuditLogStore } = await import('../pro/audit/index.js');
-      const auditStore = new AuditLogStore(indexer['db']);
+      const auditStore = new AuditLogStore(indexer.db);
       const payloadHash = crypto.createHash('sha256').update(cmd).digest('hex');
       auditStore.logAction({
         service: 'shell',
@@ -275,8 +275,8 @@ export async function handleToolCalls(
       // Re-index
       try {
         const stat = fs.statSync(absPath);
-        indexer['processFileOnStartup'](absPath, stat);
-        indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
+        indexer.processFileOnStartup(absPath, stat);
+        indexer.currentRepoMap = buildRepoMap(indexer.db);
       } catch (e) {}
       
       readline.clearLine(process.stdout, 0);
@@ -285,7 +285,7 @@ export async function handleToolCalls(
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
-        const auditStore = new AuditLogStore(indexer['db']);
+        const auditStore = new AuditLogStore(indexer.db);
         const payloadHash = crypto.createHash('sha256').update(content).digest('hex');
         auditStore.logAction({
           service: 'file_write',
@@ -384,7 +384,7 @@ export async function handleToolCalls(
     let isHybrid = false;
     try {
       const { executeHybridSearch } = await import('../pro/search/index.js');
-      results = await executeHybridSearch(indexer['db'], query);
+      results = await executeHybridSearch(indexer.db, query);
       isHybrid = true;
     } catch (e) {
       results = indexer.search(query);
@@ -439,7 +439,7 @@ export async function handleToolCalls(
     try {
       const crypto = await import('crypto');
       const { AuditLogStore } = await import('../pro/audit/index.js');
-      const auditStore = new AuditLogStore(indexer['db']);
+      const auditStore = new AuditLogStore(indexer.db);
       const payloadHash = crypto.createHash('sha256').update(query).digest('hex');
       auditStore.logAction({
         service: 'web-search',
@@ -525,8 +525,8 @@ export async function handleToolCalls(
 
       try {
         const stat = fs.statSync(absPath);
-        indexer['processFileOnStartup'](absPath, stat);
-        indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
+        indexer.processFileOnStartup(absPath, stat);
+        indexer.currentRepoMap = buildRepoMap(indexer.db);
       } catch (e) {}
 
       readline.clearLine(process.stdout, 0);
@@ -535,7 +535,7 @@ export async function handleToolCalls(
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
-        const auditStore = new AuditLogStore(indexer['db']);
+        const auditStore = new AuditLogStore(indexer.db);
         const payloadHash = crypto.createHash('sha256').update(updated).digest('hex');
         auditStore.logAction({
           service: 'file_patch',
@@ -633,8 +633,8 @@ export async function handleToolCalls(
 
       try {
         const stat = fs.statSync(absPath);
-        indexer['processFileOnStartup'](absPath, stat);
-        indexer['currentRepoMap'] = buildRepoMap(indexer['db']);
+        indexer.processFileOnStartup(absPath, stat);
+        indexer.currentRepoMap = buildRepoMap(indexer.db);
       } catch (e) {}
 
       readline.clearLine(process.stdout, 0);
@@ -643,7 +643,7 @@ export async function handleToolCalls(
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
-        const auditStore = new AuditLogStore(indexer['db']);
+        const auditStore = new AuditLogStore(indexer.db);
         const payloadHash = crypto.createHash('sha256').update(updated).digest('hex');
         auditStore.logAction({
           service: 'file_patch',

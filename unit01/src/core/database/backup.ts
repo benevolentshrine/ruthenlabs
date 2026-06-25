@@ -54,10 +54,6 @@ export class ShadowBackupManager {
     }
 
     try {
-      if (backup.content.startsWith('__RENAMED_FROM__UIO:')) {
-        // Fallback for custom sentinel or namespace if needed, but we'll use a clean __RENAMED_FROM__:
-      }
-      
       if (backup.content.startsWith('__RENAMED_FROM__:')) {
         const oldPath = backup.content.substring('__RENAMED_FROM__:'.length);
         if (fs.existsSync(absolutePath)) {

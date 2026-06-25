@@ -51,7 +51,7 @@ export function detectTier2Domains(workspaceRoot: string): Set<string> {
         domains.add(match[1]);
       }
     } catch (e) {
-      // ignore
+      console.error('[Directive AI Egress] Failed to parse yarn.lock for Tier 2 domains:', e);
     }
   }
 

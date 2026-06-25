@@ -19,7 +19,7 @@ const IGNORE_PATTERNS = [
   '__pycache__',
   '.next',
   '.svelte-kit',
-  '.ruthen'
+  '.unit01'
 ];
 
 const BINARY_EXTS = new Set([
@@ -33,12 +33,12 @@ function computeHash(content: string): string {
 }
 
 export class DirectiveIndexer {
-  private db: IndexerDB;
+  public db: IndexerDB;
   private watcher: FileWatcher | null = null;
   private workspaceRoot: string;
   private diffTracker: DiffTracker;
   private backupManager: ShadowBackupManager;
-  private currentRepoMap: string = '';
+  public currentRepoMap: string = '';
 
   constructor(workspaceRoot: string) {
     this.workspaceRoot = path.resolve(workspaceRoot);
@@ -134,7 +134,7 @@ export class DirectiveIndexer {
     }
   }
 
-  private processFileOnStartup(filePath: string, stat: fs.Stats, options?: { silent?: boolean; onFileIndexed?: (relPath: string) => void }) {
+  public processFileOnStartup(filePath: string, stat: fs.Stats, options?: { silent?: boolean; onFileIndexed?: (relPath: string) => void }) {
     const relpath = path.relative(this.workspaceRoot, filePath);
     const silent = options?.silent ?? false;
     try {
