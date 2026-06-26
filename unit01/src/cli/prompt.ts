@@ -362,23 +362,16 @@ export function interactivePrompt(): Promise<string> {
     const onData = (data: Buffer) => {
       const str = data.toString('utf-8');
 
-      // Bracketed paste start detected
+      // Bracketed paste start detected — show rejection message
       if (str.includes('\x1b[200~')) {
-        isPasting = true;
-        // Reject immediately — before we even see the content
         rejectPaste();
-        // If the entire paste arrived in this single chunk, close it out now
-        const afterStart = str.split('\x1b[200~')[1] || '';
-        if (afterStart.includes('\x1b[201~')) {
-          isPasting = false;
-        }
         return;
       }
-      // Draining remaining paste data — discard silently
+      // Draining remaining paste data — discard silently.
+      // isPasting lifecycle is managed entirely by prependListener
+      // (which runs first) using process.nextTick, so that readline's
+      // keypress emitter (which runs third) always sees isPasting = true.
       if (isPasting) {
-        if (str.includes('\x1b[201~')) {
-          isPasting = false;
-        }
         return;
       }
     };
@@ -398,16 +391,19 @@ export function interactivePrompt(): Promise<string> {
 
       if (isBracketedPaste || isNonBracketedPaste) {
         isPasting = true;
-        if (isNonBracketedPaste) {
-          // No end-marker exists; reset after this synchronous event tick so that
-          // the next real keypress is not blocked.
-          process.nextTick(() => {
-            isPasting = false;
+        // Reset on next tick so readline's synchronous keypress emission
+        // (which runs after both data listeners) sees isPasting = true
+        // and discards every pasted character. Without this delay, onData
+        // would reset isPasting before readline ever gets to process the
+        // data, and every pasted character would leak through into currentInput.
+        process.nextTick(() => {
+          isPasting = false;
+          if (isNonBracketedPaste) {
+            // Non-bracketed paste has no \x1b[201~ end marker to trigger
+            // rejectPaste in onData, so show the flash message here.
             rejectPaste();
-          });
-        }
-        // Bracketed paste: onData handles the rejection message and isPasting reset
-        // via the \x1b[201~ end marker (potentially across multiple data events).
+          }
+        });
       }
     });
 
