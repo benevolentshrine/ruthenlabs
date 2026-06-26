@@ -95,6 +95,7 @@ export function interactivePrompt(): Promise<string> {
     let historyIndex = -1;
 
     let isPasting = false;
+    let bracketedPasteInProgress = false;
     let flashMessage = '';
     let flashTimer: NodeJS.Timeout | null = null;
     
@@ -359,53 +360,65 @@ export function interactivePrompt(): Promise<string> {
     };
 
 
+    // ── Paste detection (runs FIRST in the 'data' event) ──────────────
+    // Must be prependListener so it fires before both readline's internal
+    // listener (registered by emitKeypressEvents at line 79) and onData.
+    // This lets us set isPasting = true BEFORE readline emits keypress
+    // events for the pasted characters.
+    stdin.prependListener('data', (data: Buffer) => {
+      const str = data.toString('utf-8');
+      const isBracketedStart = str.includes('\x1b[200~');
+      const hasEndMarker = str.includes('\x1b[201~');
+      const isNonBracketedPaste = !isBracketedStart && !hasEndMarker && !bracketedPasteInProgress
+        && !str.startsWith('\x1b') && [...str].length > 1;
+
+      if (isBracketedStart) {
+        isPasting = true;
+        bracketedPasteInProgress = !hasEndMarker;
+        // If end marker is in this same chunk (common case), defer reset
+        // to next tick so readline's synchronous keypress emission completes
+        // while isPasting is still true.
+        if (hasEndMarker) {
+          process.nextTick(() => { isPasting = false; });
+        }
+        return;
+      }
+
+      // Multi-chunk bracketed paste — keep isPasting true across chunks
+      if (bracketedPasteInProgress) {
+        isPasting = true;
+        if (hasEndMarker) {
+          bracketedPasteInProgress = false;
+          process.nextTick(() => { isPasting = false; });
+        }
+        return;
+      }
+
+      // Non-bracketed paste (multiple codepoints in one event)
+      if (isNonBracketedPaste) {
+        isPasting = true;
+        process.nextTick(() => {
+          isPasting = false;
+          rejectPaste();
+        });
+      }
+    });
+
+    // ── Paste rejection UI (runs THIRD in the 'data' event) ──────────
+    // Only handles the flash message; does NOT touch isPasting.
     const onData = (data: Buffer) => {
       const str = data.toString('utf-8');
-
-      // Bracketed paste start detected — show rejection message
       if (str.includes('\x1b[200~')) {
         rejectPaste();
         return;
       }
-      // Draining remaining paste data — discard silently.
-      // isPasting lifecycle is managed entirely by prependListener
-      // (which runs first) using process.nextTick, so that readline's
-      // keypress emitter (which runs third) always sees isPasting = true.
+      // Draining remaining paste data — discard silently
       if (isPasting) {
         return;
       }
     };
 
     stdin.on('data', onData);
-
-    // Paste guard: must be prependListener so it runs BEFORE readline's keypress emitter
-    // (which was registered via emitKeypressEvents at startup). If we don't intercept
-    // first, readline emits individual keypress events for every pasted character before
-    // onData even sees the data, and onKeypress happily accepts them all (isPasting=false).
-    stdin.prependListener('data', (data: Buffer) => {
-      const str = data.toString('utf-8');
-      const isBracketedPaste = str.includes('\x1b[200~');
-      // Non-bracketed paste: multiple code points arriving in one data event.
-      // Normal single keystrokes always arrive as exactly one code point per event.
-      const isNonBracketedPaste = !isBracketedPaste && !str.startsWith('\x1b') && [...str].length > 1;
-
-      if (isBracketedPaste || isNonBracketedPaste) {
-        isPasting = true;
-        // Reset on next tick so readline's synchronous keypress emission
-        // (which runs after both data listeners) sees isPasting = true
-        // and discards every pasted character. Without this delay, onData
-        // would reset isPasting before readline ever gets to process the
-        // data, and every pasted character would leak through into currentInput.
-        process.nextTick(() => {
-          isPasting = false;
-          if (isNonBracketedPaste) {
-            // Non-bracketed paste has no \x1b[201~ end marker to trigger
-            // rejectPaste in onData, so show the flash message here.
-            rejectPaste();
-          }
-        });
-      }
-    });
 
     const onKeypress = (str: any, key: any) => {
       if (isPasting) return;
