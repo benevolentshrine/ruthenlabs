@@ -87,6 +87,7 @@ export function interactivePrompt(): Promise<string> {
     let showPopup = true;
     
     let lastPhysicalLines = 0;
+    let topBorderDrawn = false;
     let currentCursorY = 0;
     let currentCursorX = 4;
     let currentInputVisualLines = 1;
@@ -94,7 +95,6 @@ export function interactivePrompt(): Promise<string> {
     let historyIndex = -1;
 
     let isPasting = false;
-    let pasteBuffer = '';
     let flashMessage = '';
     let flashTimer: NodeJS.Timeout | null = null;
     
@@ -130,13 +130,18 @@ export function interactivePrompt(): Promise<string> {
       return filtered;
     };
 
-    const clearPrompt = () => {
-      if (lastPhysicalLines > 0) {
-        const linesUp = currentCursorY + (currentHasPopup ? 2 : 1);
-        readline.cursorTo(stdout, 0);
-        if (linesUp > 0) {
-          readline.moveCursor(stdout, 0, -linesUp);
-        }
+    const clearPrompt = (newHasPopup: boolean) => {
+      if (!topBorderDrawn) return;
+      readline.cursorTo(stdout, 0);
+      if (currentHasPopup || newHasPopup) {
+        // Popup is or was visible — must go above the top border to clear the popup row
+        const linesUp = currentCursorY + 2;
+        if (linesUp > 0) readline.moveCursor(stdout, 0, -linesUp);
+        readline.clearScreenDown(stdout);
+      } else {
+        // No popup — top border stays put, only clear from the first input line downward
+        if (currentCursorY > 0) readline.moveCursor(stdout, 0, -currentCursorY);
+        stdout.write('\x1b[2K'); // Explicitly erase the entire first input line
         readline.clearScreenDown(stdout);
       }
     };
@@ -219,13 +224,21 @@ export function interactivePrompt(): Promise<string> {
       const cols = process.stdout.columns || 80;
       const SAFE_COLS = Math.max(20, cols - 1); // Strictly prevent terminal auto-wrap
 
-      clearPrompt();
-
+      // Compute popup state BEFORE clearPrompt — we need it to decide how far up to clear
       const matches = getPopupMatches(cols);
       const hasPopup = matches.length > 0;
+      const prevHasPopup = currentHasPopup;
+
+      clearPrompt(hasPopup);
+
       currentHasPopup = hasPopup;
-      
+
       const lines = [];
+
+      // Top border is drawn once on first render, then only redrawn when popup is/was
+      // involved (popup lives above the top border, forcing a full block redraw).
+      // All other redraws skip the top border entirely — it stays anchored in place.
+      const needsTopBorder = !topBorderDrawn || hasPopup || prevHasPopup;
 
       if (hasPopup) {
         const styledMatches = matches.map(match => {
@@ -236,7 +249,10 @@ export function interactivePrompt(): Promise<string> {
         lines.push(`  ${themeBorder('│')} ${styledMatches}`);
       }
 
-      lines.push(themeBorder('─'.repeat(SAFE_COLS)));
+      if (needsTopBorder) {
+        lines.push(themeBorder('─'.repeat(SAFE_COLS)));
+        topBorderDrawn = true;
+      }
 
       const promptSymbol = isGold ? themeGold('❯') : themePrimary('❯');
       const prefixStr = `  ${promptSymbol} `;
@@ -332,53 +348,68 @@ export function interactivePrompt(): Promise<string> {
 
     redraw();
 
-    const handlePaste = (content: string) => {
-      currentInput = currentInput.slice(0, cursorOffset) + content + currentInput.slice(cursorOffset);
-      cursorOffset += content.length;
-      
-      const pastedLines = content.split('\n').length;
-      if (pastedLines > 1) {
-        flashMessage = `Pasted ${pastedLines} lines`;
-        if (flashTimer) clearTimeout(flashTimer);
-        flashTimer = setTimeout(() => {
-          flashMessage = '';
-          redraw();
-        }, 2000);
-      }
-      
-      showPopup = false;
+    const rejectPaste = () => {
+      flashMessage = `  Pasting is disabled — use "@filename" to include files`;
+      if (flashTimer) clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => {
+        flashMessage = '';
+        redraw();
+      }, 3500);
       redraw();
     };
 
+
     const onData = (data: Buffer) => {
       const str = data.toString('utf-8');
-      
+
+      // Bracketed paste start detected
       if (str.includes('\x1b[200~')) {
         isPasting = true;
-        const parts = str.split('\x1b[200~');
-        pasteBuffer = parts[1] || '';
-        if (pasteBuffer.includes('\x1b[201~')) {
+        // Reject immediately — before we even see the content
+        rejectPaste();
+        // If the entire paste arrived in this single chunk, close it out now
+        const afterStart = str.split('\x1b[200~')[1] || '';
+        if (afterStart.includes('\x1b[201~')) {
           isPasting = false;
-          const pasteContent = pasteBuffer.split('\x1b[201~')[0];
-          handlePaste(pasteContent);
-          pasteBuffer = '';
         }
         return;
       }
+      // Draining remaining paste data — discard silently
       if (isPasting) {
         if (str.includes('\x1b[201~')) {
           isPasting = false;
-          pasteBuffer += str.split('\x1b[201~')[0];
-          handlePaste(pasteBuffer);
-          pasteBuffer = '';
-        } else {
-          pasteBuffer += str;
         }
         return;
       }
     };
 
     stdin.on('data', onData);
+
+    // Paste guard: must be prependListener so it runs BEFORE readline's keypress emitter
+    // (which was registered via emitKeypressEvents at startup). If we don't intercept
+    // first, readline emits individual keypress events for every pasted character before
+    // onData even sees the data, and onKeypress happily accepts them all (isPasting=false).
+    stdin.prependListener('data', (data: Buffer) => {
+      const str = data.toString('utf-8');
+      const isBracketedPaste = str.includes('\x1b[200~');
+      // Non-bracketed paste: multiple code points arriving in one data event.
+      // Normal single keystrokes always arrive as exactly one code point per event.
+      const isNonBracketedPaste = !isBracketedPaste && !str.startsWith('\x1b') && [...str].length > 1;
+
+      if (isBracketedPaste || isNonBracketedPaste) {
+        isPasting = true;
+        if (isNonBracketedPaste) {
+          // No end-marker exists; reset after this synchronous event tick so that
+          // the next real keypress is not blocked.
+          process.nextTick(() => {
+            isPasting = false;
+            rejectPaste();
+          });
+        }
+        // Bracketed paste: onData handles the rejection message and isPasting reset
+        // via the \x1b[201~ end marker (potentially across multiple data events).
+      }
+    });
 
     const onKeypress = (str: any, key: any) => {
       if (isPasting) return;
@@ -496,7 +527,10 @@ export function interactivePrompt(): Promise<string> {
       stdin.removeListener('data', onData);
       stdin.removeListener('keypress', onKeypress);
       
-      clearPrompt();
+      // Full clear on exit — erase everything including the static top border
+      readline.cursorTo(stdout, 0);
+      readline.moveCursor(stdout, 0, -(currentCursorY + (currentHasPopup ? 2 : 1)));
+      readline.clearScreenDown(stdout);
       
       // Disable Bracketed Paste Mode
       stdout.write('\x1b[?2004l');
