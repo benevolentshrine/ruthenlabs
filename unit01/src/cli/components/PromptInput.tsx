@@ -246,27 +246,38 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
   const promptChar = isGold ? themeGold('❯') : themePrimary('❯');
   const border = themeBorder('─'.repeat(cols));
 
-  // Build display lines for multi-line input
-  const displayLines = value.split('\n');
-
   const renderInputLines = () => {
-    // If the input has multiple lines (e.g. from pasting), show only a clean, simple collapse placeholder
-    if (displayLines.length > 1) {
+    const lastNewlineIdx = value.lastIndexOf('\n');
+    
+    if (lastNewlineIdx === -1) {
+      const before = value.slice(0, cursorPos);
+      const cursorChar = value[cursorPos] || ' ';
+      const after = value.slice(cursorPos + 1);
+      const cursorElement = themeGold.inverse(cursorChar);
       return (
-        <Text color="#F59E0B">
-          {`${promptChar} [Pasted: ${displayLines.length} lines of text]`}
+        <Text>
+          {`${promptChar} `}
+          {themePrimary(before)}
+          {cursorElement}
+          {themePrimary(after)}
         </Text>
       );
     }
 
-    const before = value.slice(0, cursorPos);
-    const cursorChar = value[cursorPos] || ' ';
-    const after = value.slice(cursorPos + 1);
+    const pastedText = value.slice(0, lastNewlineIdx);
+    const activeLine = value.slice(lastNewlineIdx + 1);
+    const pastedLinesCount = pastedText.split('\n').length;
+
+    const activeLineCursorPos = Math.max(0, cursorPos - (lastNewlineIdx + 1));
+    const before = activeLine.slice(0, activeLineCursorPos);
+    const cursorChar = activeLine[activeLineCursorPos] || ' ';
+    const after = activeLine.slice(activeLineCursorPos + 1);
     const cursorElement = themeGold.inverse(cursorChar);
 
     return (
       <Text>
         {`${promptChar} `}
+        <Text color="#F59E0B">{`[Pasted: ${pastedLinesCount} lines of text] `}</Text>
         {themePrimary(before)}
         {cursorElement}
         {themePrimary(after)}
