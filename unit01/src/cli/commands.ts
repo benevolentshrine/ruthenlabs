@@ -1,4 +1,4 @@
-import * as readline from 'readline';
+
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -18,16 +18,9 @@ import {
   isGui,
   guiEmit
 } from './views/theme.js';
-import {
-  printToolResult,
-  printSystemMessage,
-  interactiveConfirmWrite,
-  interactiveSelect
-} from './views/components.js';
-import {
-  renderSideBySideDiff,
-  renderNewFileBlock
-} from './views/diff.js';
+import { UiAdapter } from './types.js';
+
+
 import {
   parseRunCommand,
   parseWriteFile,
@@ -62,7 +55,7 @@ export async function handleToolCalls(
   text: string,
   sandbox: DirectiveSandbox,
   indexer: DirectiveIndexer,
-  rl: readline.Interface,
+  ui: UiAdapter,
   state: CliState
 ): Promise<{ toolRun: boolean; nextPrompt: string; consoleOutput: string }> {
   // Parse and validate all XML/HTML tags
@@ -93,14 +86,13 @@ export async function handleToolCalls(
   if (runCmd !== null) {
     const cmd = runCmd;
     if (isGui) guiEmit({ type: 'tool-call', tool: 'run_command', command: cmd });
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themePrimary('run')} ${cmd} ...`);
+    ui.showToolProgress(`${themePrimary('run')} ${cmd}...`);
     const output = await sandbox.runCommand(cmd);
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
+    ui.hideToolProgress();
 
     if (output.startsWith('[DIRECTIVE AI]')) {
-      printToolResult('failure', `Ran: ${cmd} (blocked)`);
-      printSystemMessage('guard', `command blocked  ·  ${cmd}`);
+      ui.printToolResult('failure', `Ran: ${cmd} (blocked)`);
+      ui.printSystemMessage('guard', `command blocked  ·  ${cmd}`);
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
@@ -123,7 +115,7 @@ export async function handleToolCalls(
     }
 
     if (output.startsWith('{') && output.includes('FILE_NOT_WRITTEN')) {
-      printToolResult('failure', `Ran: ${cmd} (failed: file not written)`);
+      ui.printToolResult('failure', `Ran: ${cmd} (failed: file not written)`);
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
@@ -148,7 +140,7 @@ export async function handleToolCalls(
     if (output.startsWith('[Command failed with exit code')) {
       const match = output.match(/exit code (\d+)/);
       const exitCode = match ? match[1] : '1';
-      printToolResult('failure', `Ran: ${cmd} (exit ${exitCode})`);
+      ui.printToolResult('failure', `Ran: ${cmd} (exit ${exitCode})`);
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
@@ -170,7 +162,7 @@ export async function handleToolCalls(
       };
     }
 
-    printToolResult('success', `Ran: ${cmd} (exit 0)`);
+    ui.printToolResult('success', `Ran: ${cmd} (exit 0)`);
     const outputResult = output.trim() || 'Command executed successfully with no output.';
     try {
       const crypto = await import('crypto');
@@ -234,7 +226,7 @@ export async function handleToolCalls(
 
     let userConfirmed = false;
     while (true) {
-      const choice = await interactiveConfirmWrite(filePath, lineCount, actionVerb);
+      const choice = await ui.interactiveConfirmWrite(filePath, lineCount, actionVerb);
       if (choice === 'y') {
         userConfirmed = true;
         break;
@@ -243,15 +235,15 @@ export async function handleToolCalls(
         break;
       } else if (choice === 'p') {
         if (fileExists && original !== null) {
-          renderSideBySideDiff(original, content, getLanguageFromFilename(filePath), filePath);
+          ui.showDiff(original, content, getLanguageFromFilename(filePath), filePath);
         } else {
-          renderNewFileBlock(content, getLanguageFromFilename(filePath), filePath);
+          ui.showDiff(null, content, getLanguageFromFilename(filePath), filePath);
         }
       }
     }
     
     if (!userConfirmed) {
-      printToolResult('skipped', `Skipped ${filePath}`);
+      ui.printToolResult('skipped', `Skipped ${filePath}`);
       return {
         toolRun: false,
         nextPrompt: '',
@@ -279,9 +271,8 @@ export async function handleToolCalls(
         indexer.currentRepoMap = buildRepoMap(indexer.db);
       } catch (e) {}
       
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Wrote ${filePath} (${lineCount} lines)`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Wrote ${filePath} (${lineCount} lines)`);
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
@@ -302,9 +293,8 @@ export async function handleToolCalls(
         consoleOutput: `\n[File written: ${filePath}]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Wrote ${filePath} — failed: ${err.message}`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Wrote ${filePath} — failed: ${err.message}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError writing file: ${err.message}\n</tool_output>`,
@@ -331,7 +321,7 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('read')} ${filePath} ...`);
+    ui.showToolProgress(`${themeAccent('read')} ${filePath}...`);
     
     let content = '';
     let success = false;
@@ -351,12 +341,11 @@ export async function handleToolCalls(
       content = `Error: ${err.message}`;
     }
     
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
+    ui.hideToolProgress();
     if (success) {
-      printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines)`);
+      ui.printToolResult('success', `Read ${filePath} (${content.split('\n').length} lines)`);
     } else {
-      printToolResult('failure', `Read ${filePath} (failed)`);
+      ui.printToolResult('failure', `Read ${filePath} (failed)`);
     }
     
     return {
@@ -371,7 +360,7 @@ export async function handleToolCalls(
     const query = searchQuery.trim();
     if (isGui) guiEmit({ type: 'tool-call', tool: 'search_code', query });
     if (!query) {
-      printToolResult('failure', `Searched "${query}" (blocked: empty query)`);
+      ui.printToolResult('failure', `Searched "${query}" (blocked: empty query)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError: Search query cannot be empty. Please provide specific keywords to search the codebase.\n</tool_output>`,
@@ -390,9 +379,8 @@ export async function handleToolCalls(
       results = indexer.search(query);
     }
     
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
-    printToolResult('success', `${isHybrid ? 'Hybrid searched' : 'Searched'} "${query}" (${results.length} results)`);
+    ui.hideToolProgress();
+    ui.printToolResult('success', `${isHybrid ? 'Hybrid searched' : 'Searched'} "${query}" (${results.length} results)`);
     
     const formatted = results.slice(0, 5).map(r => 
       `- ${r.relpath} (line ${r.start_line}-${r.end_line}, type ${r.chunk_type}):\n${r.content}`
@@ -410,7 +398,7 @@ export async function handleToolCalls(
     const query = webSearchQuery.trim();
     if (isGui) guiEmit({ type: 'tool-call', tool: 'web_search', query });
     if (!query) {
-      printToolResult('failure', `Web searched "${query}" (blocked: empty query)`);
+      ui.printToolResult('failure', `Web searched "${query}" (blocked: empty query)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError: Search query cannot be empty.\n</tool_output>`,
@@ -428,9 +416,8 @@ export async function handleToolCalls(
       results = [];
     }
 
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
-    printToolResult('success', `Web searched "${query}" (${results.length} results)`);
+    ui.hideToolProgress();
+    ui.printToolResult('success', `Web searched "${query}" (${results.length} results)`);
 
     const formatted = results.map(r => 
       `- ${r.title} (${r.url}):\n  ${r.snippet}`
@@ -476,13 +463,12 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('patch')} ${filePath} ...`);
+    ui.showToolProgress(`${themeAccent('patch')} ${filePath}...`);
 
     try {
       if (!fs.existsSync(absPath)) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
+        ui.hideToolProgress();
+        ui.printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
@@ -499,9 +485,8 @@ export async function handleToolCalls(
       const content = fs.readFileSync(absPath, 'utf-8');
       const index = content.indexOf(search);
       if (index === -1) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        printToolResult('failure', `Patched ${filePath} (failed: search string not found)`);
+        ui.hideToolProgress();
+        ui.printToolResult('failure', `Patched ${filePath} (failed: search string not found)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: "Search string not found in file. Verify the text matches exactly including whitespace and indentation.",
@@ -529,9 +514,8 @@ export async function handleToolCalls(
         indexer.currentRepoMap = buildRepoMap(indexer.db);
       } catch (e) {}
 
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Patched ${filePath}`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Patched ${filePath}`);
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
@@ -552,9 +536,8 @@ export async function handleToolCalls(
         consoleOutput: `\n[File patched: ${filePath}]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Patched ${filePath} (failed: ${err.message})`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Patched ${filePath} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError patching file: ${err.message}\n</tool_output>`,
@@ -581,13 +564,12 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('patch_blocks')} ${filePath} ...`);
+    ui.showToolProgress(`${themeAccent('patch_blocks')} ${filePath}...`);
 
     try {
       if (!fs.existsSync(absPath)) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
+        ui.hideToolProgress();
+        ui.printToolResult('failure', `Patched ${filePath} (failed: file not found)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: `File not found at ${filePath}`,
@@ -607,9 +589,8 @@ export async function handleToolCalls(
       try {
         updated = applySearchReplaceBlocks(content, diff);
       } catch (err: any) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        printToolResult('failure', `Patched ${filePath} (failed: applying blocks failed)`);
+        ui.hideToolProgress();
+        ui.printToolResult('failure', `Patched ${filePath} (failed: applying blocks failed)`);
         const relPath = path.relative(sandbox['workspaceRoot'], absPath);
         const errObj = {
           error: err.message || String(err),
@@ -637,9 +618,8 @@ export async function handleToolCalls(
         indexer.currentRepoMap = buildRepoMap(indexer.db);
       } catch (e) {}
 
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Patched ${filePath}`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Patched ${filePath}`);
       try {
         const crypto = await import('crypto');
         const { AuditLogStore } = await import('../pro/audit/index.js');
@@ -660,9 +640,8 @@ export async function handleToolCalls(
         consoleOutput: `\n[File patched with blocks: ${filePath}]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Patched ${filePath} (failed: ${err.message})`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Patched ${filePath} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError patching file: ${err.message}\n</tool_output>`,
@@ -689,13 +668,12 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('list_dir')} ${pathVal} ...`);
+    ui.showToolProgress(`${themeAccent('list_dir')} ${pathVal}...`);
 
     try {
       if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        printToolResult('failure', `Listed directory ${pathVal} (failed: not found)`);
+        ui.hideToolProgress();
+        ui.printToolResult('failure', `Listed directory ${pathVal} (failed: not found)`);
         const errObj = {
           error: `Directory not found at ${pathVal}`,
           code: "DIRECTORY_NOT_FOUND",
@@ -710,18 +688,16 @@ export async function handleToolCalls(
 
       const result = listDirectory(absPath, sandbox['workspaceRoot'], recursive);
 
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Listed directory ${pathVal}`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Listed directory ${pathVal}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
         consoleOutput: `\n[Directory listed: ${pathVal}]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Listed directory ${pathVal} (failed: ${err.message})`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Listed directory ${pathVal} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError listing directory: ${err.message}\n</tool_output>`,
@@ -732,7 +708,7 @@ export async function handleToolCalls(
 
   if (parseGitStatus(text)) {
     if (isGui) guiEmit({ type: 'tool-call', tool: 'git_status' });
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('git_status')} ...`);
+    ui.showToolProgress(`${themeAccent('git_status')}...`);
 
     try {
       let isGit = false;
@@ -742,9 +718,8 @@ export async function handleToolCalls(
       } catch (e) {}
 
       if (!isGit) {
-        readline.clearLine(process.stdout, 0);
-        readline.cursorTo(process.stdout, 0);
-        printToolResult('failure', `Ran git status (failed: not a git repo)`);
+        ui.hideToolProgress();
+        ui.printToolResult('failure', `Ran git status (failed: not a git repo)`);
         const errObj = {
           error: "Not a git repository",
           code: "NOT_GIT_REPO"
@@ -801,18 +776,16 @@ export async function handleToolCalls(
         behind
       };
 
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Ran git status`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Ran git status`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
         consoleOutput: `\n[Git status completed]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Ran git status (failed: ${err.message})`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Ran git status (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError running git status: ${err.message}\n</tool_output>`,
@@ -872,18 +845,16 @@ export async function handleToolCalls(
         raw: rawOutput
       };
 
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Ran diagnostics: ${commandToRun}`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Ran diagnostics: ${commandToRun}`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify(result, null, 2)}\n</tool_output>`,
         consoleOutput: `\n[Diagnostics completed: "${commandToRun}"]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Ran diagnostics: ${commandToRun} (failed)`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Ran diagnostics: ${commandToRun} (failed)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\nError running diagnostics: ${err.message}\n</tool_output>`,
@@ -924,9 +895,8 @@ export async function handleToolCalls(
     }
 
     if (!fs.existsSync(absSource)) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Moved ${sourcePath} (failed: source not found)`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Moved ${sourcePath} (failed: source not found)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -939,9 +909,8 @@ export async function handleToolCalls(
     }
 
     if (fs.existsSync(absDest)) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Moved ${sourcePath} (failed: destination exists)`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Moved ${sourcePath} (failed: destination exists)`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -953,7 +922,7 @@ export async function handleToolCalls(
       };
     }
 
-    process.stdout.write(`\n  ${themeOrange('⠋')} ${themeAccent('move')} ${sourcePath} to ${destinationPath} ...`);
+    ui.showToolProgress(`${themeAccent('move')} ${sourcePath} to ${destinationPath}...`);
 
     try {
       fs.mkdirSync(path.dirname(absDest), { recursive: true });
@@ -963,9 +932,8 @@ export async function handleToolCalls(
       sandbox.recordWrittenFile(absDest);
       sandbox.clearLoopHistory();
 
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('success', `Moved ${sourcePath} to ${destinationPath}`);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Moved ${sourcePath} to ${destinationPath}`);
       
       return {
         toolRun: true,
@@ -978,9 +946,8 @@ export async function handleToolCalls(
         consoleOutput: `\n[File moved: ${sourcePath} -> ${destinationPath}]`
       };
     } catch (err: any) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      printToolResult('failure', `Moved ${sourcePath} to ${destinationPath} (failed: ${err.message})`);
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Moved ${sourcePath} to ${destinationPath} (failed: ${err.message})`);
       return {
         toolRun: true,
         nextPrompt: `<tool_output>\n${JSON.stringify({
@@ -1003,15 +970,9 @@ export async function handleToolCalls(
     if (state.isNonInteractive || typeof process.stdin.setRawMode !== 'function') {
       console.log(`\n${themePrimary.bold(question)}`);
       options.forEach((opt, idx) => console.log(`  ${idx + 1}) ${opt}`));
-      const answer = await new Promise<string>((resolve) => {
-        rl.question(`Select an option (1-${options.length}): `, (input) => {
-          resolve(input.trim());
-        });
-      });
-      const num = parseInt(answer, 10);
-      chosenIdx = (!isNaN(num) && num >= 1 && num <= options.length) ? num - 1 : 0;
+      chosenIdx = 0;
     } else {
-      chosenIdx = await interactiveSelect(question, options);
+      chosenIdx = await ui.interactiveSelect(question, options);
     }
 
     const choice = options[chosenIdx];

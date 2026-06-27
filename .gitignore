@@ -1,46 +1,5 @@
-/target
-Cargo.lock
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Build artifacts
-*.wasm
-check_out.txt
-clippy_out.txt
-
-# Gemini/Claude local data
-.claude/
-
-# Yomi benchmarks
-Yomi/benchmarks/synthetic_*
-Yomi/index.json*
-
-# Rust
-*.rs.bk
-
-# Go
-vendor/
-*.exe
-*.dll
-*.so
-
-# Node / Tauri
-node_modules/
-dist/
+unit01/node_modules
+unit01/dist
 .env
-src-tauri/target
-
-# SumiLabs Specific
-/tmp/sumilabs/
-audit_logs/
-.shadow_snapshots/
-.ruthen/
-
+.DS_Store
+*.log
