@@ -1,19 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Box, Text } from 'ink';
-import { themeGray } from '../views/theme.js';
 
 interface StatusBarProps {
   model: string;
-  contextPct: string;
-  branch: string;
 }
 
-export function StatusBar({ model, contextPct, branch }: StatusBarProps) {
+export function StatusBar({ model }: StatusBarProps) {
   if (!model) return null;
+  const cwd = process.cwd();
 
   return (
     <Box>
-      <Text color="#64748B">  {model}  ·  {contextPct}  ·  {branch}</Text>
+      <Text color="#475569">  {model}  ·  {cwd}</Text>
     </Box>
   );
 }

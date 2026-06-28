@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { themeGold } from '../views/theme.js';
 
 const BRAILLE_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
@@ -31,8 +30,8 @@ export function ToolProgress({ active, details }: ToolProgressProps) {
 
   return (
     <Box>
-      <Text color="#F59E0B">  {frame} </Text>
-      <Text color="#E2E8F0">{details}</Text>
+      <Text color="#38BDF8">  {frame} </Text>
+      <Text color="#F1F5F9">{details}</Text>
     </Box>
   );
 }

@@ -14,22 +14,22 @@ interface ChatStreamProps {
 // Configure marked with TerminalRenderer
 marked.setOptions({
   renderer: new TerminalRenderer({
-    codespan: chalk.hex('#FAB387').bgHex('#1E293B'),
-    firstHeading: chalk.hex('#E2E8F0').bold,
-    heading: chalk.hex('#E2E8F0').bold,
+    codespan: chalk.hex('#38BDF8').bgHex('#1E293B'),
+    firstHeading: chalk.hex('#F1F5F9').bold,
+    heading: chalk.hex('#F1F5F9').bold,
     code: (code: string, lang: string | undefined) => {
       const rule = '─'.repeat(40);
       let highlighted = code;
       try {
         highlighted = highlightCli(code, { language: lang || 'text' });
       } catch {
-        highlighted = chalk.hex('#FAB387')(code);
+        highlighted = chalk.hex('#38BDF8')(code);
       }
       const lines = highlighted.split('\n');
       if (lines.length > 0 && lines[lines.length - 1].trim() === '') {
         lines.pop();
       }
-      return `\n  ${chalk.hex('#E2E8F0')(lang || 'text')} ${chalk.hex('#475569')(rule)}\n${lines.map((l: string) => `  ${l}`).join('\n')}\n  ${chalk.hex('#475569')(rule)}\n`;
+      return `\n  ${chalk.hex('#F1F5F9')(lang || 'text')} ${chalk.hex('#334155')(rule)}\n${lines.map((l: string) => `  ${l}`).join('\n')}\n  ${chalk.hex('#334155')(rule)}\n`;
     }
   })
 });
@@ -70,9 +70,9 @@ function renderMarkdownWithThink(text: string, thinkingEnabled: boolean): string
     if (thinkingEnabled) {
       const thinkContent = match[1].trim();
       if (thinkContent) {
-        outputText += `\n  ${chalk.hex('#64748B').bold('🧠 Thinking:')}\n`;
+        outputText += `\n  ${chalk.hex('#475569').bold('🧠 Thinking:')}\n`;
         const lines = thinkContent.split('\n');
-        outputText += lines.map(line => `  ${chalk.hex('#64748B').italic(`│ ${line}`)}`).join('\n') + '\n';
+        outputText += lines.map(line => `  ${chalk.hex('#475569').italic(`│ ${line}`)}`).join('\n') + '\n';
       }
     }
 
@@ -98,7 +98,7 @@ export function ChatStream({ text, isStreaming, thinkingEnabled }: ChatStreamPro
 
   return (
     <Box flexDirection="row" marginTop={1} marginBottom={1}>
-      {isStreaming && <Text color="#F97316">● </Text>}
+      {isStreaming && <Text color="#4ADE80">● </Text>}
       <Text>{rendered}</Text>
     </Box>
   );

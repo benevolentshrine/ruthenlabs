@@ -182,12 +182,12 @@ function ModifiedFileView({
   return (
     <Box flexDirection="column">
       <Text>
-        <Text color="#E2E8F0" bold>{baseName}</Text>
-        <Text color="#64748B"> · modified</Text>
+        <Text color="#F1F5F9" bold>{baseName}</Text>
+        <Text color="#475569"> · modified</Text>
       </Text>
-      <Text color="#475569">{rule}</Text>
+      <Text color="#334155">{rule}</Text>
       {hunks.length === 0 ? (
-        <Text color="#64748B">  No visible changes.</Text>
+        <Text color="#475569">  No visible changes.</Text>
       ) : (
         hunks.map((hunk, hIdx) => {
           let oldLineNum = hunk.originalLinesOffset;
@@ -195,15 +195,15 @@ function ModifiedFileView({
 
           return (
             <Box key={hIdx} flexDirection="column">
-              {hIdx > 0 && <Text color="#475569">  ···</Text>}
-              <Text color="#475569">  @@ L{hunk.startLine}-{hunk.endLine} @@</Text>
+              {hIdx > 0 && <Text color="#334155">  ···</Text>}
+              <Text color="#334155">  @@ L{hunk.startLine}-{hunk.endLine} @@</Text>
               {hunk.lines.map((line, lIdx) => {
                 if (line.type === 'removed') {
                   oldLineNum++;
                   const ln = String(oldLineNum).padStart(4);
                   return (
                     <Text key={lIdx}>
-                      <Text color="#64748B">{ln} </Text>
+                      <Text color="#475569">{ln} </Text>
                       <Text color="#F87171">- {line.text}</Text>
                     </Text>
                   );
@@ -213,8 +213,8 @@ function ModifiedFileView({
                   const ln = String(newLineNum).padStart(4);
                   return (
                     <Text key={lIdx}>
-                      <Text color="#64748B">{ln} </Text>
-                      <Text color="#34D399">+ {line.text}</Text>
+                      <Text color="#475569">{ln} </Text>
+                      <Text color="#4ADE80">+ {line.text}</Text>
                     </Text>
                   );
                 }
@@ -224,7 +224,7 @@ function ModifiedFileView({
                 const ln = String(newLineNum).padStart(4);
                 return (
                   <Text key={lIdx}>
-                    <Text color="#64748B">{ln} </Text>
+                    <Text color="#475569">{ln} </Text>
                     <Text>   {line.text}</Text>
                   </Text>
                 );
@@ -233,7 +233,7 @@ function ModifiedFileView({
           );
         })
       )}
-      <Text color="#475569">{rule}</Text>
+      <Text color="#334155">{rule}</Text>
     </Box>
   );
 }
@@ -265,20 +265,20 @@ function NewFileView({
   return (
     <Box flexDirection="column">
       <Text>
-        <Text color="#E2E8F0" bold>{baseName}</Text>
-        <Text color="#64748B"> · new file</Text>
+        <Text color="#F1F5F9" bold>{baseName}</Text>
+        <Text color="#475569"> · new file</Text>
       </Text>
-      <Text color="#475569">{rule}</Text>
+      <Text color="#334155">{rule}</Text>
       {lines.map((line, i) => {
         const ln = String(i + 1).padStart(4);
         return (
           <Text key={`n${i}`}>
-            <Text color="#64748B">{ln} </Text>
+            <Text color="#475569">{ln} </Text>
             <Text>{line}</Text>
           </Text>
         );
       })}
-      <Text color="#475569">{rule}</Text>
+      <Text color="#334155">{rule}</Text>
     </Box>
   );
 }

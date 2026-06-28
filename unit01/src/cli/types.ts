@@ -4,7 +4,7 @@
 import type { AllowedPath } from '../core/security/types.js';
 
 // App screen states
-export type AppScreen = 'prompt' | 'streaming' | 'select' | 'confirm';
+export type AppScreen = 'prompt' | 'streaming' | 'select' | 'confirm' | 'input';
 
 // Output history entries
 export type OutputEntry =
@@ -19,6 +19,7 @@ export interface UiAdapter {
   printSystemMessage: (type: 'error' | 'warn' | 'guard' | 'info' | 'stop', message: string) => void;
   printToolResult: (status: 'success' | 'failure' | 'skipped', message: string) => void;
   interactiveSelect: (title: string, options: string[]) => Promise<number>;
+  interactiveInput: (title: string, placeholder?: string) => Promise<string>;
   interactiveConfirmWrite: (filePath: string, lineCount: number, actionVerb: 'write' | 'create' | 'modify') => Promise<'y' | 'n' | 'p'>;
   showDiff: (original: string | null, modified: string, language: string, filePath: string) => void;
   startStreaming: () => void;

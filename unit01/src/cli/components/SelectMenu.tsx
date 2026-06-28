@@ -49,7 +49,7 @@ export function SelectMenu({ title, options, onSelect }: SelectMenuProps) {
   return (
     <Box flexDirection="column">
       <Text>{' '}</Text>
-      <Text bold color="#E2E8F0">{themePrimary.bold(title)}</Text>
+      <Text bold color="#F1F5F9">{themePrimary.bold(title)}</Text>
       <Text>{themeBorder('─'.repeat(40))}</Text>
       {options.map((opt, i) => {
         const isSelected = i === selectedIndex;

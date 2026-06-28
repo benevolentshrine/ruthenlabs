@@ -148,6 +148,23 @@ export class SessionStore {
       fs.unlinkSync(sessionFile);
     }
   }
+
+  /**
+   * Renames a session.
+   */
+  public rename(sessionId: string, newTitle: string): void {
+    const sessionFile = path.join(this.sessionsDir, `${sessionId}.json`);
+    if (fs.existsSync(sessionFile)) {
+      try {
+        const content = fs.readFileSync(sessionFile, 'utf8');
+        const data = JSON.parse(content) as SessionData;
+        data.firstMessage = newTitle;
+        fs.writeFileSync(sessionFile, JSON.stringify(data, null, 2), 'utf8');
+      } catch (err) {
+        // Ignore errors
+      }
+    }
+  }
 }
 
 export function runStalenessCheck(

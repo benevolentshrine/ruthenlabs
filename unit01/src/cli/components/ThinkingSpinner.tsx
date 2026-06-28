@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import { themeGold } from '../views/theme.js';
 
 const SANSKRIT = 'अआइईउऊएऐओऔकखगघचछजझटठडढणतथदधनपफबभमयरलवशषसह';
-const GOLD_GRADIENT = ['#F59E0B', '#D97706', '#B45309', '#92400E', '#B45309', '#D97706', '#F59E0B', '#FCD34D'];
+const ACCENT_GRADIENT = ['#E0F2FE', '#BAE6FD', '#7DD3FC', '#38BDF8', '#0EA5E9', '#0284C7', '#0369A1', '#075985'];
 const CASCADE_TICKS = 15;
 const MAX_VISIBLE = 8;
 
@@ -44,10 +43,10 @@ export function ThinkingSpinner({ active }: ThinkingSpinnerProps) {
     const brightness = 10 + Math.abs(Math.sin(tick * 0.15)) * 90;
     const opacity = brightness / 100;
     const pulseChar = SANSKRIT[tick % SANSKRIT.length];
-    // Warm orange pulse via hex interpolation
-    const r = Math.round(249 * opacity);
-    const g = Math.round(115 * opacity);
-    const b = Math.round(22 * opacity);
+    // Sky blue pulse via hex interpolation
+    const r = Math.round(56 * opacity);
+    const g = Math.round(189 * opacity);
+    const b = Math.round(248 * opacity);
     const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 
     return (
@@ -57,11 +56,11 @@ export function ThinkingSpinner({ active }: ThinkingSpinnerProps) {
     );
   }
 
-  // Phase 1: cascade with gold gradient
+  // Phase 1: cascade with accent gradient
   return (
     <Box>
       {chars.map((char, i) => (
-        <Text key={i} color={GOLD_GRADIENT[i % GOLD_GRADIENT.length]}>{char}</Text>
+        <Text key={i} color={ACCENT_GRADIENT[i % ACCENT_GRADIENT.length]}>{char}</Text>
       ))}
     </Box>
   );

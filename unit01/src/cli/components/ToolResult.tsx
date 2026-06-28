@@ -141,15 +141,15 @@ export function ToolResult({ status, message }: ToolResultProps) {
   }
 
   const statusChar = status === 'success' ? '✔' : status === 'failure' ? '✖' : '⚠';
-  const statusColor = status === 'success' ? '#10B981' : status === 'failure' ? '#EF4444' : '#F59E0B';
+  const statusColor = status === 'success' ? '#4ADE80' : status === 'failure' ? '#F87171' : '#FBBF24';
 
   return (
     <Box marginLeft={0} marginTop={0} marginBottom={0}>
       <Text color={statusColor}>{statusChar} </Text>
-      <Text color="#4682B4">[{category}] </Text>
-      <Text color="#E2E8F0">{target}</Text>
+      <Text color="#38BDF8">[{category}] </Text>
+      <Text color="#F1F5F9">{target}</Text>
       {metadata && (
-        <Text color="#64748B">  ·  {metadata}</Text>
+        <Text color="#475569">  ·  {metadata}</Text>
       )}
     </Box>
   );

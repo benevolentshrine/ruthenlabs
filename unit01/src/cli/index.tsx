@@ -379,6 +379,7 @@ async function main() {
     contextLimit = await ollama.getContextLimit(activeModel);
     sessionId = sessionData.id;
     lastInputTokens = 0;
+    ui.updateStatus(activeModel, '0', gitBranch);
     ui.printSystemMessage('info', `Resumed session successfully.`);
   };
 
@@ -434,9 +435,28 @@ async function main() {
           return;
         }
         const sessionOptions = sessions.map(s => `Session · ${s.messageCount} messages · "${s.firstMessage.slice(0, 40)}"`);
-        const chosenIdx = await ui.interactiveSelect('Select session to resume:', sessionOptions);
+        const chosenIdx = await ui.interactiveSelect('Select Session:', sessionOptions);
         if (chosenIdx !== -1) {
-          await resumeSession(ui, sessions[chosenIdx]);
+          const selectedSession = sessions[chosenIdx];
+          const actionIdx = await ui.interactiveSelect('Session Action:', [
+            'Resume',
+            'Rename',
+            'Delete',
+            'Cancel'
+          ]);
+
+          if (actionIdx === 0) {
+            await resumeSession(ui, selectedSession);
+          } else if (actionIdx === 1) {
+            const newName = await ui.interactiveInput('Enter new session name:', selectedSession.firstMessage);
+            if (newName.trim()) {
+              sessionStore.rename(selectedSession.id, newName.trim());
+              ui.printSystemMessage('info', 'Session renamed successfully.');
+            }
+          } else if (actionIdx === 2) {
+            sessionStore.delete(selectedSession.id);
+            ui.printSystemMessage('info', 'Session deleted successfully.');
+          }
         }
         return;
       }
@@ -471,6 +491,7 @@ async function main() {
         if (chosenIdx !== -1) {
           activeModel = models[chosenIdx].name;
           contextLimit = await ollama.getContextLimit(activeModel);
+          ui.updateStatus(activeModel, '0', gitBranch);
           ui.printSystemMessage('info', `Switched to active model: ${activeModel}`);
         }
         return;

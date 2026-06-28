@@ -4,6 +4,13 @@ import { themePrimary, themeBorder, themeGold, themeGray } from '../views/theme.
 import { StatusBar } from './StatusBar.js';
 import { CommandPopup } from './CommandPopup.js';
 
+interface PasteBlock {
+  id: number;
+  start: number;
+  end: number;
+  lineCount: number;
+}
+
 interface PromptInputProps {
   onSubmit: (input: string) => void;
   status: { model: string; contextPct: string; branch: string };
@@ -33,6 +40,8 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
   }, [cursorPos]);
 
   const isPastingRef = React.useRef(false);
+  const pasteBlocksRef = React.useRef<PasteBlock[]>([]);
+  const nextPasteIdRef = React.useRef(22);
 
   const { stdout } = useStdout();
   const { stdin } = useStdin();
@@ -66,7 +75,24 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
             const pos = (cursorPosRef.current < 0 || cursorPosRef.current > prev.length) ? prev.length : cursorPosRef.current;
             const before = prev.slice(0, pos);
             const after = prev.slice(pos);
-            setCursorPos(before.length + pasteContent.length);
+            const lines = pasteContent.split('\n');
+            const hasNewlines = lines.length > 1;
+
+            if (hasNewlines) {
+              const start = before.length;
+              const end = before.length + pasteContent.length;
+              const lineCount = lines.filter(Boolean).length || 1;
+              const newBlock: PasteBlock = {
+                id: nextPasteIdRef.current++,
+                start,
+                end,
+                lineCount
+              };
+              pasteBlocksRef.current = [...pasteBlocksRef.current, newBlock].sort((a, b) => a.start - b.start);
+            }
+
+            const newOffset = before.length + pasteContent.length;
+            setCursorPos(newOffset);
             return before + pasteContent + after;
           });
           setShowPopup(false);
@@ -86,7 +112,24 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
             const pos = (cursorPosRef.current < 0 || cursorPosRef.current > prev.length) ? prev.length : cursorPosRef.current;
             const before = prev.slice(0, pos);
             const after = prev.slice(pos);
-            setCursorPos(before.length + pasteContent.length);
+            const lines = pasteContent.split('\n');
+            const hasNewlines = lines.length > 1;
+
+            if (hasNewlines) {
+              const start = before.length;
+              const end = before.length + pasteContent.length;
+              const lineCount = lines.filter(Boolean).length || 1;
+              const newBlock: PasteBlock = {
+                id: nextPasteIdRef.current++,
+                start,
+                end,
+                lineCount
+              };
+              pasteBlocksRef.current = [...pasteBlocksRef.current, newBlock].sort((a, b) => a.start - b.start);
+            }
+
+            const newOffset = before.length + pasteContent.length;
+            setCursorPos(newOffset);
             return before + pasteContent + after;
           });
           setShowPopup(false);
@@ -160,6 +203,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
       setCursorPos(0);
       setHistoryIndex(-1);
       setShowPopup(true);
+      pasteBlocksRef.current = [];
       return;
     }
 
@@ -172,6 +216,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
       if (matches.length > 0) {
         setValue(matches[0]);
         setCursorPos(matches[0].length);
+        pasteBlocksRef.current = [];
       }
       return;
     }
@@ -188,6 +233,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
         setValue(entry);
         setCursorPos(entry.length);
         setShowPopup(false);
+        pasteBlocksRef.current = [];
       }
       return;
     }
@@ -201,24 +247,116 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
         setValue(entry);
         setCursorPos(entry.length);
         setShowPopup(false);
+        pasteBlocksRef.current = [];
       } else if (historyIndex === 0) {
         setHistoryIndex(-1);
         setValue('');
         setCursorPos(0);
         setShowPopup(true);
+        pasteBlocksRef.current = [];
       }
       return;
     }
 
-    // Backspace & ASCII 127/8 & Delete
+    const isLineDelete = key.ctrl && (input === 'u' || input.charCodeAt(0) === 21);
+
+    if (isLineDelete) {
+      if (value.length > 0) {
+        setValue((v: string) => {
+          const pos = (cursorPos <= 0 || cursorPos > v.length) ? v.length : cursorPos;
+          const newText = v.slice(pos);
+
+          // Filter out paste blocks overlapping the deleted range [0, pos]
+          const remainingBlocks = pasteBlocksRef.current.filter(b => {
+            const overlaps = !(b.end <= 0 || b.start >= pos);
+            return !overlaps;
+          });
+
+          // Shift remaining blocks
+          for (const b of remainingBlocks) {
+            b.start -= pos;
+            b.end -= pos;
+          }
+
+          pasteBlocksRef.current = remainingBlocks;
+          setCursorPos(0);
+          return newText;
+        });
+      }
+      return;
+    }
+
     const isBackspace = key.backspace || key.delete || (input && (input.charCodeAt(0) === 127 || input.charCodeAt(0) === 8));
+    const isWordDelete = (isBackspace && key.meta) || (key.ctrl && (input === 'w' || input.charCodeAt(0) === 23));
+
+    if (isWordDelete) {
+      if (value.length > 0) {
+        setValue((v: string) => {
+          const pos = (cursorPos <= 0 || cursorPos > v.length) ? v.length : cursorPos;
+          const { text: newText, newPos } = deletePreviousWord(v, pos);
+          const deleteLength = pos - newPos;
+
+          // Filter out paste blocks overlapping the deleted range
+          const remainingBlocks = pasteBlocksRef.current.filter(b => {
+            const overlaps = !(b.end <= newPos || b.start >= pos);
+            return !overlaps;
+          });
+
+          // Shift remaining blocks
+          for (const b of remainingBlocks) {
+            if (b.start >= pos) {
+              b.start -= deleteLength;
+              b.end -= deleteLength;
+            }
+          }
+
+          pasteBlocksRef.current = remainingBlocks;
+          setCursorPos(newPos);
+          return newText;
+        });
+      }
+      return;
+    }
+
     if (isBackspace) {
       if (value.length > 0) {
         setValue((v: string) => {
           const pos = (cursorPos <= 0 || cursorPos > v.length) ? v.length : cursorPos;
+          
+          // Check if cursor is exactly at the end of ANY paste block
+          const targetBlockIdx = pasteBlocksRef.current.findIndex(b => pos === b.end);
+          if (targetBlockIdx !== -1) {
+            const block = pasteBlocksRef.current[targetBlockIdx];
+            const deleteLength = block.end - block.start;
+            const before = v.slice(0, block.start);
+            const after = v.slice(block.end);
+            
+            // Remove target block from registry
+            pasteBlocksRef.current.splice(targetBlockIdx, 1);
+            
+            // Shift all subsequent blocks to the left by deleteLength
+            for (const b of pasteBlocksRef.current) {
+              if (b.start >= block.end) {
+                b.start -= deleteLength;
+                b.end -= deleteLength;
+              }
+            }
+            
+            setCursorPos(before.length);
+            return before + after;
+          }
+
           const before = v.slice(0, pos - 1);
           const after = v.slice(pos);
           setCursorPos(before.length);
+          
+          // Shift all blocks starting at or after pos to the left by 1
+          for (const b of pasteBlocksRef.current) {
+            if (b.start >= pos) {
+              b.start -= 1;
+              b.end -= 1;
+            }
+          }
           return before + after;
         });
       }
@@ -236,6 +374,14 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
         const before = v.slice(0, pos);
         const after = v.slice(pos);
         setCursorPos(before.length + 1);
+        
+        // Shift any paste blocks that start at or after pos
+        for (const block of pasteBlocksRef.current) {
+          if (block.start >= pos) {
+            block.start += 1;
+            block.end += 1;
+          }
+        }
         return before + input + after;
       });
       setShowPopup(true);
@@ -247,9 +393,9 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
   const border = themeBorder('─'.repeat(cols));
 
   const renderInputLines = () => {
-    const lastNewlineIdx = value.lastIndexOf('\n');
+    const blocks = [...pasteBlocksRef.current].sort((a, b) => a.start - b.start);
     
-    if (lastNewlineIdx === -1) {
+    if (blocks.length === 0) {
       const before = value.slice(0, cursorPos);
       const cursorChar = value[cursorPos] || ' ';
       const after = value.slice(cursorPos + 1);
@@ -264,23 +410,74 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
       );
     }
 
-    const pastedText = value.slice(0, lastNewlineIdx);
-    const activeLine = value.slice(lastNewlineIdx + 1);
-    const pastedLinesCount = pastedText.split('\n').length;
+    const elements: React.ReactNode[] = [];
+    let lastIdx = 0;
+    let cursorRendered = false;
 
-    const activeLineCursorPos = Math.max(0, cursorPos - (lastNewlineIdx + 1));
-    const before = activeLine.slice(0, activeLineCursorPos);
-    const cursorChar = activeLine[activeLineCursorPos] || ' ';
-    const after = activeLine.slice(activeLineCursorPos + 1);
-    const cursorElement = themeGold.inverse(cursorChar);
+    const renderSegmentWithCursor = (text: string, startOffset: number) => {
+      if (cursorPos >= startOffset && cursorPos <= startOffset + text.length) {
+        const localPos = cursorPos - startOffset;
+        const before = text.slice(0, localPos);
+        const cursorChar = text[localPos] || ' ';
+        const after = text.slice(localPos + 1);
+        cursorRendered = true;
+        return (
+          <Text key={startOffset}>
+            {themePrimary(before)}
+            {themeGold.inverse(cursorChar)}
+            {themePrimary(after)}
+          </Text>
+        );
+      }
+      return <Text key={startOffset}>{themePrimary(text)}</Text>;
+    };
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      
+      if (block.start > lastIdx) {
+        const segment = value.slice(lastIdx, block.start);
+        elements.push(renderSegmentWithCursor(segment, lastIdx));
+      }
+
+      // Styled placeholder token format: [Pasted text #ID +N lines]
+      const tokenText = `[Pasted text #${block.id} +${block.lineCount - 1} lines]`;
+      const isCursorAtTokenEnd = cursorPos === block.end;
+      
+      if (isCursorAtTokenEnd) {
+        const before = tokenText.slice(0, -1);
+        const lastChar = tokenText.slice(-1);
+        cursorRendered = true;
+        elements.push(
+          <Text key={`b-${block.id}`}>
+            <Text color="#38BDF8" backgroundColor="#1E293B">{before}</Text>
+            <Text color="#1E293B" backgroundColor="#38BDF8">{lastChar}</Text>
+          </Text>
+        );
+      } else {
+        elements.push(
+          <Text key={`b-${block.id}`} color="#38BDF8" backgroundColor="#1E293B">
+            {tokenText}
+          </Text>
+        );
+      }
+
+      lastIdx = block.end;
+    }
+
+    if (lastIdx < value.length) {
+      const segment = value.slice(lastIdx);
+      elements.push(renderSegmentWithCursor(segment, lastIdx));
+    }
+
+    if (!cursorRendered) {
+      elements.push(themeGold.inverse(' '));
+    }
 
     return (
       <Text>
         {`${promptChar} `}
-        <Text color="#F59E0B">{`[Pasted: ${pastedLinesCount} lines of text] `}</Text>
-        {themePrimary(before)}
-        {cursorElement}
-        {themePrimary(after)}
+        {elements}
       </Text>
     );
   };
@@ -297,9 +494,25 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
       <Text>{border}</Text>
       <StatusBar
         model={status.model}
-        contextPct={status.contextPct}
-        branch={status.branch}
       />
     </Box>
   );
+}
+
+function deletePreviousWord(text: string, pos: number): { text: string; newPos: number } {
+  if (pos <= 0) return { text, newPos: 0 };
+  
+  let idx = pos - 1;
+  while (idx >= 0 && /\s/.test(text[idx])) {
+    idx--;
+  }
+  while (idx >= 0 && !/\s/.test(text[idx])) {
+    idx--;
+  }
+  
+  const newPos = idx + 1;
+  const before = text.slice(0, newPos);
+  const after = text.slice(pos);
+  
+  return { text: before + after, newPos };
 }

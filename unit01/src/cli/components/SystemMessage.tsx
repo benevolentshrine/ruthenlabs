@@ -7,8 +7,8 @@ type MessageType = 'error' | 'warn' | 'guard' | 'info' | 'stop';
 const TYPE_COLORS: Record<MessageType, string> = {
   error: '#F87171',
   stop: '#F87171',
-  warn: '#F59E0B',
-  guard: '#F59E0B',
+  warn: '#FBBF24',
+  guard: '#FBBF24',
   info: '#38BDF8',
 };
 

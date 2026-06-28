@@ -46,17 +46,18 @@ if (typeof process.stdout.on === 'function') {
 }
 
 
-// Theme: Amber & Silver (Complementary Warm)
-export const themePrimary     = chalk.hex('#E2E8F0'); // Silver Slate — structure, identity
-export const themeBorder      = chalk.hex('#475569'); // Muted Slate — rules, borders
-export const themeGold        = chalk.hex('#F59E0B'); // Amber Gold — active, selected, spinner
-export const themeOrange      = chalk.hex('#F59E0B'); // alias for themeGold (backwards compat)
-export const themeAccent      = chalk.hex('#F97316'); // Warm Orange — success, AI voice, status
-export const themeAccentLight = chalk.hex('#FAB387'); // Peach — info, inline code
-export const themeGray        = chalk.hex('#64748B'); // Muted Slate — secondary text
-export const themeRed         = chalk.hex('#F87171'); // Coral Red — errors, failures
-export const themeBg          = '#1E293B';            // Base Slate — code bg
-export const themeBgDeep      = '#0F172A';            // Dark Slate — background
+// Theme: Unified Cool Slate & Cyan Accent
+export const themePrimary     = chalk.hex('#F1F5F9'); // Primary Text
+export const themeBorder      = chalk.hex('#334155'); // Section Dividers & borders
+export const themeGold        = chalk.hex('#38BDF8'); // Sky Blue Accent (replaces amber cursor/selections)
+export const themeOrange      = chalk.hex('#38BDF8'); // backward compat alias
+export const themeAccent      = chalk.hex('#4ADE80'); // Tool success / status messages
+export const themeAccentLight = chalk.hex('#38BDF8'); // Inline code / Light accent
+export const themeGray        = chalk.hex('#475569'); // Secondary text
+export const themeRed         = chalk.hex('#F87171'); // Errors / failures
+export const themeBg          = '#1E293B';            // Base Slate
+export const themeBgDeep      = '#0F172A';            // Dark Slate
+
 
 export const isGui = process.argv.includes('--gui');
 

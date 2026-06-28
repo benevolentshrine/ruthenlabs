@@ -11,3 +11,4 @@ export { ConfirmWrite } from './ConfirmWrite.js';
 export { PromptInput } from './PromptInput.js';
 export { ChatStream } from './ChatStream.js';
 export { DiffView } from './DiffView.js';
+export { InteractiveInput } from './InteractiveInput.js';

@@ -29,7 +29,8 @@ import {
   SelectMenu,
   ConfirmWrite,
   PromptInput,
-  DiffView
+  DiffView,
+  InteractiveInput
 } from './components/index.js';
 import type { CoreServices, AppScreen, OutputEntry } from './types.js';
 
@@ -72,6 +73,12 @@ export function App({ services }: AppProps) {
     filePath: string;
   } | null>(null);
 
+  const [interactiveInputProps, setInteractiveInputProps] = useState<{
+    title: string;
+    placeholder?: string;
+    resolve: (val: string) => void;
+  } | null>(null);
+
   // Status bar state
   const [statusModel, setStatusModel] = useState('');
   const [statusContext, setStatusContext] = useState('');
@@ -103,9 +110,6 @@ export function App({ services }: AppProps) {
 
     // Build welcome hints
     const hints: string[] = [];
-    if (services.projectType) {
-      hints.push(`📦 ${chalk.hex('#38BDF8')(services.projectType)} project detected`);
-    }
     if (services.isFirstRun) {
       hints.push(`◈ Type ${chalk.cyan('/')} to see commands  ·  type anything to begin`);
       hints.push(`◈ Press ${chalk.cyan('Escape')} to stop generation`);
@@ -149,6 +153,13 @@ export function App({ services }: AppProps) {
       return new Promise((resolve) => {
         setScreen('select');
         setSelectMenuProps({ title, options, resolve });
+      });
+    },
+
+    interactiveInput: (title: string, placeholder?: string): Promise<string> => {
+      return new Promise((resolve) => {
+        setScreen('input');
+        setInteractiveInputProps({ title, placeholder, resolve });
       });
     },
 
@@ -261,6 +272,15 @@ export function App({ services }: AppProps) {
     }
   }, [confirmWriteProps]);
 
+  // Handle interactive text input submit
+  const handleInputValueSubmit = useCallback((val: string) => {
+    if (interactiveInputProps) {
+      interactiveInputProps.resolve(val);
+      setInteractiveInputProps(null);
+      setScreen('prompt');
+    }
+  }, [interactiveInputProps]);
+
   // ── Render ──
   return (
     <Box flexDirection="column">
@@ -268,7 +288,7 @@ export function App({ services }: AppProps) {
       {welcomeShown && (
         <WelcomeBanner
           workspaceRoot={services.workspaceRoot}
-          modelName={services.activeModel}
+          modelName={statusModel}
           contextLimit={services.contextLimit}
           fileCount={services.filesCount}
           gitBranch={services.gitBranch}
@@ -366,6 +386,15 @@ export function App({ services }: AppProps) {
           lineCount={confirmWriteProps.lineCount}
           actionVerb={confirmWriteProps.actionVerb}
           onChoice={handleConfirmChoice}
+        />
+      )}
+
+      {/* Interactive Text Input Modal */}
+      {screen === 'input' && interactiveInputProps && (
+        <InteractiveInput
+          title={interactiveInputProps.title}
+          placeholder={interactiveInputProps.placeholder}
+          onSubmit={handleInputValueSubmit}
         />
       )}
 
