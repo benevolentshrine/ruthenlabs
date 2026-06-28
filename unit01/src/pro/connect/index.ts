@@ -1,4 +1,12 @@
-import { saveToKeychain, getFromKeychain, deleteFromKeychain } from './keychain.js';
+import {
+  saveToKeychain,
+  getFromKeychain,
+  deleteFromKeychain,
+  isSecretToolAvailable,
+  saveToSecretTool,
+  getFromSecretTool,
+  deleteFromSecretTool
+} from './keychain.js';
 import { saveCredential, getCredential, deleteCredential, vaultExists } from './vault.js';
 
 /**
@@ -109,6 +117,8 @@ export async function connectService(service: string, token: string): Promise<vo
 
   if (process.platform === 'darwin') {
     saveToKeychain(service, token);
+  } else if (isSecretToolAvailable()) {
+    saveToSecretTool(service, token);
   } else {
     saveCredential(service, token);
   }
@@ -121,6 +131,8 @@ export function isServiceConnected(service: string): boolean {
   let token: string | null = null;
   if (process.platform === 'darwin') {
     token = getFromKeychain(service);
+  } else if (isSecretToolAvailable()) {
+    token = getFromSecretTool(service);
   } else {
     if (!vaultExists()) return false;
     try {
@@ -138,9 +150,13 @@ export function isServiceConnected(service: string): boolean {
 export function disconnectService(service: string): void {
   if (process.platform === 'darwin') {
     deleteFromKeychain(service);
+  } else if (isSecretToolAvailable()) {
+    deleteFromSecretTool(service);
   } else {
     try {
       deleteCredential(service);
     } catch (_) {}
   }
 }
+
+export { isSecretToolAvailable } from './keychain.js';

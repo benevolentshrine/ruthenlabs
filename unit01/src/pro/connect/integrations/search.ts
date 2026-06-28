@@ -3,7 +3,7 @@ import * as path from 'path';
 import { homedir } from 'os';
 import chalk from 'chalk';
 import { getCredential, vaultExists } from '../vault.js';
-import { getFromKeychain } from '../keychain.js';
+import { getFromKeychain, isSecretToolAvailable, getFromSecretTool } from '../keychain.js';
 
 const FREE_QUOTA_FILE = path.join(homedir(), '.unit01', 'free_search_quota.json');
 const themeAccent = chalk.hex('#38BDF8');
@@ -25,6 +25,8 @@ interface QuotaData {
 function getServiceToken(service: string): string | null {
   if (process.platform === 'darwin') {
     return getFromKeychain(service);
+  } else if (isSecretToolAvailable()) {
+    return getFromSecretTool(service);
   } else {
     if (!vaultExists()) return null;
     try {

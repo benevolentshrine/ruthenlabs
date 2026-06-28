@@ -16,6 +16,8 @@ import { buildRepoMap } from '../core/indexer/repomap.js';
 import { AllowedPath } from '../core/security/types.js';
 import { SessionStore, SessionData, runStalenessCheck } from '../core/session/index.js';
 import { handleToolCalls } from './commands.js';
+import { ProjectMemoryStore } from '../pro/memory/index.js';
+import { AuditLogStore } from '../pro/audit/index.js';
 import {
   themePrimary,
   themeOrange,
@@ -53,6 +55,156 @@ const PERSONALITY_TONES: Record<string, { label: string; instruction: string }> 
   }
 };
 
+const OLLAMA_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'edit_file',
+      description: 'Edits or writes a file using search/replace blocks or whole content.',
+      parameters: {
+        type: 'object',
+        properties: {
+          filePath: { type: 'string', description: 'Relative path of the file to edit or create.' },
+          content: { type: 'string', description: 'The file contents, or ORIGINAL/UPDATED blocks for patching.' }
+        },
+        required: ['filePath', 'content']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Reads the complete text content of a file in the workspace.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path to the file.' }
+        },
+        required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_command',
+      description: 'Executes a command inside the sandboxed environment (running tests, builds, linting).',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string', description: 'The command line string to run.' }
+        },
+        required: ['command']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search',
+      description: 'Searches codebase, web pages, or lists directory structure.',
+      parameters: {
+        type: 'object',
+        properties: {
+          scope: { type: 'string', enum: ['code', 'web', 'files'], description: 'Scope of the search.' },
+          query: { type: 'string', description: 'Search term, web query, or file filter query.' },
+          pathVal: { type: 'string', description: 'Optional directory path for files scope.' }
+        },
+        required: ['scope', 'query']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'view_outline',
+      description: 'Retrieves structural class, method, or function outline of a file to save tokens.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path to the file.' }
+        },
+        required: ['path']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ask_user',
+      description: 'Asks the user a clarifying question or requests path mount permissions.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: 'The question text.' },
+          options: { type: 'string', description: 'Optional comma-separated list of choice options.' }
+        },
+        required: ['question']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'move_file',
+      description: 'Renames or moves a file.',
+      parameters: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Source path.' },
+          destinationPath: { type: 'string', description: 'Destination path.' }
+        },
+        required: ['sourcePath', 'destinationPath']
+      }
+    }
+  }
+];
+
+function getToolCallFingerprint(tc: any): string {
+  const name = tc.function?.name || '';
+  const args = tc.function?.arguments || {};
+  const sortedArgs: Record<string, any> = {};
+  Object.keys(args).sort().forEach(k => {
+    sortedArgs[k] = args[k];
+  });
+  return `${name}:${JSON.stringify(sortedArgs)}`;
+}
+
+function getXmlToolCallFingerprint(text: string): string {
+  const match = /<([a-zA-Z_][a-zA-Z0-9_\-]*)([^>]*)>([\s\S]*?)(?:<\/\1>|$)/.exec(text);
+  if (match) {
+    const name = match[1];
+    const attrs = match[2].trim();
+    const content = match[3].trim();
+    return `xml:${name}:${attrs}:${content}`;
+  }
+  return '';
+}
+
+function formatToolCallToXml(tc: any): string {
+  const name = tc.function?.name;
+  const args = tc.function?.arguments || {};
+  switch (name) {
+    case 'edit_file':
+      return `<edit_file path="${args.filePath || args.path}">${args.content || ''}</edit_file>`;
+    case 'read_file':
+      return `<read_file path="${args.path || args.filePath}" />`;
+    case 'run_command':
+      return `<run_command>${args.command}</run_command>`;
+    case 'search':
+      return `<search scope="${args.scope || 'code'}"${args.pathVal ? ` path="${args.pathVal}"` : ''}>${args.query || ''}</search>`;
+    case 'view_outline':
+      return `<view_outline path="${args.path}" />`;
+    case 'ask_user':
+      return `<ask_user${args.options ? ` options="${args.options}"` : ''}>${args.question}</ask_user>`;
+    case 'move_file':
+      return `<move_file source_path="${args.sourcePath}" destination_path="${args.destinationPath}" />`;
+    default:
+      return '';
+  }
+}
+
 const SYSTEM_INSTRUCTIONS = `<system_persona>
 You are Unit01, a directive AI coding assistant designed to build and debug projects in a local sandboxed environment.
 Your primary method of action is executing tools via XML tags. Keep your explanations concise, professional, and code-focused.
@@ -61,74 +213,62 @@ Your primary method of action is executing tools via XML tags. Keep your explana
 <tool_definitions>
 You can invoke the following tools by wrapping the command in XML tags. You must write the actual paths (do not use placeholders like "relative_path"):
 
-- To run a shell command:
-  <run_command>npm test</run_command>
-
 - To read a file:
   <read_file>src/db.ts</read_file>
 
-- To write or overwrite a new file:
-  <write_file path="src/main.ts">console.log("hello");</write_file>
-
-- To search the codebase:
-  <search_code>DatabaseSync</search_code>
-
-- To search the web:
-  <web_search>recent AI news 2026</web_search>
-
-- To patch a single exact string occurrence in a file:
-  <patch_file path="src/main.ts" search="console.log(&quot;hello&quot;);" replace="console.log(&quot;hi&quot;);" />
-  Or nested format:
-  <patch_file path="src/main.ts">
-    <search>console.log("hello");</search>
-    <replace>console.log("hi");</replace>
-  </patch_file>
-
-- To perform multi-block edits on an existing file:
-  <patch_file_blocks path="src/main.ts">
+- To edit a file (handles creating, rewriting, or patching using ORIGINAL/UPDATED block hunks):
+  To create a new file or rewrite one entirely:
+  <edit_file path="src/main.ts">console.log("hello");</edit_file>
+  To patch an existing file:
+  <edit_file path="src/main.ts">
   <<<<<<< ORIGINAL
   console.log("hello");
   =======
   console.log("hi");
   >>>>>>> UPDATED
-  </patch_file_blocks>
+  </edit_file>
 
-- To list directory contents directly:
-  <list_dir path="src" recursive="false" />
+- To run a shell command (running tests, builds, linting, etc.):
+  <run_command>npm test</run_command>
 
-- To view structured git status:
-  <git_status />
+- To search (codebase contents, web pages, or directory file structure):
+  To search text in codebase:
+  <search scope="code">DatabaseSync</search>
+  To search the web:
+  <search scope="web">recent AI news 2026</search>
+  To find files or list directory structure:
+  <search scope="files" path="src">*.ts</search> (or query can be left empty: <search scope="files" path="src" />)
 
-- To run project compilation/linter diagnostics:
-  <diagnostics /> or <diagnostics command="npm run lint" />
+- To view the structural outlines (classes/methods/functions) of a file without reading the whole code:
+  <view_outline path="src/cli/index.tsx" />
+
+- To ask the developer a question or request permission to mount a path:
+  <ask_user options="Allow read-write, Allow read-only, Deny">I need access to /path/to/directory. Grant access?</ask_user>
 
 - To rename or move a file:
   <move_file source_path="old.py" destination_path="new.py" />
-
-- To ask the developer a question or request path permission:
-  <question options="Allow read-write, Allow read-only, Deny">I need access to /path/to/directory to complete this task. Grant access?</question>
 </tool_definitions>
 
 <behavioral_rules>
 1. Execute only ONE tool at a time.
 2. Once you write a tool call tag, stop outputting text immediately. Wait for the tool output to be returned to you in a <tool_output> block. Do NOT write any conversational text, preambles, or introductory explanations (such as "To read the file...", "You can run this command...", etc.) before writing the XML tool tag. Simply output the XML tool tag directly.
 3. Do not write placeholders like "relative_path". Write the actual path directly.
-4. Before executing any file, ensure it has been written using write_file first. Always use absolute paths.
+4. Before executing any file, ensure it has been written/edited using edit_file first. Always use absolute paths.
 5. Tool Selection Priority:
-   - Use patch_file_blocks as the default tool to edit existing files.
-   - Use patch_file for simple, single exact replacements.
-   - Use write_file only when creating new files. Never write_file on an existing file.
+   - Use view_outline to check symbol declarations and line numbers before reading a large file.
+   - Use edit_file as the default tool to modify or create files. Never use write_file or patch_file.
+   - Use search for looking up text in the codebase, searching the web, or locating files.
    - Use move_file to rename or move files. Never use cp + rm or mv in run_command.
-   - You MUST use the <question> tool to request path access if you need to access files outside the workspace. Do NOT request path access, ask questions, or clarify requirements via plain conversational text, as the user has no way to grant permissions or respond unless you invoke the <question> tool tag.
+   - You MUST use the <ask_user> tool to request path access if you need to access files outside the workspace. Do NOT request path access, ask questions, or clarify requirements via plain conversational text, as the user has no way to grant permissions or respond unless you invoke the <ask_user> tool tag.
 6. Complex Task / New Project Workflow:
    - When asked to create a new application, website, game, or implement a large feature, DO NOT write files immediately.
    - First, present a clear architectural plan detailing the files you plan to create/modify and libraries you need. Wait for user approval or feedback.
    - After approval, implement the code incrementally—write or edit only ONE file per turn, starting with the base configuration and core logic.
    - Keep code modular and clean. Separate concerns (e.g., separate UI rendering from core logic) to prevent massive single-file dumps.
-7. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <list_dir path="\${os.homedir()}" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the question tool (e.g., <question options="Allow read-write, Allow read-only, Deny">I need access to \${os.homedir()} to complete this task. Grant access?</question>). You MUST use the <question> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
-8. When using the <question> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "\${os.homedir()}").
-9. Web Search & Code Confirmation Flow: When searching the web for code, libraries, or general solutions (using <web_search>), do NOT write files or execute other tools immediately after receiving the search results. First, present the findings and the code inside the chat area (e.g., \'I found this code, it is X lines long, here is how it works...\'). Then, explicitly ask the user what they want to do with the code (e.g., write it to a file, modify it, or explain it), and wait for their input before taking any action on the codebase files.
-10. Give me in the Chat Area Rule: If the user asks to see code, write code \'in the chat\', \'show me\', or uses similar phrases requesting visibility in the conversation window, you are strictly prohibited from using <write_file> or <patch_file_blocks> to modify the workspace files. You must only print the code inside markdown code blocks in your chat response. You are only allowed to write or edit workspace files if the user explicitly instructs you to save or write it to a file (e.g., \'write this to src/calculator.py\').
+7. To access files or directories outside the workspace (such as the home directory), first attempt to access them using filesystem tools (e.g. <search scope="files" path="/home/user" />) or commands. If the tool fails with a PATH_NOT_ALLOWED error, copy the exact path from the error response and immediately request access using the ask_user tool (e.g., <ask_user options="Allow read-write, Allow read-only, Deny">I need access to \${os.homedir()} to complete this task. Grant access?</ask_user>). You MUST use the <ask_user> tool tag; do NOT attempt to request permission or ask for access using plain conversational text.
+8. When using the <ask_user> tool to request path permission, always substitute the target path dynamically (do not literally copy "/path/to/directory" from the example; use the actual absolute path you need to access, e.g. "\${os.homedir()}").
+9. Web Search & Code Confirmation Flow: When searching the web for code, libraries, or general solutions (using <search scope="web">), do NOT write files or execute other tools immediately after receiving the search results. First, present the findings and the code inside the chat area (e.g., 'I found this code, it is X lines long, here is how it works...'). Then, explicitly ask the user what they want to do with the code (e.g., write it to a file, modify it, or explain it), and wait for their input before taking any action on the codebase files.
+10. Give me in the Chat Area Rule: If the user asks to see code, write code 'in the chat', 'show me', or uses similar phrases requesting visibility in the conversation window, you are strictly prohibited from using <edit_file> to modify the workspace files. You must only print the code inside markdown code blocks in your chat response. You are only allowed to write or edit workspace files if the user explicitly instructs you to save or write it to a file (e.g., 'write this to src/calculator.py').
 </behavioral_rules>`;
 
 function estimateTokens(text: string): number {
@@ -178,23 +318,36 @@ function loadConfig(workspaceRoot: string): Unit01Config {
 
 function hasRepetitionLoop(text: string): boolean {
   const len = text.length;
+  const minSequenceSize = 20;
   const maxChunkSize = Math.min(200, Math.floor(len / 3));
-  for (let size = 10; size <= maxChunkSize; size++) {
+  
+  if (len < minSequenceSize * 3) {
+    return false;
+  }
+
+  for (let size = minSequenceSize; size <= maxChunkSize; size++) {
     const chunk3 = text.slice(-size);
     const chunk2 = text.slice(-2 * size, -size);
     const chunk1 = text.slice(-3 * size, -2 * size);
     if (chunk1 === chunk2 && chunk2 === chunk3) {
-      if (/[a-zA-Z]/.test(chunk3) && new Set(chunk3).size > 2) {
+      const lettersCount = (chunk3.match(/[a-zA-Z]/g) || []).length;
+      const uniqueChars = new Set(chunk3).size;
+      
+      if (uniqueChars >= 5 && lettersCount / size >= 0.35) {
         return true;
       }
     }
   }
+
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
-  if (lines.length >= 4) {
-    const last4 = lines.slice(-4);
-    if (last4[0] === last4[1] && last4[1] === last4[2] && last4[2] === last4[3]) {
-      const line = last4[0];
-      if (line.length >= 3 && /[a-zA-Z]/.test(line) && new Set(line).size > 2) {
+  if (lines.length >= 5) {
+    const last5 = lines.slice(-5);
+    const first = last5[0];
+    const allMatch = last5.every(l => l === first);
+    if (allMatch) {
+      const uniqueChars = new Set(first).size;
+      const lettersCount = (first.match(/[a-zA-Z]/g) || []).length;
+      if (first.length >= 8 && uniqueChars >= 4 && lettersCount >= 3) {
         return true;
       }
     }
@@ -279,10 +432,19 @@ async function main() {
   const sessionStartTime = Date.now();
   let lastInputTokens = 0;
   let pendingCompaction = false;
-  const conversationHistory: { role: string; content: string }[] = [];
+  const conversationHistory: any[] = [];
+
+  const recentToolCallsFingerprints: string[] = [];
+  const MAX_FINGERPRINTS = 10;
+  let useNativeTools = false;
+  try {
+    useNativeTools = await ollama.checkModelToolsCapability(activeModel);
+  } catch (e) {}
 
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
+
+  const memoryStore = new ProjectMemoryStore(indexer.db);
 
   try {
     const { indexMissingEmbeddings } = await import('../pro/search/index.js');
@@ -338,7 +500,25 @@ async function main() {
       messagesToSummarize = conversationHistory.slice(-countToKeep);
     }
 
-    const summaryPrompt = `Summarise this conversation into a concise but complete technical brief. Include file edits and commands ran.`;
+    const summaryPrompt = `You are compacting the conversation history. Analyze the conversation history so far and output a response wrapped in a single <compaction_response> tag. Inside, provide the following three sections:
+
+1. <summary>: A concise technical brief of the edits made, files created, and commands run.
+2. <decisions>: List any architectural choices made (e.g. database choice, library choice, authentication flow, file structure). Format each as: "- [category] Summary (Rationale: Rationale description)". Use categories: database, auth, styles, conventions, other.
+3. <conventions>: List any specific coding guidelines, patterns, naming conventions, or rules the user requested or established. Format each as: "- [key]: \\"Pattern details\\"".
+
+Example output format:
+<compaction_response>
+<summary>
+Integrated native tools and upgraded loop detection in index.tsx.
+</summary>
+<decisions>
+- [conventions] Consolidated toolset to 6 core tools (Rationale: Simplify native JSON parameter schemas and reduce validation errors).
+</decisions>
+<conventions>
+- [edit_file_priority]: "Always prefer edit_file over write_file for all edits"
+</conventions>
+</compaction_response>`;
+
     const summarisationPayload = [...messagesToSummarize, { role: 'user', content: summaryPrompt }];
 
     try {
@@ -349,8 +529,47 @@ async function main() {
         () => {},
         new AbortController().signal
       );
-      const summaryContent = chatResult.content.trim();
+      
+      const contentText = chatResult.content;
+      const summaryMatch = /<summary>([\s\S]*?)<\/summary>/.exec(contentText);
+      const summaryContent = summaryMatch ? summaryMatch[1].trim() : contentText.trim();
+      
       if (!summaryContent) throw new Error('Empty summary');
+
+      // Extract decisions
+      const decisionsMatch = /<decisions>([\s\S]*?)<\/decisions>/.exec(contentText);
+      if (decisionsMatch) {
+        const lines = decisionsMatch[1].split('\n');
+        for (const line of lines) {
+          const match = /-\s*\[(database|auth|styles|conventions|other)\]\s*(.*?)\s*\(Rationale:\s*(.*?)\)/i.exec(line);
+          if (match) {
+            const [, category, summary, rationale] = match;
+            try {
+              memoryStore.logDecision({
+                category: category.toLowerCase() as any,
+                summary: summary.trim(),
+                rationale: rationale.trim(),
+                context_files: []
+              });
+            } catch (e) {}
+          }
+        }
+      }
+
+      // Extract conventions
+      const conventionsMatch = /<conventions>([\s\S]*?)<\/conventions>/.exec(contentText);
+      if (conventionsMatch) {
+        const lines = conventionsMatch[1].split('\n');
+        for (const line of lines) {
+          const match = /-\s*\[(.*?)\]:\s*"(.*?)"/.exec(line);
+          if (match) {
+            const [, key, pattern] = match;
+            try {
+              memoryStore.upsertConvention(key.trim(), pattern.trim());
+            } catch (e) {}
+          }
+        }
+      }
 
       conversationHistory.length = 0;
       conversationHistory.push({
@@ -364,7 +583,7 @@ async function main() {
       lastInputTokens = newTotal;
       const newPct = Math.round((newTotal / contextLimit) * 100);
 
-      ui.printSystemMessage('info', `context compacted  ·  ${pct}% → ${newPct}%  ·  saved ${saved} tokens`);
+      ui.printSystemMessage('info', `context compacted & memory distilled  ·  ${pct}% → ${newPct}%  ·  saved ${saved} tokens`);
       return true;
     } catch (err: any) {
       ui.printSystemMessage('warn', `Compaction failed: ${err.message}`);
@@ -491,8 +710,13 @@ async function main() {
         if (chosenIdx !== -1) {
           activeModel = models[chosenIdx].name;
           contextLimit = await ollama.getContextLimit(activeModel);
+          try {
+            useNativeTools = await ollama.checkModelToolsCapability(activeModel);
+          } catch (e) {
+            useNativeTools = false;
+          }
           ui.updateStatus(activeModel, '0', gitBranch);
-          ui.printSystemMessage('info', `Switched to active model: ${activeModel}`);
+          ui.printSystemMessage('info', `Switched to active model: ${activeModel} (Native tools: ${useNativeTools ? 'yes' : 'no'})`);
         }
         return;
       }
@@ -596,11 +820,191 @@ async function main() {
         return;
       }
 
+      if (command === '/audit') {
+        const store = new AuditLogStore(indexer.db);
+        const limitStr = arg ? arg.trim() : '15';
+        const limit = parseInt(limitStr, 10) || 15;
+        const logs = store.getRecentLogs(limit);
+        if (logs.length === 0) {
+          ui.printSystemMessage('info', 'No audit logs recorded yet.');
+          return;
+        }
+        let out = `\nRecent Activity Audit Logs:\n`;
+        logs.forEach(l => {
+          const time = new Date(l.timestamp).toLocaleTimeString();
+          const statusText = l.status === 'completed' || l.status === 'approved' 
+            ? chalk.green(l.status) 
+            : l.status === 'failed' ? chalk.red(l.status) : chalk.yellow(l.status);
+          out += `  [${time}] ${chalk.cyan(l.service)} · ${l.operation} -> ${l.target} (${statusText})\n`;
+        });
+        ui.addTextOutput(out);
+        return;
+      }
+
+      if (command === '/connect') {
+        let service = '';
+        let token = '';
+
+        if (arg) {
+          const parts = arg.trim().split(/\s+/);
+          if (parts.length === 2) {
+            [service, token] = parts;
+          } else {
+            ui.printSystemMessage('error', 'Usage: /connect <service> <token> or just /connect to open the interactive menu.');
+            return;
+          }
+        } else {
+          const options = [
+            'Tavily (Web Search)',
+            'Exa (Web Search)',
+            'Jina (Web Search)',
+            'Serper (Web Search)',
+            'GitHub API Integration',
+            'Slack Webhook Integration',
+            'Notion Database Integration',
+            'Disconnect Service'
+          ];
+          const choiceIdx = await ui.interactiveSelect('Select Service to Connect:', options);
+          if (choiceIdx === -1) return;
+
+          if (choiceIdx === 7) {
+            const disconnectOptions = [
+              'tavily',
+              'exa',
+              'jina',
+              'serper',
+              'github',
+              'slack',
+              'notion'
+            ];
+            const selectDisconnectIdx = await ui.interactiveSelect('Select Service to Disconnect:', disconnectOptions);
+            if (selectDisconnectIdx === -1) return;
+            const targetService = disconnectOptions[selectDisconnectIdx];
+            try {
+              const { disconnectService } = await import('../pro/connect/index.js');
+              disconnectService(targetService);
+              ui.printSystemMessage('info', `Disconnected credentials for service: ${targetService}`);
+            } catch (e: any) {
+              ui.printSystemMessage('error', `Failed to disconnect service: ${e.message}`);
+            }
+            return;
+          }
+
+          const serviceNames = ['tavily', 'exa', 'jina', 'serper', 'github', 'slack', 'notion'];
+          service = serviceNames[choiceIdx];
+
+          const inputPrompt = `Enter API Token/Key for ${options[choiceIdx]}:`;
+          token = await ui.interactiveInput(inputPrompt);
+          if (!token || token.trim().length === 0) {
+            ui.printSystemMessage('error', 'API Token/Key cannot be empty.');
+            return;
+          }
+          token = token.trim();
+        }
+
+        ui.showToolProgress(`Connecting service ${service}...`);
+        try {
+          const { connectService, isSecretToolAvailable } = await import('../pro/connect/index.js');
+          
+          if (process.platform !== 'darwin' && !isSecretToolAvailable()) {
+            const { vaultExists, unlockWithPassword, initializeVault } = await import('../pro/connect/vault.js');
+            if (vaultExists()) {
+              let unlocked = false;
+              while (!unlocked) {
+                const password = await ui.interactiveInput('Enter Vault Master Password to unlock credentials store:');
+                if (!password) {
+                  ui.printSystemMessage('error', 'Password required to unlock credentials vault.');
+                  ui.hideToolProgress();
+                  return;
+                }
+                unlocked = unlockWithPassword(password);
+                if (!unlocked) {
+                  ui.printSystemMessage('error', 'Incorrect password. Try again.');
+                }
+              }
+            } else {
+              const password = await ui.interactiveInput('Create a new Vault Master Password to encrypt API credentials:');
+              if (!password) {
+                ui.printSystemMessage('error', 'Password required to initialize credentials vault.');
+                ui.hideToolProgress();
+                return;
+              }
+              const confirmPassword = await ui.interactiveInput('Confirm Vault Master Password:');
+              if (password !== confirmPassword) {
+                ui.printSystemMessage('error', 'Passwords do not match. Vault initialization aborted.');
+                ui.hideToolProgress();
+                return;
+              }
+              const recoveryKey = initializeVault(password);
+              ui.printSystemMessage('info', `Vault initialized successfully!\nYour Recovery Key (keep this safe!):\n--> ${recoveryKey}`);
+            }
+          }
+          
+          await connectService(service, token);
+          ui.hideToolProgress();
+          ui.printSystemMessage('info', `Successfully connected service: ${service}`);
+        } catch (e: any) {
+          ui.hideToolProgress();
+          ui.printSystemMessage('error', `Failed to connect service: ${e.message}`);
+        }
+        return;
+      }
+
+      if (command === '/reset-password') {
+        if (process.platform === 'darwin') {
+          ui.printSystemMessage('info', 'Password vault not used on macOS (using native Keychain).');
+          return;
+        }
+        const { isSecretToolAvailable } = await import('../pro/connect/index.js');
+        if (isSecretToolAvailable()) {
+          ui.printSystemMessage('info', 'Password vault not used (using Linux Secret Service Keyring).');
+          return;
+        }
+        
+        const { vaultExists, unlockWithRecoveryKey, resetVaultPassword } = await import('../pro/connect/vault.js');
+        if (!vaultExists()) {
+          ui.printSystemMessage('error', 'Vault does not exist. Use /connect to initialize it first.');
+          return;
+        }
+
+        const recoveryKey = await ui.interactiveInput('Enter Vault Master Recovery Key:');
+        if (!recoveryKey) {
+          ui.printSystemMessage('error', 'Recovery key required.');
+          return;
+        }
+
+        const unlocked = unlockWithRecoveryKey(recoveryKey.trim());
+        if (!unlocked) {
+          ui.printSystemMessage('error', 'Invalid Recovery Key.');
+          return;
+        }
+
+        const newPassword = await ui.interactiveInput('Enter new Master Password:');
+        if (!newPassword) {
+          ui.printSystemMessage('error', 'New password required.');
+          return;
+        }
+        const confirmPassword = await ui.interactiveInput('Confirm new Master Password:');
+        if (newPassword !== confirmPassword) {
+          ui.printSystemMessage('error', 'Passwords do not match.');
+          return;
+        }
+
+        const success = resetVaultPassword(recoveryKey.trim(), newPassword);
+        if (success) {
+          ui.printSystemMessage('info', 'Vault master password reset successfully.');
+        } else {
+          ui.printSystemMessage('error', 'Failed to reset vault password.');
+        }
+        return;
+      }
+
       ui.printSystemMessage('error', `Unknown command: ${command}`);
       return;
     }
 
     conversationHistory.push({ role: 'user', content: trimmed });
+    recentToolCallsFingerprints.length = 0; // Clear loop detection history on new user turn
 
     let loopDepth = 0;
     const runAgentLoop = async () => {
@@ -614,9 +1018,11 @@ async function main() {
       const currentChanges = indexer.getRecentChanges();
       const toneBlock = PERSONALITY_TONES[activePersonality]?.instruction || PERSONALITY_TONES['vanilla'].instruction;
       
+      const memoryContext = memoryStore.generateMemoryContextBlock();
+
       const systemMessage = {
         role: 'system',
-        content: `${SYSTEM_INSTRUCTIONS}\n\n<conversational_tone>\n${toneBlock}\n</conversational_tone>\n\n[Active Repository Map]\n${currentRepoMap}\n\n${currentChanges}`
+        content: `${SYSTEM_INSTRUCTIONS}\n\n<conversational_tone>\n${toneBlock}\n</conversational_tone>\n\n[Active Repository Map]\n${currentRepoMap}\n\n${currentChanges}${memoryContext}`
       };
 
       const activePayload = [systemMessage, ...conversationHistory];
@@ -637,24 +1043,85 @@ async function main() {
             }
             ui.onStreamChunk(chunk);
           },
-          activeAbortController.signal
+          activeAbortController.signal,
+          useNativeTools ? OLLAMA_TOOLS : undefined
         );
         activeAbortController = null;
 
         ui.endStreaming();
         const modelResponse = chatResult.content;
-        ui.printModelResponse(modelResponse, thinkingEnabled);
         lastInputTokens = chatResult.usage.input_tokens;
 
         if (chatResult.usage.input_tokens / contextLimit >= compactThreshold) {
           pendingCompaction = true;
         }
 
-        // Handle tools
-        const toolResult = await handleToolCalls(modelResponse, sandbox, indexer, ui, state);
+        let toolResult: { toolRun: boolean; nextPrompt: string; consoleOutput: string } = {
+          toolRun: false,
+          nextPrompt: '',
+          consoleOutput: ''
+        };
+
+        if (useNativeTools && chatResult.tool_calls && chatResult.tool_calls.length > 0) {
+          ui.printModelResponse(modelResponse || 'Executing tools...', thinkingEnabled);
+          
+          const tc = chatResult.tool_calls[0];
+          const fingerprint = getToolCallFingerprint(tc);
+          
+          if (recentToolCallsFingerprints.includes(fingerprint)) {
+            ui.printToolResult('failure', `Tool: ${tc.function.name} (blocked: loop detected)`);
+            toolResult = {
+              toolRun: true,
+              nextPrompt: `<tool_output>\n${JSON.stringify({
+                error: `Loop Detected: You have already executed the tool '${tc.function.name}' with the exact same arguments in this session. Re-running it will result in the same output. Please try a different approach.`,
+                code: "LOOP_DETECTED",
+                tool: tc.function.name
+              })}\n</tool_output>`,
+              consoleOutput: `\n[Loop detected: ${tc.function.name}]`
+            };
+          } else {
+            recentToolCallsFingerprints.push(fingerprint);
+            if (recentToolCallsFingerprints.length > MAX_FINGERPRINTS) {
+              recentToolCallsFingerprints.shift();
+            }
+
+            const xmlEquivalent = formatToolCallToXml(tc);
+            if (xmlEquivalent) {
+              toolResult = await handleToolCalls(xmlEquivalent, sandbox, indexer, ui, state);
+            }
+          }
+        } else {
+          ui.printModelResponse(modelResponse, thinkingEnabled);
+
+          const xmlFingerprint = getXmlToolCallFingerprint(modelResponse);
+          if (xmlFingerprint && recentToolCallsFingerprints.includes(xmlFingerprint)) {
+            ui.printToolResult('failure', `Tool call blocked: loop detected`);
+            toolResult = {
+              toolRun: true,
+              nextPrompt: `<tool_output>\n${JSON.stringify({
+                error: `Loop Detected: You have already executed this exact XML tool call. Do not repeat failed commands.`,
+                code: "LOOP_DETECTED"
+              })}\n</tool_output>`,
+              consoleOutput: `\n[Loop detected]`
+            };
+          } else {
+            if (xmlFingerprint) {
+              recentToolCallsFingerprints.push(xmlFingerprint);
+              if (recentToolCallsFingerprints.length > MAX_FINGERPRINTS) {
+                recentToolCallsFingerprints.shift();
+              }
+            }
+            toolResult = await handleToolCalls(modelResponse, sandbox, indexer, ui, state);
+          }
+        }
 
         // Autopilot test-healing loop
-        if (autopilotEnabled && toolResult.toolRun && (modelResponse.includes('<patch_file') || modelResponse.includes('<write_file'))) {
+        const hasEditedFiles = modelResponse.includes('<patch_file') || 
+                            modelResponse.includes('<write_file') || 
+                            modelResponse.includes('<edit_file') ||
+                            (chatResult.tool_calls && chatResult.tool_calls.some((tc: any) => tc.function.name === 'edit_file'));
+        
+        if (autopilotEnabled && toolResult.toolRun && hasEditedFiles) {
           try {
             const { StructuredBuildPipeline } = await import('../pro/autopilot/pipeline.js');
             const testCommand = config.test_command || 'npm test';
@@ -674,8 +1141,25 @@ async function main() {
         }
 
         if (toolResult.toolRun) {
-          conversationHistory.push({ role: 'assistant', content: modelResponse });
-          conversationHistory.push({ role: 'user', content: toolResult.nextPrompt });
+          if (useNativeTools && chatResult.tool_calls && chatResult.tool_calls.length > 0) {
+            conversationHistory.push({
+              role: 'assistant',
+              content: modelResponse,
+              tool_calls: chatResult.tool_calls
+            });
+            
+            const rawOutput = toolResult.nextPrompt
+              .replace('<tool_output>\n', '')
+              .replace('\n</tool_output>', '');
+              
+            conversationHistory.push({
+              role: 'tool',
+              content: rawOutput
+            });
+          } else {
+            conversationHistory.push({ role: 'assistant', content: modelResponse });
+            conversationHistory.push({ role: 'user', content: toolResult.nextPrompt });
+          }
           await runAgentLoop();
         } else {
           conversationHistory.push({ role: 'assistant', content: modelResponse });
@@ -687,7 +1171,11 @@ async function main() {
         }
       } catch (err: any) {
         ui.endStreaming();
-        ui.printSystemMessage('error', `Generation failed: ${err.message}`);
+        if (err.message === 'REPETITION_LOOP') {
+          ui.printSystemMessage('error', 'Generation stopped: model entered an infinite repetition loop.');
+        } else {
+          ui.printSystemMessage('error', `Generation failed: ${err.message}`);
+        }
         ui.returnToPrompt();
       }
     };

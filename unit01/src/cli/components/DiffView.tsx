@@ -7,6 +7,12 @@ import {
   themeBorder,
   themeAccentLight,
   themeGray,
+  syntaxHighlightTheme,
+  hexPrimary,
+  hexBorder,
+  hexAccent,
+  hexGray,
+  hexRed,
 } from '../views/theme.js';
 
 interface DiffViewProps {
@@ -182,12 +188,12 @@ function ModifiedFileView({
   return (
     <Box flexDirection="column">
       <Text>
-        <Text color="#F1F5F9" bold>{baseName}</Text>
-        <Text color="#475569"> · modified</Text>
+        <Text color={hexPrimary} bold>{baseName}</Text>
+        <Text color={hexGray}> · modified</Text>
       </Text>
-      <Text color="#334155">{rule}</Text>
+      <Text color={hexBorder}>{rule}</Text>
       {hunks.length === 0 ? (
-        <Text color="#475569">  No visible changes.</Text>
+        <Text color={hexGray}>  No visible changes.</Text>
       ) : (
         hunks.map((hunk, hIdx) => {
           let oldLineNum = hunk.originalLinesOffset;
@@ -195,16 +201,16 @@ function ModifiedFileView({
 
           return (
             <Box key={hIdx} flexDirection="column">
-              {hIdx > 0 && <Text color="#334155">  ···</Text>}
-              <Text color="#334155">  @@ L{hunk.startLine}-{hunk.endLine} @@</Text>
+              {hIdx > 0 && <Text color={hexBorder}>  ···</Text>}
+              <Text color={hexBorder}>  @@ L{hunk.startLine}-{hunk.endLine} @@</Text>
               {hunk.lines.map((line, lIdx) => {
                 if (line.type === 'removed') {
                   oldLineNum++;
                   const ln = String(oldLineNum).padStart(4);
                   return (
                     <Text key={lIdx}>
-                      <Text color="#475569">{ln} </Text>
-                      <Text color="#F87171">- {line.text}</Text>
+                      <Text color={hexGray}>{ln} </Text>
+                      <Text color={hexRed}>- {line.text}</Text>
                     </Text>
                   );
                 }
@@ -213,8 +219,8 @@ function ModifiedFileView({
                   const ln = String(newLineNum).padStart(4);
                   return (
                     <Text key={lIdx}>
-                      <Text color="#475569">{ln} </Text>
-                      <Text color="#4ADE80">+ {line.text}</Text>
+                      <Text color={hexGray}>{ln} </Text>
+                      <Text color={hexAccent}>+ {line.text}</Text>
                     </Text>
                   );
                 }
@@ -224,7 +230,7 @@ function ModifiedFileView({
                 const ln = String(newLineNum).padStart(4);
                 return (
                   <Text key={lIdx}>
-                    <Text color="#475569">{ln} </Text>
+                    <Text color={hexGray}>{ln} </Text>
                     <Text>   {line.text}</Text>
                   </Text>
                 );
@@ -233,7 +239,7 @@ function ModifiedFileView({
           );
         })
       )}
-      <Text color="#334155">{rule}</Text>
+      <Text color={hexBorder}>{rule}</Text>
     </Box>
   );
 }
@@ -255,7 +261,7 @@ function NewFileView({
 
   let highlighted = modified;
   try {
-    highlighted = highlightCli(modified, { language });
+    highlighted = highlightCli(modified, { language, theme: syntaxHighlightTheme });
   } catch {
     highlighted = themeAccentLight(modified);
   }
@@ -265,20 +271,20 @@ function NewFileView({
   return (
     <Box flexDirection="column">
       <Text>
-        <Text color="#F1F5F9" bold>{baseName}</Text>
-        <Text color="#475569"> · new file</Text>
+        <Text color={hexPrimary} bold>{baseName}</Text>
+        <Text color={hexGray}> · new file</Text>
       </Text>
-      <Text color="#334155">{rule}</Text>
+      <Text color={hexBorder}>{rule}</Text>
       {lines.map((line, i) => {
         const ln = String(i + 1).padStart(4);
         return (
           <Text key={`n${i}`}>
-            <Text color="#475569">{ln} </Text>
+            <Text color={hexGray}>{ln} </Text>
             <Text>{line}</Text>
           </Text>
         );
       })}
-      <Text color="#334155">{rule}</Text>
+      <Text color={hexBorder}>{rule}</Text>
     </Box>
   );
 }

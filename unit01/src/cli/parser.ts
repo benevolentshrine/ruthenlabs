@@ -239,6 +239,96 @@ export function parsePatchFileBlocks(text: string): { filePath: string; diff: st
   return null;
 }
 
+export function parseEditFile(text: string): { filePath: string; content: string } | null {
+  const attrMatch = /<edit_file\s+(?:relative_)?path=["']([^"']+)["']\s*>([\s\S]*?)(?:<\/edit_file>|$)/.exec(text);
+  if (attrMatch) {
+    return {
+      filePath: cleanFilePath(attrMatch[1]),
+      content: cleanContentFences(attrMatch[2])
+    };
+  }
+  return null;
+}
+
+export function parseSearch(text: string): { scope: 'code' | 'web' | 'files'; query: string; pathVal?: string } | null {
+  const matchNested = /<search\s+([^>]*)\s*>([\s\S]*?)(?:<\/search>|$)/.exec(text);
+  if (matchNested) {
+    const attrs = parseAttributes(matchNested[1]);
+    const scope = (attrs.scope || 'code') as 'code' | 'web' | 'files';
+    const pathVal = attrs.path || attrs.relative_path;
+    return {
+      scope,
+      query: matchNested[2].trim(),
+      pathVal: pathVal ? cleanFilePath(pathVal) : undefined
+    };
+  }
+
+  const matchAttr = /<search\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    const scope = (attrs.scope || 'code') as 'code' | 'web' | 'files';
+    const pathVal = attrs.path || attrs.relative_path;
+    return {
+      scope,
+      query: attrs.query || '',
+      pathVal: pathVal ? cleanFilePath(pathVal) : undefined
+    };
+  }
+  return null;
+}
+
+export function parseViewOutline(text: string): string | null {
+  const attrMatch = /<view_outline\s+(?:relative_)?path=["']([^"']+)["']\s*\/?>/.exec(text);
+  if (attrMatch) {
+    return cleanFilePath(attrMatch[1]);
+  }
+
+  const tagMatch = /<view_outline\s*>([\s\S]*?)(?:<\/view_outline>|$)/.exec(text);
+  if (tagMatch) {
+    return cleanFilePath(tagMatch[1]);
+  }
+
+  return null;
+}
+
+export function parseAskUser(text: string): { question: string; options: string[] } | null {
+  const matchNested = /<ask_user(?:\s+([^>]*))?>([\s\S]*?)<\/ask_user>/.exec(text);
+  if (matchNested) {
+    const attrsStr = matchNested[1] || '';
+    const innerContent = matchNested[2].trim();
+    if (innerContent) {
+      const attrs = parseAttributes(attrsStr);
+      const optionsVal = attrs.options;
+      const options = optionsVal
+        ? optionsVal.split(',').map(o => o.trim())
+        : ['Yes', 'No'];
+      return {
+        question: innerContent,
+        options
+      };
+    }
+  }
+
+  const matchAttr = /<ask_user\s+([^>]+)\s*\/?>/.exec(text);
+  if (matchAttr) {
+    const attrs = parseAttributes(matchAttr[1]);
+    const questionVal = attrs.question;
+    const optionsVal = attrs.options;
+    if (questionVal) {
+      const options = optionsVal
+        ? optionsVal.split(',').map(o => o.trim())
+        : ['Yes', 'No'];
+      return {
+        question: questionVal,
+        options
+      };
+    }
+  }
+
+  // Fallback to legacy question tool
+  return parseQuestion(text);
+}
+
 
 export const TOOL_SIGNATURES: Record<string, { desc: string; args: string }> = {
   'run_command': {
@@ -288,6 +378,22 @@ export const TOOL_SIGNATURES: Record<string, { desc: string; args: string }> = {
   'sandbox_exec': {
     desc: "Executes code in a sandboxed environment.",
     args: "code (string), language (string), timeout_ms (number, optional)"
+  },
+  'edit_file': {
+    desc: "Edits or writes a file using search/replace blocks or whole content.",
+    args: "path (string, required), content (string, tag content)"
+  },
+  'search': {
+    desc: "Searches code, web, or files based on scope.",
+    args: "scope (string, required: code|web|files), query (string, required), path (string, optional)"
+  },
+  'view_outline': {
+    desc: "Retrieves a structural outline of symbols/functions in a file.",
+    args: "path (string, required)"
+  },
+  'ask_user': {
+    desc: "Asks the developer a question or requests permission.",
+    args: "question (string, required), options (string, optional)"
   }
 };
 
@@ -295,7 +401,12 @@ export function validateToolCall(tagName: string, attributesStr: string): string
   const attrs = parseAttributes(attributesStr);
   const attrKeys = Object.keys(attrs);
 
-  const isAllowed = new Set(['run_command', 'read_file', 'write_file', 'search_code', 'web_search', 'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics', 'move_file', 'think', 'question', 'path_question']).has(tagName);
+  const isAllowed = new Set([
+    'run_command', 'read_file', 'write_file', 'search_code', 'web_search',
+    'patch_file', 'patch_file_blocks', 'list_dir', 'git_status', 'diagnostics',
+    'move_file', 'think', 'question', 'path_question',
+    'edit_file', 'search', 'view_outline', 'ask_user'
+  ]).has(tagName);
 
   if (!isAllowed) {
     const sig = TOOL_SIGNATURES[tagName];
@@ -314,7 +425,7 @@ export function validateToolCall(tagName: string, attributesStr: string): string
       });
     } else {
       return JSON.stringify({
-        error: `Unknown tool '${tagName}'. Supported tools are: run_command, read_file, write_file, search_code.`,
+        error: `Unknown tool '${tagName}'. Supported tools include: edit_file, search, read_file, run_command, view_outline, ask_user.`,
         code: "UNKNOWN_TOOL"
       });
     }
@@ -340,6 +451,38 @@ export function validateToolCall(tagName: string, attributesStr: string): string
     if (invalid.length > 0) {
       return JSON.stringify({
         error: `Tool 'write_file' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, attribute or content), content (string, content of the tag).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'edit_file') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'edit_file' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, required).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'search') {
+    const invalid = attrKeys.filter(k => k !== 'scope' && k !== 'path' && k !== 'relative_path' && k !== 'query');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'search' called with invalid argument '${invalid[0]}'. Valid arguments are: scope (string, required), path (string, optional), query (string, optional).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'view_outline') {
+    const invalid = attrKeys.filter(k => k !== 'path' && k !== 'relative_path');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'view_outline' called with invalid argument '${invalid[0]}'. Valid arguments are: path (string, required).`,
+        code: "INVALID_TOOL_ARGUMENT"
+      });
+    }
+  } else if (tagName === 'ask_user') {
+    const invalid = attrKeys.filter(k => k !== 'question' && k !== 'options');
+    if (invalid.length > 0) {
+      return JSON.stringify({
+        error: `Tool 'ask_user' called with invalid argument '${invalid[0]}'. Valid arguments are: question (string, required), options (string, optional).`,
         code: "INVALID_TOOL_ARGUMENT"
       });
     }

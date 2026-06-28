@@ -24,8 +24,20 @@ export function InteractiveInput({ title, placeholder = '', onSubmit }: Interact
       setValue(prev => prev.slice(0, -1));
       return;
     }
-    if (input && input.length === 1 && input.charCodeAt(0) >= 32) {
-      setValue(prev => prev + input);
+    if (input) {
+      // Strip bracketed paste markers and newlines
+      const cleaned = input
+        .replace(/\x1b\[200~/g, '')
+        .replace(/\x1b\[201~/g, '')
+        .replace(/[\r\n]+/g, '');
+      
+      if (cleaned.length > 0) {
+        // Keep only printable characters
+        const printable = Array.from(cleaned)
+          .filter(char => char.charCodeAt(0) >= 32)
+          .join('');
+        setValue(prev => prev + printable);
+      }
     }
   });
 

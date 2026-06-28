@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { marked } from 'marked';
 import TerminalRenderer from 'marked-terminal';
 import { highlight as highlightCli } from 'cli-highlight';
+import { syntaxHighlightTheme } from '../views/theme.js';
 
 interface ChatStreamProps {
   text: string;
@@ -21,7 +22,7 @@ marked.setOptions({
       const rule = '─'.repeat(40);
       let highlighted = code;
       try {
-        highlighted = highlightCli(code, { language: lang || 'text' });
+        highlighted = highlightCli(code, { language: lang || 'text', theme: syntaxHighlightTheme });
       } catch {
         highlighted = chalk.hex('#38BDF8')(code);
       }

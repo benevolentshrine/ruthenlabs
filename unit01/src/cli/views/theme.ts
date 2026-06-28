@@ -46,17 +46,36 @@ if (typeof process.stdout.on === 'function') {
 }
 
 
-// Theme: Unified Cool Slate & Cyan Accent
-export const themePrimary     = chalk.hex('#F1F5F9'); // Primary Text
-export const themeBorder      = chalk.hex('#334155'); // Section Dividers & borders
-export const themeGold        = chalk.hex('#38BDF8'); // Sky Blue Accent (replaces amber cursor/selections)
-export const themeOrange      = chalk.hex('#38BDF8'); // backward compat alias
-export const themeAccent      = chalk.hex('#4ADE80'); // Tool success / status messages
-export const themeAccentLight = chalk.hex('#38BDF8'); // Inline code / Light accent
-export const themeGray        = chalk.hex('#475569'); // Secondary text
-export const themeRed         = chalk.hex('#F87171'); // Errors / failures
+export const hexPrimary     = '#F8FAFC';
+export const hexBorder      = '#334155';
+export const hexAccent      = '#4ADE80';
+export const hexAccentLight = '#38BDF8';
+export const hexGray        = '#64748B';
+export const hexRed         = '#FB7171';
+
+export const themePrimary     = chalk.hex(hexPrimary); // Primary Text
+export const themeBorder      = chalk.hex(hexBorder); // Section Dividers & borders
+export const themeGold        = chalk.hex(hexAccentLight); // Sky Blue Accent
+export const themeOrange      = chalk.hex(hexAccentLight); // backward compat alias
+export const themeAccent      = chalk.hex(hexAccent); // Tool success / status messages
+export const themeAccentLight = chalk.hex(hexAccentLight); // Inline code / Light accent
+export const themeGray        = chalk.hex(hexGray); // Secondary text
+export const themeRed         = chalk.hex(hexRed); // Errors / failures
 export const themeBg          = '#1E293B';            // Base Slate
 export const themeBgDeep      = '#0F172A';            // Dark Slate
+
+export const syntaxHighlightTheme: any = {
+  keyword: chalk.hex('#D946EF').bold,    // Vibrant Magenta
+  built_in: chalk.hex('#818CF8'),       // Soft Indigo
+  string: chalk.hex('#4ADE80'),         // Mint Green
+  number: chalk.hex('#FB923C'),         // Soft Orange
+  comment: chalk.hex('#64748B').dim,     // Muted Slate Gray
+  function: chalk.hex('#38BDF8').bold,   // Sky Blue
+  class: chalk.hex('#60A5FA').bold,      // Light Blue
+  type: chalk.hex('#38BDF8'),            // Sky Blue
+  literal: chalk.hex('#FB923C'),         // Soft Orange
+  default: chalk.hex('#F8FAFC')          // Slate White
+};
 
 
 export const isGui = process.argv.includes('--gui');

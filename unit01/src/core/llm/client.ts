@@ -57,41 +57,63 @@ export class OllamaClient {
         }
       }
       
-      // 2. Fallback: Parse parameters for num_ctx
-      if (data.parameters) {
-        const match = /num_ctx\s+(\d+)/.exec(data.parameters);
-        if (match) {
-          return parseInt(match[1], 10);
-        }
-      }
       return 4096; // Default Ollama context window size fallback
     } catch (err) {
       return 4096; // Fallback default on error
     }
   }
 
+  public async checkModelToolsCapability(modelName: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${this.host}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelName })
+      });
+      if (!res.ok) return false;
+      const data = await res.json() as { model_info?: Record<string, any>; capabilities?: string[] };
+      if (data.capabilities && data.capabilities.includes('tools')) {
+        return true;
+      }
+      const name = modelName.toLowerCase();
+      if (name.includes('qwen') || name.includes('llama3.1') || name.includes('llama3.2') || name.includes('llama3.3') || name.includes('mistral') || name.includes('gemma2') || name.includes('gemma')) {
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+
   /**
    * Send a streaming chat payload to the local model.
    */
   public async chatStream(
     modelName: string,
-    messages: { role: string; content: string }[],
+    messages: { role: string; content: string; tool_calls?: any[] }[],
     contextLimit: number,
     onChunk: (text: string) => void,
-    signal?: AbortSignal
-  ): Promise<{ content: string; usage: { input_tokens: number; output_tokens: number } }> {
+    signal?: AbortSignal,
+    tools?: any[]
+  ): Promise<{ content: string; tool_calls?: any[]; usage: { input_tokens: number; output_tokens: number } }> {
+    const requestBody: Record<string, any> = {
+      model: modelName,
+      messages,
+      options: {
+        num_ctx: contextLimit,
+        temperature: 0.1 // Low temperature for deterministic coding tasks
+      },
+      stream: true
+    };
+    if (tools && tools.length > 0) {
+      requestBody.tools = tools;
+    }
+
     const res = await fetch(`${this.host}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: modelName,
-        messages,
-        options: {
-          num_ctx: contextLimit,
-          temperature: 0.1 // Low temperature for deterministic coding tasks
-        },
-        stream: true
-      }),
+      body: JSON.stringify(requestBody),
       signal
     });
 
@@ -106,6 +128,7 @@ export class OllamaClient {
 
     let input_tokens = 0;
     let output_tokens = 0;
+    let tool_calls: any[] | undefined;
 
     try {
       const decoder = new TextDecoder();
@@ -125,13 +148,16 @@ export class OllamaClient {
           let chunk: string | undefined;
           try {
             const json = JSON.parse(line) as {
-              message?: { content: string };
+              message?: { content: string; tool_calls?: any[] };
               done?: boolean;
               prompt_eval_count?: number;
               eval_count?: number;
             };
             if (json.message?.content) {
               chunk = json.message.content;
+            }
+            if (json.message?.tool_calls && json.message.tool_calls.length > 0) {
+              tool_calls = json.message.tool_calls;
             }
             if (json.prompt_eval_count !== undefined) {
               input_tokens = json.prompt_eval_count;
@@ -152,6 +178,7 @@ export class OllamaClient {
 
       return {
         content: fullText,
+        tool_calls,
         usage: {
           input_tokens,
           output_tokens

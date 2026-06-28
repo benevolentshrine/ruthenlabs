@@ -22,7 +22,7 @@ const MAX_HISTORY = 50;
 
 const commands = [
   '/models', '/thinking', '/status', '/usage', '/sessions',
-  '/compact', '/clear', '/help', '/exit', '/quit',
+  '/compact', '/clear', '/exit', '/quit',
   '/files', '/reindex', '/export', '/preview', '/changes',
   '/undo', '/search', '/connect', '/audit', '/autopilot', '/reset-password',
 ];
@@ -144,7 +144,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
       }
     };
 
-    stdin.on('data', onData);
+    stdin.prependListener('data', onData);
     return () => {
       stdin.off('data', onData);
     };

@@ -38,7 +38,11 @@ import {
   getLanguageFromFilename,
   applySearchReplaceBlocks,
   listDirectory,
-  parseDiagnostics
+  parseDiagnostics,
+  parseEditFile,
+  parseSearch,
+  parseViewOutline,
+  parseAskUser
 } from './parser.js';
 
 export interface CliState {
@@ -67,7 +71,8 @@ export async function handleToolCalls(
     
     // Check if tag is a tool
     const isTool = tagName === 'run_command' || tagName === 'read_file' || tagName === 'write_file' || tagName === 'search_code' ||
-                   tagName === 'sandbox_exec' || tagName === 'question' || tagName === 'path_question';
+                   tagName === 'sandbox_exec' || tagName === 'question' || tagName === 'path_question' ||
+                   tagName === 'edit_file' || tagName === 'search' || tagName === 'view_outline' || tagName === 'ask_user';
     
     if (isTool) {
       const errorMsg = validateToolCall(tagName, attributesStr);
@@ -80,6 +85,443 @@ export async function handleToolCalls(
         };
       }
     }
+  }
+
+  const editResult = parseEditFile(text);
+  if (editResult) {
+    const { filePath, content } = editResult;
+    const absPath = path.resolve(sandbox['workspaceRoot'], filePath);
+    if (isGui) guiEmit({ type: 'tool-call', tool: 'edit_file', filePath });
+
+    if (!sandbox.isPathWriteAllowed(absPath)) {
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: `Path is outside the workspace. You must request permission using the <ask_user> tool tag: <ask_user options="Allow read-write, Allow read-only, Deny">I need access to ${absPath} to complete this task. Grant access?</ask_user>`,
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Edit blocked (not allowed): ${filePath}]`
+      };
+    }
+
+    const fileExists = fs.existsSync(absPath);
+    const original = fileExists ? fs.readFileSync(absPath, 'utf-8') : null;
+
+    let updatedContent = content;
+    const isPatch = content.includes('<<<<<<< ORIGINAL') && content.includes('=======') && content.includes('>>>>>>> UPDATED');
+
+    if (isPatch) {
+      if (!fileExists) {
+        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            error: `File not found at ${filePath}. You cannot patch a non-existent file. To create a new file, write the whole file content directly without diff markers.`,
+            code: "PATCH_FILE_NOT_FOUND",
+            filePath: relPath
+          })}\n</tool_output>`,
+          consoleOutput: `\n[Patch failed: File not found: ${filePath}]`
+        };
+      }
+      try {
+        updatedContent = applySearchReplaceBlocks(original!, content);
+      } catch (err: any) {
+        const relPath = path.relative(sandbox['workspaceRoot'], absPath);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            error: err.message || String(err),
+            code: err.code || "PATCH_BLOCK_FAILED",
+            blockIndex: err.blockIndex,
+            filePath: relPath
+          })}\n</tool_output>`,
+          consoleOutput: `\n[Patch blocks failed: ${err.message}]`
+        };
+      }
+    }
+
+    if (original !== null && original.trim() === updatedContent.trim()) {
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nNo changes detected. The proposed content for ${filePath} matches the existing content.\n</tool_output>`,
+        consoleOutput: `\n[No changes detected: ${filePath}]`
+      };
+    }
+
+    state.lastWrittenFile = {
+      filePath,
+      original,
+      content: updatedContent
+    };
+
+    const lineCount = updatedContent.split('\n').length;
+    const actionVerb = fileExists ? 'modify' : 'create';
+
+    let userConfirmed = false;
+    while (true) {
+      const choice = await ui.interactiveConfirmWrite(filePath, lineCount, actionVerb);
+      if (choice === 'y') {
+        userConfirmed = true;
+        break;
+      } else if (choice === 'n') {
+        userConfirmed = false;
+        break;
+      } else if (choice === 'p') {
+        ui.showDiff(original, updatedContent, getLanguageFromFilename(filePath), filePath);
+      }
+    }
+
+    if (!userConfirmed) {
+      ui.printToolResult('skipped', `Skipped ${filePath}`);
+      return {
+        toolRun: false,
+        nextPrompt: '',
+        consoleOutput: `\n[Edit rejected by user: ${filePath}]`
+      };
+    }
+
+    ui.showToolProgress(`${themeAccent('edit')} ${filePath}...`);
+    try {
+      indexer.backupBeforeWrite(absPath);
+      fs.mkdirSync(path.dirname(absPath), { recursive: true });
+      fs.writeFileSync(absPath, updatedContent, 'utf-8');
+
+      sandbox.clearLoopHistory();
+      sandbox.recordWrittenFile(absPath);
+
+      // Re-index
+      try {
+        const stat = fs.statSync(absPath);
+        indexer.processFileOnStartup(absPath, stat);
+        indexer.currentRepoMap = buildRepoMap(indexer.db);
+      } catch (e) {}
+
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Edited ${filePath} (${lineCount} lines)`);
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(updatedContent).digest('hex');
+        auditStore.logAction({
+          service: 'file_write',
+          operation: 'edit_file',
+          target: absPath,
+          payload_summary: `Edited ${lineCount} lines in ${filePath}`,
+          payload_hash: payloadHash,
+          status: 'completed'
+        });
+      } catch (_) {}
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nFile successfully edited and indexed at ${filePath}\n</tool_output>`,
+        consoleOutput: `\n[File edited: ${filePath}]`
+      };
+    } catch (err: any) {
+      ui.hideToolProgress();
+      ui.printToolResult('failure', `Edit ${filePath} — failed: ${err.message}`);
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError editing file: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[File edit failed: ${filePath}]`
+      };
+    }
+  }
+
+  const searchResult = parseSearch(text);
+  if (searchResult) {
+    const { scope, query, pathVal } = searchResult;
+    
+    if (scope === 'code') {
+      const q = query.trim();
+      if (isGui) guiEmit({ type: 'tool-call', tool: 'search_code', query: q });
+      if (!q) {
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\nError: Search query cannot be empty for code search.\n</tool_output>`,
+          consoleOutput: `\n[Search blocked: empty query]`
+        };
+      }
+      ui.showToolProgress(`${themeAccent('search')} index for "${q}"...`);
+      
+      let results: ChunkRecord[] = [];
+      let isHybrid = false;
+      try {
+        const { executeHybridSearch } = await import('../pro/search/index.js');
+        results = await executeHybridSearch(indexer.db, q);
+        isHybrid = true;
+      } catch (e) {
+        results = indexer.search(q);
+      }
+      ui.hideToolProgress();
+      ui.printToolResult('success', `${isHybrid ? 'Hybrid searched' : 'Searched'} codebase for "${q}" (${results.length} results)`);
+      const formatted = results.slice(0, 5).map(r => 
+        `- ${r.relpath} (line ${r.start_line}-${r.end_line}, type ${r.chunk_type}):\n${r.content}`
+      ).join('\n\n');
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nCodebase search results for "${q}":\n${formatted || 'No matches found'}\n</tool_output>`,
+        consoleOutput: `\n[Search codebase: "${q}"]`
+      };
+    }
+
+    if (scope === 'web') {
+      const q = query.trim();
+      if (isGui) guiEmit({ type: 'tool-call', tool: 'web_search', query: q });
+      if (!q) {
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\nError: Search query cannot be empty for web search.\n</tool_output>`,
+          consoleOutput: `\n[Web search blocked: empty query]`
+        };
+      }
+      ui.showToolProgress(`${themeAccent('web_search')} query "${q}"...`);
+      let results: any[] = [];
+      try {
+        const { executeWebSearch } = await import('../pro/connect/integrations/search.js');
+        results = await executeWebSearch(q);
+      } catch (e) {
+        results = [];
+      }
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Web searched "${q}" (${results.length} results)`);
+      const formatted = results.map(r => 
+        `- ${r.title} (${r.url}):\n  ${r.snippet}`
+      ).join('\n\n');
+      try {
+        const crypto = await import('crypto');
+        const { AuditLogStore } = await import('../pro/audit/index.js');
+        const auditStore = new AuditLogStore(indexer.db);
+        const payloadHash = crypto.createHash('sha256').update(q).digest('hex');
+        auditStore.logAction({
+          service: 'web-search',
+          operation: 'search',
+          target: q,
+          payload_summary: `Found ${results.length} snippets`,
+          payload_hash: payloadHash,
+          status: 'completed'
+        });
+      } catch (_) {}
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nWeb search results for "${q}":\n${formatted || 'No results found'}\n</tool_output>`,
+        consoleOutput: `\n[Web search: "${q}"]`
+      };
+    }
+
+    if (scope === 'files') {
+      const targetDir = pathVal || '.';
+      const absPath = path.resolve(sandbox['workspaceRoot'], targetDir);
+      if (isGui) guiEmit({ type: 'tool-call', tool: 'list_dir', pathVal: targetDir });
+
+      if (!sandbox.isPathAllowed(absPath)) {
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            error: `Path is outside the workspace. You must request permission using the <ask_user> tool tag.`,
+            code: "PATH_NOT_ALLOWED",
+            path: absPath
+          })}\n</tool_output>`,
+          consoleOutput: `\n[List dir blocked (not allowed): ${targetDir}]`
+        };
+      }
+
+      ui.showToolProgress(`${themeAccent('list_dir')} ${targetDir}...`);
+      try {
+        if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) {
+          ui.hideToolProgress();
+          return {
+            toolRun: true,
+            nextPrompt: `<tool_output>\n${JSON.stringify({
+              error: `Directory not found at ${targetDir}`,
+              code: "DIRECTORY_NOT_FOUND",
+              path: targetDir
+            })}\n</tool_output>`,
+            consoleOutput: `\n[List dir failed: not found: ${targetDir}]`
+          };
+        }
+        const result = listDirectory(absPath, sandbox['workspaceRoot'], true);
+        ui.hideToolProgress();
+        ui.printToolResult('success', `Listed files under ${targetDir}`);
+        
+        let filteredFiles = result.files;
+        if (query) {
+          const lowerQ = query.toLowerCase();
+          filteredFiles = result.files.filter(f => f.name.toLowerCase().includes(lowerQ) || f.path.toLowerCase().includes(lowerQ));
+        }
+        
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\nFiles found in ${targetDir} (matching query "${query || ''}"):\n${JSON.stringify({
+            directories: result.directories,
+            files: filteredFiles
+          }, null, 2)}\n</tool_output>`,
+          consoleOutput: `\n[Listed files in: ${targetDir}]`
+        };
+      } catch (err: any) {
+        ui.hideToolProgress();
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\nError listing files: ${err.message}\n</tool_output>`,
+          consoleOutput: `\n[Files list failed: ${targetDir}]`
+        };
+      }
+    }
+  }
+
+  const outlinePath = parseViewOutline(text);
+  if (outlinePath !== null) {
+    const absPath = path.resolve(sandbox['workspaceRoot'], outlinePath);
+    if (isGui) guiEmit({ type: 'tool-call', tool: 'view_outline', outlinePath });
+
+    if (!sandbox.isPathAllowed(absPath)) {
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          error: `Path is outside the workspace.`,
+          code: "PATH_NOT_ALLOWED",
+          path: absPath
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Outline blocked (not allowed): ${outlinePath}]`
+      };
+    }
+
+    ui.showToolProgress(`${themeAccent('outline')} ${outlinePath}...`);
+    try {
+      if (!fs.existsSync(absPath)) {
+        ui.hideToolProgress();
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\nError: File not found at ${outlinePath}\n</tool_output>`,
+          consoleOutput: `\n[Outline failed: not found: ${outlinePath}]`
+        };
+      }
+
+      const chunks = indexer.db.getChunksForFile(absPath);
+      ui.hideToolProgress();
+      ui.printToolResult('success', `Outlined ${outlinePath}`);
+
+      if (chunks.length === 0) {
+        const fileContent = fs.readFileSync(absPath, 'utf-8');
+        const lines = fileContent.split('\n');
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\nNo structural outline symbols indexed for this file type. Showing preview (first 50 lines):\n${lines.slice(0, 50).join('\n')}\n</tool_output>`,
+          consoleOutput: `\n[Outline: no symbols found, preview shown]`
+        };
+      }
+
+      const outline = chunks.map(c => `- [${c.chunk_type}] ${c.name} (Lines ${c.start_line}-${c.end_line})`).join('\n');
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nFile outline for ${outlinePath}:\n${outline}\n</tool_output>`,
+        consoleOutput: `\n[Outline retrieved: ${outlinePath}]`
+      };
+    } catch (err: any) {
+      ui.hideToolProgress();
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\nError retrieving outline: ${err.message}\n</tool_output>`,
+        consoleOutput: `\n[Outline failed: ${outlinePath}]`
+      };
+    }
+  }
+
+  const askUserResult = parseAskUser(text);
+  if (askUserResult !== null) {
+    const { question, options } = askUserResult;
+    if (isGui) guiEmit({ type: 'tool-call', tool: 'ask_user', question, options });
+
+    let chosenIdx = 0;
+    if (state.isNonInteractive || typeof process.stdin.setRawMode !== 'function') {
+      console.log(`\n${themePrimary.bold(question)}`);
+      options.forEach((opt, idx) => console.log(`  ${idx + 1}) ${opt}`));
+      chosenIdx = 0;
+    } else {
+      chosenIdx = await ui.interactiveSelect(question, options);
+    }
+
+    const choice = options[chosenIdx];
+    
+    // Extract path from question
+    let extractedPath: string | null = null;
+    const regex = new RegExp("(?:^|\\s|['\"`])(\\/[^'\"\\s]+|~\\/[^'\"\\s]+|~)");
+    const pathMatch = question.match(regex);
+    if (pathMatch) {
+      let p = pathMatch[1];
+      while (p && /[?.!,;]$/.test(p)) {
+        p = p.slice(0, -1);
+      }
+      extractedPath = p;
+    }
+
+    if (choice === 'Allow read-write') {
+      if (extractedPath) {
+        let resolvedPath = extractedPath;
+        if (resolvedPath.startsWith('~/') || resolvedPath === '~') {
+          resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+        }
+        const absPath = path.resolve(resolvedPath);
+        if (!state.activeAllowedPaths.some(ap => ap.path === absPath && ap.mode === 'rw')) {
+          state.activeAllowedPaths = state.activeAllowedPaths.filter(ap => ap.path !== absPath);
+          state.activeAllowedPaths.push({ path: absPath, mode: 'rw' });
+        }
+        sandbox.updateAllowedPaths(state.activeAllowedPaths);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            granted: true,
+            path: absPath,
+            mode: 'rw',
+            message: 'Access granted. Mount added dynamically.'
+          })}\n</tool_output>`,
+          consoleOutput: `\n[Permission granted (rw): ${absPath}]`
+        };
+      }
+      return {
+        toolRun: true,
+        nextPrompt: `<tool_output>\n${JSON.stringify({
+          granted: true,
+          message: 'Access granted.'
+        })}\n</tool_output>`,
+        consoleOutput: `\n[Permission granted]`
+      };
+    }
+
+    if (choice === 'Allow read-only') {
+      if (extractedPath) {
+        let resolvedPath = extractedPath;
+        if (resolvedPath.startsWith('~/') || resolvedPath === '~') {
+          resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+        }
+        const absPath = path.resolve(resolvedPath);
+        if (!state.activeAllowedPaths.some(ap => ap.path === absPath)) {
+          state.activeAllowedPaths.push({ path: absPath, mode: 'ro' });
+        }
+        sandbox.updateAllowedPaths(state.activeAllowedPaths);
+        return {
+          toolRun: true,
+          nextPrompt: `<tool_output>\n${JSON.stringify({
+            granted: true,
+            path: absPath,
+            mode: 'ro',
+            message: 'Access granted. Mount added dynamically.'
+          })}\n</tool_output>`,
+          consoleOutput: `\n[Permission granted (ro): ${absPath}]`
+        };
+      }
+    }
+
+    return {
+      toolRun: true,
+      nextPrompt: `<tool_output>\n${JSON.stringify({
+        granted: false,
+        choice,
+        message: `User chose: ${choice}`
+      })}\n</tool_output>`,
+      consoleOutput: `\n[User response: ${choice}]`
+    };
   }
 
   const runCmd = parseRunCommand(text);
