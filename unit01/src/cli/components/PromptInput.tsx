@@ -75,7 +75,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
             const pos = (cursorPosRef.current < 0 || cursorPosRef.current > prev.length) ? prev.length : cursorPosRef.current;
             const before = prev.slice(0, pos);
             const after = prev.slice(pos);
-            const lines = pasteContent.split('\n');
+            const lines = pasteContent.split(/\r?\n|\r/);
             const hasNewlines = lines.length > 1;
 
             if (hasNewlines) {
@@ -112,7 +112,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
             const pos = (cursorPosRef.current < 0 || cursorPosRef.current > prev.length) ? prev.length : cursorPosRef.current;
             const before = prev.slice(0, pos);
             const after = prev.slice(pos);
-            const lines = pasteContent.split('\n');
+            const lines = pasteContent.split(/\r?\n|\r/);
             const hasNewlines = lines.length > 1;
 
             if (hasNewlines) {
@@ -390,7 +390,7 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
 
   const matches = getMatches();
   const promptChar = isGold ? themeGold('❯') : themePrimary('❯');
-  const border = themeBorder('─'.repeat(cols));
+  const border = themeBorder('─'.repeat(Math.max(10, cols - 4)));
 
   const renderInputLines = () => {
     const blocks = [...pasteBlocksRef.current].sort((a, b) => a.start - b.start);
@@ -494,6 +494,8 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
       <Text>{border}</Text>
       <StatusBar
         model={status.model}
+        contextPct={status.contextPct}
+        branch={status.branch}
       />
     </Box>
   );

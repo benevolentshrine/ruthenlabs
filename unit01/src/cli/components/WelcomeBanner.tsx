@@ -34,7 +34,7 @@ export function WelcomeBanner({
     return null;
   }
 
-  const padding = '  ';
+  const padding = '';
 
   return (
     <Box flexDirection="column" marginBottom={1} marginTop={1}>
@@ -79,7 +79,7 @@ export function WelcomeBanner({
       {latestSession && (
         <Box marginTop={1}>
           <Text>
-            {'   '}
+            {'  '}
             <Text color="#475569">
               ⤿ Last session {latestSession.relTime} · "{latestSession.label}"
             </Text>

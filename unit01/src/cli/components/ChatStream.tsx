@@ -98,9 +98,25 @@ export function ChatStream({ text, isStreaming, thinkingEnabled }: ChatStreamPro
   }, [text, thinkingEnabled]);
 
   return (
-    <Box flexDirection="row" marginTop={1} marginBottom={1}>
-      {isStreaming && <Text color="#4ADE80">● </Text>}
-      <Text>{rendered}</Text>
+    <Box flexDirection="column" marginTop={1} marginBottom={1}>
+      <Box
+        borderStyle="single"
+        borderLeft={true}
+        borderRight={false}
+        borderTop={false}
+        borderBottom={false}
+        borderColor="#334155"
+        paddingLeft={1}
+      >
+        <Box flexDirection="column">
+          {isStreaming && (
+            <Box marginBottom={1}>
+              <Text color="#4ADE80">● Streaming response...</Text>
+            </Box>
+          )}
+          <Text>{rendered}</Text>
+        </Box>
+      </Box>
     </Box>
   );
 }

@@ -283,7 +283,7 @@ export function App({ services }: AppProps) {
 
   // ── Render ──
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" paddingX={2}>
       {/* Welcome Banner */}
       {welcomeShown && (
         <WelcomeBanner
