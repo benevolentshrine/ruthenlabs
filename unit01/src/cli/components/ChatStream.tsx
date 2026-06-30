@@ -41,7 +41,8 @@ function renderMarkdownWithThink(text: string, thinkingEnabled: boolean): string
   const TOOL_TAGS = [
     '<run_command', '<read_file', '<search_code', '<write_file',
     '<patch_file', '<patch_file_blocks', '<list_dir', '<git_status',
-    '<diagnostics', '<move_file', '<question', '<path_question'
+    '<diagnostics', '<move_file', '<question', '<path_question',
+    '<sandbox_exec', '<edit_file', '<search', '<view_outline', '<ask_user'
   ];
   for (const tag of TOOL_TAGS) {
     const idx = processable.indexOf(tag);

@@ -55,6 +55,48 @@ export interface CliState {
   isNonInteractive: boolean;
 }
 
+async function requestPathAccess(
+  absPath: string,
+  mode: 'ro' | 'rw',
+  ui: UiAdapter,
+  state: CliState,
+  sandbox: DirectiveSandbox
+): Promise<boolean> {
+  const options = mode === 'rw' 
+    ? ['Allow read-write', 'Allow read-only', 'Deny']
+    : ['Allow read-only', 'Deny'];
+  
+  const question = `I need access to ${absPath} to complete this task. Grant access?`;
+  if (isGui) guiEmit({ type: 'tool-call', tool: 'ask_user', question, options });
+
+  let chosenIdx = 0;
+  if (state.isNonInteractive || typeof process.stdin.setRawMode !== 'function') {
+    console.log(`\n${themePrimary.bold(question)}`);
+    options.forEach((opt, idx) => console.log(`  ${idx + 1}) ${opt}`));
+    chosenIdx = 0;
+  } else {
+    chosenIdx = await ui.interactiveSelect(question, options);
+  }
+
+  const choice = options[chosenIdx];
+  if (choice === 'Allow read-write') {
+    if (!state.activeAllowedPaths.some(ap => ap.path === absPath && ap.mode === 'rw')) {
+      state.activeAllowedPaths = state.activeAllowedPaths.filter(ap => ap.path !== absPath);
+      state.activeAllowedPaths.push({ path: absPath, mode: 'rw' });
+    }
+    sandbox.updateAllowedPaths(state.activeAllowedPaths);
+    return true;
+  }
+  if (choice === 'Allow read-only') {
+    if (!state.activeAllowedPaths.some(ap => ap.path === absPath)) {
+      state.activeAllowedPaths.push({ path: absPath, mode: 'ro' });
+    }
+    sandbox.updateAllowedPaths(state.activeAllowedPaths);
+    return true;
+  }
+  return false;
+}
+
 export async function handleToolCalls(
   text: string,
   sandbox: DirectiveSandbox,
@@ -316,15 +358,18 @@ export async function handleToolCalls(
       if (isGui) guiEmit({ type: 'tool-call', tool: 'list_dir', pathVal: targetDir });
 
       if (!sandbox.isPathAllowed(absPath)) {
-        return {
-          toolRun: true,
-          nextPrompt: `<tool_output>\n${JSON.stringify({
-            error: `Path is outside the workspace. You must request permission using the <ask_user> tool tag.`,
-            code: "PATH_NOT_ALLOWED",
-            path: absPath
-          })}\n</tool_output>`,
-          consoleOutput: `\n[List dir blocked (not allowed): ${targetDir}]`
-        };
+        const granted = await requestPathAccess(absPath, 'ro', ui, state, sandbox);
+        if (!granted) {
+          return {
+            toolRun: true,
+            nextPrompt: `<tool_output>\n${JSON.stringify({
+              error: `Path is outside the workspace. Permission denied by user.`,
+              code: "PATH_NOT_ALLOWED",
+              path: absPath
+            })}\n</tool_output>`,
+            consoleOutput: `\n[List dir blocked (not allowed): ${targetDir}]`
+          };
+        }
       }
 
       ui.showToolProgress(`${themeAccent('list_dir')} ${targetDir}...`);
