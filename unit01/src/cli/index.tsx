@@ -10,7 +10,7 @@ import { render } from 'ink';
 import React from 'react';
 
 import { DirectiveIndexer } from '../core/indexer/index.js';
-import { DirectiveSandbox } from '../core/security/sandbox.js';
+import { DirectiveSandbox, redactSecrets } from '../core/security/sandbox.js';
 import { ollama } from '../core/llm/client.js';
 import { buildRepoMap } from '../core/indexer/repomap.js';
 import { AllowedPath } from '../core/security/types.js';
@@ -22,6 +22,7 @@ import {
   themePrimary,
   themeOrange,
   themeAccent,
+  themeBorder,
   themeGray,
   themeRed,
   isGui,
@@ -599,6 +600,7 @@ Integrated native tools and upgraded loop detection in index.tsx.
     sessionId = sessionData.id;
     lastInputTokens = 0;
     ui.updateStatus(activeModel, '0', gitBranch);
+    ui.populateHistory(sessionData.conversationHistory);
     ui.printSystemMessage('info', `Resumed session successfully.`);
   };
 
@@ -608,6 +610,14 @@ Integrated native tools and upgraded loop detection in index.tsx.
   const handleInput = async (input: string, ui: UiAdapter) => {
     try {
       await handleInputInternal(input, ui);
+      // Auto-save session after processing a user turn
+      if (conversationHistory.length > 0) {
+        sessionStore.save(sessionId, {
+          startedAt: sessionStartTime,
+          activeModel,
+          conversationHistory
+        });
+      }
     } finally {
       if (state.isNonInteractive) {
         try { indexer.close(); } catch (e) {}
@@ -629,6 +639,13 @@ Integrated native tools and upgraded loop detection in index.tsx.
       const arg = parts.slice(1).join(' ');
 
       if (command === '/exit' || command === '/quit') {
+        if (conversationHistory.length > 0) {
+          sessionStore.save(sessionId, {
+            startedAt: sessionStartTime,
+            activeModel,
+            conversationHistory
+          });
+        }
         indexer.close();
         sandbox.stop();
         ui.exit(0);
@@ -638,6 +655,8 @@ Integrated native tools and upgraded loop detection in index.tsx.
       if (command === '/clear') {
         conversationHistory.length = 0;
         lastInputTokens = 0;
+        sessionId = crypto.randomUUID(); // Start new session
+        ui.clear();
         ui.printSystemMessage('info', 'Conversation history cleared.');
         return;
       }
@@ -697,7 +716,614 @@ Integrated native tools and upgraded loop detection in index.tsx.
         const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
         const ratioPct = Math.round(Math.min(totalTokens / contextLimit, 1.0) * 100);
 
-        ui.addTextOutput(`\n  model:     ${activeModel}\n  context:   ${totalTokens.toLocaleString()} / ${contextLimit.toLocaleString()} tokens (${ratioPct}%)\n  branch:    ${gitBranch}\n  files:     ${filesCount}\n`);
+        const headerLine = chalk.hex('#C084FC')('◈ unit01  ·  system status');
+        const divider = themeBorder('────────────────────────────────────────');
+        
+        const tildify = (absolutePath: string) => {
+          const home = os.homedir();
+          if (absolutePath.startsWith(home)) {
+            return '~' + absolutePath.slice(home.length);
+          }
+          return absolutePath;
+        };
+
+        const out = [
+          '',
+          `  ${divider}`,
+          `  ${headerLine}`,
+          `  ${divider}`,
+          `  ${chalk.hex('#64748B')('model'.padEnd(11))}${activeModel}`,
+          `  ${chalk.hex('#64748B')('context'.padEnd(11))}${totalTokens.toLocaleString()} / ${contextLimit.toLocaleString()} tokens  (${ratioPct}%)`,
+          `  ${chalk.hex('#64748B')('workspace'.padEnd(11))}${tildify(workspaceRoot)}`,
+          `  ${chalk.hex('#64748B')('branch'.padEnd(11))}${gitBranch}`,
+          `  ${chalk.hex('#64748B')('files'.padEnd(11))}${filesCount}`,
+          ''
+        ].join('\n');
+
+        ui.addTextOutput(out);
+        return;
+      }
+
+      if (command === '/usage') {
+        const activeRepoMap = indexer.getRepoMap();
+        const activeChanges = indexer.getRecentChanges();
+        const systemPromptLength = estimateTokens(SYSTEM_INSTRUCTIONS + activeRepoMap + activeChanges);
+        const historyLength = conversationHistory.reduce((acc, m) => acc + estimateTokens(m.content), 0);
+        const totalTokens = lastInputTokens > 0 ? lastInputTokens : (systemPromptLength + historyLength);
+        const ratioPct = Math.round(Math.min(totalTokens / contextLimit, 1.0) * 100);
+
+        const headerLine = chalk.hex('#C084FC')('◈ unit01  ·  context window');
+        const divider = themeBorder('────────────────────────────────────────');
+
+        let fillColor = '#F59E0B'; // gold
+        if (ratioPct >= 60 && ratioPct < 80) {
+          fillColor = '#D97706'; // amber
+        } else if (ratioPct >= 80) {
+          fillColor = '#F87171'; // rose
+        }
+
+        const filledCount = Math.round((ratioPct / 100) * 20);
+        const emptyCount = 20 - filledCount;
+        const filledStr = chalk.hex(fillColor)('█'.repeat(filledCount));
+        const emptyStr = chalk.hex('#64748B')('░'.repeat(emptyCount));
+
+        const labelStyle = chalk.hex('#64748B').dim;
+        const percentStr = labelStyle(`${ratioPct}%`);
+        const midDot = labelStyle('·');
+        const tokensStr = labelStyle(`${Math.round(totalTokens / 1000)}k / ${Math.round(contextLimit / 1000)}k`);
+
+        const out = [
+          '',
+          `  ${headerLine}`,
+          `  ${divider}`,
+          `  [${filledStr}${emptyStr}]  ${percentStr}  ${midDot}  ${tokensStr}`,
+          ''
+        ].join('\n');
+
+        ui.addTextOutput(out);
+        return;
+      }
+
+      if (command === '/help') {
+        const headerLine = chalk.hex('#C084FC')('◈ unit01  ·  help');
+        const divider = themeBorder('────────────────────────────────────────');
+
+        const helpItems = [
+          { cmd: '/models', desc: 'switch the active model' },
+          { cmd: '/thinking', desc: 'toggle reasoning blocks' },
+          { cmd: '/status', desc: 'system info' },
+          { cmd: '/usage', desc: 'context window usage' },
+          { cmd: '/sessions', desc: 'browse saved sessions' },
+          { cmd: '/compact', desc: 'compress context' },
+          { cmd: '/clear', desc: 'clear conversation' },
+          { cmd: '/export', desc: 'export session' },
+          { cmd: '/help', desc: 'show this menu' }
+        ];
+
+        const out = [
+          '',
+          `  ${divider}`,
+          `  ${headerLine}`,
+          `  ${divider}`,
+          ...helpItems.map(item => {
+            const cmdColored = chalk.hex('#C084FC')(item.cmd.padEnd(14));
+            const descColored = chalk.hex('#64748B')(item.desc);
+            return `  ${cmdColored}${descColored}`;
+          }),
+          ''
+        ].join('\n');
+
+        ui.addTextOutput(out);
+        return;
+      }
+
+      if (command === '/export') {
+        if (conversationHistory.length === 0) {
+          ui.printSystemMessage('error', 'Nothing to export — conversation history is empty.');
+          return;
+        }
+
+        const homeDir = os.homedir();
+        const sessionDir = path.join(homeDir, 'ruthen-sessions');
+
+        // Ensure ruthen-sessions directory exists
+        if (!fs.existsSync(sessionDir)) {
+          try {
+            fs.mkdirSync(sessionDir, { recursive: true });
+          } catch (e: any) {
+            ui.printSystemMessage('error', `Failed to create sessions directory: ${e.message}`);
+          }
+        }
+
+        // YYYY-MM-DD
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const dateStr = `${yyyy}-${mm}-${dd}`;
+
+        // Find first user message (not tool output)
+        const firstUserMsg = conversationHistory.find(m => m.role === 'user' && !m.content.includes('<tool_output>'));
+        let suffix = '';
+        if (firstUserMsg) {
+          let sanitised = firstUserMsg.content.toLowerCase();
+          sanitised = sanitised.replace(/\s+/g, '-');
+          sanitised = sanitised.replace(/[^a-z0-9\-]/g, '');
+          sanitised = sanitised.replace(/-+/g, '-');
+          sanitised = sanitised.replace(/^-+|-+$/g, '');
+          sanitised = sanitised.substring(0, 40);
+          sanitised = sanitised.replace(/-+$/g, '');
+          
+          if (sanitised.length >= 3) {
+            suffix = sanitised;
+          }
+        }
+
+        if (!suffix) {
+          const hh = String(now.getHours()).padStart(2, '0');
+          const min = String(now.getMinutes()).padStart(2, '0');
+          const ss = String(now.getSeconds()).padStart(2, '0');
+          suffix = `${hh}-${min}-${ss}`;
+        }
+
+        const defaultPath = path.join(sessionDir, `${dateStr}-${suffix}.md`);
+
+        let targetPath = arg.trim();
+        if (!targetPath) {
+          targetPath = defaultPath;
+        } else {
+          if (targetPath.startsWith('~/')) {
+            targetPath = path.join(homeDir, targetPath.slice(2));
+          } else {
+            targetPath = path.resolve(workspaceRoot, targetPath);
+          }
+        }
+
+        let finalPath = targetPath;
+        if (fs.existsSync(finalPath)) {
+          const overwriteIdx = await ui.interactiveSelect(`File already exists at ${finalPath}. Overwrite?`, [
+            'No (Generate unique filename)',
+            'Yes (Overwrite)',
+          ]);
+
+          if (overwriteIdx !== 1) { // 1 is Yes
+            const ext = path.extname(finalPath);
+            const dir = path.dirname(finalPath);
+            const base = path.basename(finalPath, ext);
+            let counter = 1;
+            while (true) {
+              const candidate = path.join(dir, `${base}-${counter}${ext}`);
+              if (!fs.existsSync(candidate)) {
+                finalPath = candidate;
+                break;
+              }
+              counter++;
+            }
+          }
+        }
+
+        interface FileMod {
+          file: string;
+          action: 'created' | 'modified' | 'moved';
+          toolUsed: string;
+          edits: number;
+        }
+
+        const fileMods = new Map<string, FileMod>();
+
+        function addOrMergeFileMod(file: string, action: 'created' | 'modified' | 'moved', toolUsed: string) {
+          const normalized = path.normalize(file);
+          const existing = fileMods.get(normalized);
+          if (existing) {
+            existing.edits += 1;
+            if (existing.action !== 'created' && action === 'created') {
+              existing.action = 'created';
+            }
+            existing.toolUsed = toolUsed;
+          } else {
+            fileMods.set(normalized, {
+              file: normalized,
+              action,
+              toolUsed,
+              edits: 1
+            });
+          }
+        }
+
+        for (const msg of conversationHistory) {
+          if (msg.role !== 'assistant') continue;
+          const content = msg.content || '';
+
+          // XML tags parsing
+          const writeAttrRegex = /<write_file\s+(?:relative_)?path=["']([^"']+)["']/g;
+          let match;
+          while ((match = writeAttrRegex.exec(content)) !== null) {
+            addOrMergeFileMod(match[1], 'created', 'write_file');
+          }
+
+          const writeTagRegex = /<write_file\s*>([\s\S]*?)(?:<\/write_file>|$)/g;
+          while ((match = writeTagRegex.exec(content)) !== null) {
+            const lines = match[1].trim().split('\n');
+            if (lines.length > 0 && lines[0].trim()) {
+              addOrMergeFileMod(lines[0].trim(), 'created', 'write_file');
+            }
+          }
+
+          const editAttrRegex = /<edit_file\s+(?:relative_)?path=["']([^"']+)["']\s*>([\s\S]*?)(?:<\/edit_file>|$)/g;
+          while ((match = editAttrRegex.exec(content)) !== null) {
+            const pathVal = match[1];
+            const innerContent = match[2];
+            const isPatch = innerContent.includes('<<<<<<< ORIGINAL');
+            addOrMergeFileMod(pathVal, isPatch ? 'modified' : 'created', 'edit_file');
+          }
+
+          const patchRegex = /<(patch_file|patch_file_blocks)\s+(?:relative_)?path=["']([^"']+)["']/g;
+          while ((match = patchRegex.exec(content)) !== null) {
+            addOrMergeFileMod(match[2], 'modified', match[1]);
+          }
+
+          const moveRegex = /<move_file\s+source_path=["']([^"']+)["']\s+destination_path=["']([^"']+)["']/g;
+          while ((match = moveRegex.exec(content)) !== null) {
+            addOrMergeFileMod(match[1], 'moved', 'move_file');
+          }
+
+          // Native tool calls parsing
+          if (msg.tool_calls) {
+            for (const tc of msg.tool_calls) {
+              const name = tc.function?.name;
+              const args = tc.function?.arguments ? (typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments) : {};
+              if (name === 'write_file') {
+                const filePath = args.filePath || args.path;
+                if (filePath) {
+                  addOrMergeFileMod(filePath, 'created', name);
+                }
+              } else if (name === 'edit_file') {
+                const filePath = args.filePath || args.path;
+                if (filePath) {
+                  const isPatch = args.content && args.content.includes('<<<<<<< ORIGINAL');
+                  addOrMergeFileMod(filePath, isPatch ? 'modified' : 'created', name);
+                }
+              } else if (name === 'patch_file' || name === 'patch_file_blocks') {
+                const filePath = args.filePath || args.path;
+                if (filePath) {
+                  addOrMergeFileMod(filePath, 'modified', name);
+                }
+              } else if (name === 'move_file') {
+                const source = args.sourcePath || args.source;
+                if (source) {
+                  addOrMergeFileMod(source, 'moved', name);
+                }
+              }
+            }
+          }
+        }
+
+        let filesModifiedTable = '';
+        if (fileMods.size === 0) {
+          filesModifiedTable = '*No files were modified in this session.*';
+        } else {
+          filesModifiedTable = '| File | Action | Tool Used | Edits |\n|------|--------|-----------|-------|\n';
+          for (const mod of fileMods.values()) {
+            filesModifiedTable += `| ${mod.file} | ${mod.action} | ${mod.toolUsed} | ${mod.edits} |\n`;
+          }
+        }
+
+        const commandsRun: { command: string; outcome: string }[] = [];
+        for (let i = 0; i < conversationHistory.length; i++) {
+          const msg = conversationHistory[i];
+          if (msg.role !== 'assistant') continue;
+
+          // XML style parsing
+          const content = msg.content || '';
+          const runRegex = /<run_command\s*>([\s\S]*?)<\/run_command>/g;
+          let match;
+          while ((match = runRegex.exec(content)) !== null) {
+            const cmd = match[1].trim();
+            let outcome = '✓ passed';
+            for (let k = i + 1; k < conversationHistory.length; k++) {
+              const nextMsg = conversationHistory[k];
+              if (nextMsg.role === 'user' && nextMsg.content.includes('<tool_output>')) {
+                const outputMatch = /<tool_output\s*>([\s\S]*?)<\/tool_output>/.exec(nextMsg.content);
+                const outputVal = outputMatch ? outputMatch[1].trim() : nextMsg.content.trim();
+                if (outputVal.startsWith('[Command failed') || (outputVal.includes('exit code') && !outputVal.includes('exit code 0'))) {
+                  outcome = '✗ failed';
+                }
+                break;
+              }
+              if (nextMsg.role === 'assistant') {
+                break;
+              }
+            }
+            commandsRun.push({ command: cmd, outcome });
+          }
+
+          // Native tool calls parsing
+          if (msg.tool_calls) {
+            for (const tc of msg.tool_calls) {
+              if (tc.function?.name === 'run_command') {
+                const args = tc.function.arguments ? (typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments) : {};
+                const cmd = (args.command || '').trim();
+                let outcome = '✓ passed';
+                if (i + 1 < conversationHistory.length && conversationHistory[i + 1].role === 'tool') {
+                  const outputVal = conversationHistory[i + 1].content || '';
+                  if (outputVal.startsWith('[Command failed') || (outputVal.includes('exit code') && !outputVal.includes('exit code 0'))) {
+                    outcome = '✗ failed';
+                  }
+                }
+                commandsRun.push({ command: cmd, outcome });
+              }
+            }
+          }
+        }
+
+        let commandsRunTable = '';
+        if (commandsRun.length > 0) {
+          commandsRunTable = '## Commands Run\n\n| Command | Outcome |\n|---------|---------|\n';
+          for (const cmd of commandsRun) {
+            commandsRunTable += `| ${cmd.command} | ${cmd.outcome} |\n`;
+          }
+          commandsRunTable += '\n';
+        }
+
+        let secretsRedacted = false;
+        function redactWithNotice(c: string): string {
+          const redacted = redactSecrets(c);
+          if (redacted !== c) {
+            secretsRedacted = true;
+          }
+          return redacted;
+        }
+
+        function parseCommandResult(output: string): { status: string; code: string } {
+          const failMatch = /exit code (\d+)/i.exec(output);
+          if (failMatch) {
+            const code = parseInt(failMatch[1], 10);
+            if (code === 0) return { status: '✓ exit code 0', code: '0' };
+            return { status: `✗ exit code ${code}`, code: String(code) };
+          }
+          if (output.includes('Command failed') || output.includes('Error:')) {
+            return { status: '✗ failed', code: '1' };
+          }
+          return { status: '✓ exit code 0', code: '0' };
+        }
+
+        function formatToolCallForMarkdown(toolName: string, attrsStr: string, innerContent: string, rawOutput: string): string {
+          let out = '';
+          let resultStatus = '✓ success';
+          if (rawOutput.includes('Error') || rawOutput.startsWith('Error') || rawOutput.startsWith('[Command failed')) {
+            resultStatus = '✗ failure';
+          }
+
+          if (toolName === 'write_file' || toolName === 'edit_file') {
+            let file = '';
+            const pathAttr = /path=["']([^"']+)["']/.exec(attrsStr);
+            if (pathAttr) {
+              file = pathAttr[1];
+            } else {
+              const lines = innerContent.trim().split('\n');
+              if (lines.length > 0) {
+                file = lines[0].trim();
+                innerContent = lines.slice(1).join('\n');
+              }
+            }
+
+            const lineCount = innerContent.split('\n').length;
+            out += `### 🔧 Tool Call: ${toolName}\n`;
+            out += `**File:** ${file}\n`;
+            out += `**Result:** ${resultStatus}\n\n`;
+
+            if (lineCount <= 500) {
+              const lang = getLanguageFromFilename(file);
+              const redactedContent = redactWithNotice(innerContent);
+              out += `\`\`\`${lang}\n${redactedContent}\n\`\`\`\n\n`;
+            } else {
+              out += `[File content omitted — ${lineCount} lines. See ${file}]\n\n`;
+            }
+          } else if (toolName === 'run_command') {
+            const cmd = innerContent.trim();
+            const cmdResult = parseCommandResult(rawOutput);
+
+            const outputLines = rawOutput.split('\n');
+            let truncatedOutput = outputLines.slice(0, 100).join('\n');
+            if (outputLines.length > 100) {
+              truncatedOutput += `\n\n[Output truncated to 100 lines — ${outputLines.length - 100} lines omitted]`;
+            }
+            const redactedOutput = redactWithNotice(truncatedOutput);
+
+            out += `### 🔧 Tool Call: run_command\n`;
+            out += `**Command:** \`${cmd}\`\n`;
+            out += `**Result:** ${cmdResult.status}\n`;
+            out += `**Output:**\n\`\`\`\n${redactedOutput}\n\`\`\`\n\n`;
+          } else {
+            let details = '';
+            if (toolName === 'patch_file' || toolName === 'patch_file_blocks' || toolName === 'read_file') {
+              const pathAttr = /path=["']([^"']+)["']/.exec(attrsStr);
+              if (pathAttr) details = `**File:** ${pathAttr[1]}`;
+            } else if (toolName === 'move_file') {
+              const srcAttr = /source_path=["']([^"']+)["']/.exec(attrsStr);
+              const destAttr = /destination_path=["']([^"']+)["']/.exec(attrsStr);
+              if (srcAttr && destAttr) details = `**Source:** ${srcAttr[1]}\n**Destination:** ${destAttr[1]}`;
+            } else if (toolName === 'search') {
+              details = `**Query:** \`${innerContent.trim()}\``;
+            } else if (toolName === 'view_outline') {
+              const pathAttr = /path=["']([^"']+)["']/.exec(attrsStr);
+              if (pathAttr) details = `**File:** ${pathAttr[1]}`;
+            } else if (toolName === 'ask_user') {
+              details = `**Question:** \`${innerContent.trim()}\``;
+            }
+
+            out += `### 🔧 Tool Call: ${toolName}\n`;
+            if (details) {
+              out += `${details}\n`;
+            }
+            out += `**Result:** ${resultStatus}\n\n`;
+          }
+          return out;
+        }
+
+        const durationMs = Date.now() - sessionStartTime;
+        function formatDuration(ms: number): string {
+          const seconds = Math.floor((ms / 1000) % 60);
+          const minutes = Math.floor((ms / (1000 * 60)) % 60);
+          const hours = Math.floor(ms / (1000 * 60 * 60));
+          const parts = [];
+          if (hours > 0) parts.push(`${hours}h`);
+          if (minutes > 0 || hours > 0) parts.push(`${minutes}m`);
+          parts.push(`${seconds}s`);
+          return parts.join(' ');
+        }
+
+        const durationStr = formatDuration(durationMs);
+        const fullDateStr = new Intl.DateTimeFormat('en-US', { dateStyle: 'long' }).format(new Date());
+        const exportTimestamp = new Date().toISOString();
+
+        let conversationMarkdown = '';
+        for (let idx = 0; idx < conversationHistory.length; idx++) {
+          const msg = conversationHistory[idx];
+          if (msg.role === 'system') {
+            const compactMatch = /\[COMPACTED CONTEXT — conversation summarised at ([^\]]+)\]\n\n([\s\S]*)/.exec(msg.content);
+            if (compactMatch) {
+              const timestamp = compactMatch[1].trim();
+              const summaryContent = compactMatch[2].trim();
+              conversationMarkdown += `### ⚡ Context Compacted\n*Conversation history was compacted at ${timestamp}. Summary below:*\n${summaryContent}\n\n`;
+            } else {
+              conversationMarkdown += `### ⚙️ System\n${msg.content}\n\n`;
+            }
+          } else if (msg.role === 'user') {
+            if (msg.content.includes('<tool_output>')) {
+              continue;
+            }
+            conversationMarkdown += `### 👤 User\n${msg.content.trim()}\n\n`;
+          } else if (msg.role === 'tool') {
+            continue;
+          } else if (msg.role === 'assistant') {
+            let prose = msg.content || '';
+            prose = prose
+              .replace(/<run_command\s*>[\s\S]*?(?:<\/run_command>|$)/g, '')
+              .replace(/<read_file\s*[^>]*>[\s\S]*?(?:<\/read_file>|$)/g, '')
+              .replace(/<search_code\s*>[\s\S]*?(?:<\/search_code>|$)/g, '')
+              .replace(/<write_file\s*[^>]*>[\s\S]*?(?:<\/write_file>|$)/g, '')
+              .replace(/<patch_file\s*[^>]*>[\s\S]*?(?:<\/patch_file>|$)/g, '')
+              .replace(/<patch_file_blocks\s*[^>]*>[\s\S]*?(?:<\/patch_file_blocks>|$)/g, '')
+              .replace(/<edit_file\s*[^>]*>[\s\S]*?(?:<\/edit_file>|$)/g, '')
+              .replace(/<search\s*[^>]*>[\s\S]*?(?:<\/search>|$)/g, '')
+              .replace(/<view_outline\s*[^>]*>[\s\S]*?(?:<\/view_outline>|$)/g, '')
+              .replace(/<ask_user\s*[^>]*>[\s\S]*?(?:<\/ask_user>|$)/g, '')
+              .replace(/<list_dir\s*[^>]*>[\s\S]*?(?:<\/list_dir>|$)/g, '')
+              .replace(/<git_status\s*[^>]*>[\s\S]*?(?:<\/git_status>|$)/g, '')
+              .replace(/<diagnostics\s*[^>]*>[\s\S]*?(?:<\/diagnostics>|$)/g, '')
+              .replace(/<move_file\s*[^>]*>[\s\S]*?(?:<\/move_file>|$)/g, '')
+              .replace(/<(?:path_)?question\s*[^>]*\/>/g, '')
+              .replace(/<(?:path_)?question\s*[^>]*>[\s\S]*?(?:<\/(?:path_)?question>|$)/g, '')
+              .trim();
+
+            if (prose) {
+              conversationMarkdown += `### 🤖 Agent\n${prose}\n\n`;
+            }
+
+            // 1. XML tool calls
+            const toolCallRegex = /<(run_command|read_file|write_file|patch_file|patch_file_blocks|edit_file|search|view_outline|ask_user|move_file)(\s+[^>]*?)(?:>([\s\S]*?)(?:<\/\1>|$)|\s*\/>)/g;
+            let toolMatch;
+            while ((toolMatch = toolCallRegex.exec(msg.content || '')) !== null) {
+              const toolName = toolMatch[1];
+              let toolOutputContent = '';
+              
+              for (let k = idx + 1; k < conversationHistory.length; k++) {
+                if (conversationHistory[k].role === 'user' && conversationHistory[k].content.includes('<tool_output>')) {
+                  toolOutputContent = conversationHistory[k].content;
+                  break;
+                }
+                if (conversationHistory[k].role === 'assistant') {
+                  break;
+                }
+              }
+
+              let rawOutput = '';
+              const outputMatch = /<tool_output\s*>([\s\S]*?)<\/tool_output>/.exec(toolOutputContent);
+              if (outputMatch) {
+                rawOutput = outputMatch[1].trim();
+              } else {
+                rawOutput = toolOutputContent.trim();
+              }
+
+              conversationMarkdown += formatToolCallForMarkdown(toolName, toolMatch[2], toolMatch[3] || '', rawOutput);
+            }
+
+            // 2. Native tool calls
+            if (msg.tool_calls) {
+              for (const tc of msg.tool_calls) {
+                const toolName = tc.function?.name;
+                const args = tc.function?.arguments ? (typeof tc.function.arguments === 'string' ? JSON.parse(tc.function.arguments) : tc.function.arguments) : {};
+                
+                let rawOutput = '';
+                if (idx + 1 < conversationHistory.length && conversationHistory[idx + 1].role === 'tool') {
+                  rawOutput = conversationHistory[idx + 1].content || '';
+                }
+
+                let detailsStr = '';
+                let innerContent = '';
+                if (toolName === 'write_file' || toolName === 'edit_file') {
+                  detailsStr = ` path="${args.filePath || args.path}"`;
+                  innerContent = args.content || '';
+                } else if (toolName === 'read_file') {
+                  detailsStr = ` path="${args.path || args.filePath}"`;
+                } else if (toolName === 'run_command') {
+                  innerContent = args.command || '';
+                } else if (toolName === 'search') {
+                  detailsStr = ` scope="${args.scope || 'code'}"${args.pathVal ? ` path="${args.pathVal}"` : ''}`;
+                  innerContent = args.query || '';
+                } else if (toolName === 'view_outline') {
+                  detailsStr = ` path="${args.path}"`;
+                } else if (toolName === 'ask_user') {
+                  detailsStr = args.options ? ` options="${args.options}"` : '';
+                  innerContent = args.question || '';
+                } else if (toolName === 'move_file') {
+                  detailsStr = ` source_path="${args.sourcePath}" destination_path="${args.destinationPath}"`;
+                }
+
+                conversationMarkdown += formatToolCallForMarkdown(toolName, detailsStr, innerContent, rawOutput);
+              }
+            }
+          }
+        }
+
+        let metadataNotice = '';
+        if (secretsRedacted) {
+          metadataNotice = `\n> ⚠ Note: Secret patterns were automatically redacted from this export.\n`;
+        }
+
+        const exportMarkdown = `# Ruthen Session — ${fullDateStr}\n\n` +
+          `**Duration:** ${durationStr}\n` +
+          `**Messages:** ${conversationHistory.length}\n` +
+          `**Workspace:** ${workspaceRoot}\n` +
+          `**Model:** ${activeModel}\n` +
+          `**Exported:** ${exportTimestamp}\n` +
+          metadataNotice +
+          `\n---\n\n` +
+          `## Files Modified This Session\n\n` +
+          filesModifiedTable +
+          `\n\n` +
+          commandsRunTable +
+          `---\n\n` +
+          `## Full Conversation\n\n` +
+          conversationMarkdown;
+
+        try {
+          fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+          fs.writeFileSync(finalPath, exportMarkdown, 'utf8');
+          const stats = fs.statSync(finalPath);
+          const sizeKb = (stats.size / 1024).toFixed(0);
+
+          let displayPath = finalPath;
+          if (displayPath.startsWith(homeDir)) {
+            displayPath = '~' + displayPath.slice(homeDir.length);
+          }
+
+          ui.printSystemMessage('info', `Session exported to ${displayPath} (${sizeKb} KB)`);
+        } catch (e: any) {
+          ui.printSystemMessage('error', `Failed to write export file: ${e.message}`);
+        }
+
         return;
       }
 
@@ -807,16 +1433,26 @@ Integrated native tools and upgraded loop detection in index.tsx.
       }
 
       if (command === '/search') {
+        const runSearch = (queryStr: string) => {
+          const results = indexer.search(queryStr);
+          let out = `\nFound ${results.length} matches:\n`;
+          results.slice(0, 5).forEach(r => {
+            out += `  - ${r.relpath} (line ${r.start_line}-${r.end_line})\n`;
+          });
+          ui.addTextOutput(out);
+        };
+
         if (!arg) {
-          ui.printSystemMessage('error', 'Usage: /search <query>');
-          return;
+          const query = await ui.interactiveInput('Enter search query:');
+          const searchArg = query.trim();
+          if (!searchArg) {
+            ui.printSystemMessage('error', 'Search cancelled: empty query.');
+          } else {
+            runSearch(searchArg);
+          }
+        } else {
+          runSearch(arg);
         }
-        const results = indexer.search(arg);
-        let out = `\nFound ${results.length} matches:\n`;
-        results.slice(0, 5).forEach(r => {
-          out += `  - ${r.relpath} (line ${r.start_line}-${r.end_line})\n`;
-        });
-        ui.addTextOutput(out);
         return;
       }
 
@@ -1070,13 +1706,10 @@ Integrated native tools and upgraded loop detection in index.tsx.
           
           if (recentToolCallsFingerprints.includes(fingerprint)) {
             ui.printToolResult('failure', `Tool: ${tc.function.name} (blocked: loop detected)`);
+            ui.printSystemMessage('guard', `Loop detected. Returning control to user.`);
             toolResult = {
-              toolRun: true,
-              nextPrompt: `<tool_output>\n${JSON.stringify({
-                error: `Loop Detected: You have already executed the tool '${tc.function.name}' with the exact same arguments in this session. Re-running it will result in the same output. Please try a different approach.`,
-                code: "LOOP_DETECTED",
-                tool: tc.function.name
-              })}\n</tool_output>`,
+              toolRun: false,
+              nextPrompt: '',
               consoleOutput: `\n[Loop detected: ${tc.function.name}]`
             };
           } else {
@@ -1096,12 +1729,10 @@ Integrated native tools and upgraded loop detection in index.tsx.
           const xmlFingerprint = getXmlToolCallFingerprint(modelResponse);
           if (xmlFingerprint && recentToolCallsFingerprints.includes(xmlFingerprint)) {
             ui.printToolResult('failure', `Tool call blocked: loop detected`);
+            ui.printSystemMessage('guard', `Loop detected. Returning control to user.`);
             toolResult = {
-              toolRun: true,
-              nextPrompt: `<tool_output>\n${JSON.stringify({
-                error: `Loop Detected: You have already executed this exact XML tool call. Do not repeat failed commands.`,
-                code: "LOOP_DETECTED"
-              })}\n</tool_output>`,
+              toolRun: false,
+              nextPrompt: '',
               consoleOutput: `\n[Loop detected]`
             };
           } else {

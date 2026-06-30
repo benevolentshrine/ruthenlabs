@@ -7,7 +7,7 @@
  * This file only handles WHAT to render based on the current app state.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import chalk from 'chalk';
 import {
   themePrimary,
@@ -40,6 +40,9 @@ interface AppProps {
 
 export function App({ services }: AppProps) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const rows = stdout?.rows || 24;
+  const cols = stdout?.columns || 80;
 
   // App state machine
   const [screen, setScreen] = useState<AppScreen>('prompt');
@@ -227,6 +230,48 @@ export function App({ services }: AppProps) {
     // Add raw text output
     addTextOutput: (text: string) => {
       addOutput({ type: 'text', data: text });
+    },
+
+    clear: () => {
+      console.clear();
+      setOutput([]);
+    },
+
+    populateHistory: (history: { role: string; content: string }[]) => {
+      const entries: OutputEntry[] = [];
+      for (const msg of history) {
+        if (msg.role === 'user') {
+          if (msg.content.startsWith('<tool_output>')) {
+            const clean = msg.content.replace('<tool_output>\n', '').replace('\n</tool_output>', '');
+            try {
+              const parsed = JSON.parse(clean);
+              if (parsed.error) {
+                entries.push({ type: 'tool-result', data: { status: 'failure', message: parsed.error } });
+              } else {
+                entries.push({ type: 'tool-result', data: { status: 'success', message: JSON.stringify(parsed) } });
+              }
+            } catch (e) {
+              entries.push({ type: 'tool-result', data: { status: 'success', message: clean } });
+            }
+          } else {
+            entries.push({ type: 'user-input', data: msg.content });
+          }
+        } else if (msg.role === 'assistant') {
+          entries.push({ type: 'model-response', data: { text: msg.content, thinkingEnabled: false } });
+        } else if (msg.role === 'tool') {
+          try {
+            const parsed = JSON.parse(msg.content);
+            if (parsed.error) {
+              entries.push({ type: 'tool-result', data: { status: 'failure', message: parsed.error } });
+            } else {
+              entries.push({ type: 'tool-result', data: { status: 'success', message: JSON.stringify(parsed) } });
+            }
+          } catch (e) {
+            entries.push({ type: 'tool-result', data: { status: 'success', message: msg.content } });
+          }
+        }
+      }
+      setOutput(entries);
     },
 
     // Print final completed model response

@@ -31,6 +31,8 @@ export interface UiAdapter {
   updateStatus: (model: string, ctx: string, branch: string) => void;
   exit: (code: number) => void;
   addTextOutput: (text: string) => void;
+  clear: () => void;
+  populateHistory: (history: { role: string; content: string }[]) => void;
   printModelResponse: (text: string, thinkingEnabled: boolean) => void;
 }
 

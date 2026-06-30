@@ -24,7 +24,7 @@ const commands = [
   '/models', '/thinking', '/status', '/usage', '/sessions',
   '/compact', '/clear', '/exit', '/quit',
   '/files', '/reindex', '/export', '/preview', '/changes',
-  '/undo', '/search', '/connect', '/audit', '/autopilot', '/reset-password',
+  '/undo', '/search', '/connect', '/audit', '/autopilot', '/reset-password', '/help',
 ];
 
 export function PromptInput({ onSubmit, status }: PromptInputProps) {
@@ -150,10 +150,13 @@ export function PromptInput({ onSubmit, status }: PromptInputProps) {
     };
   }, [stdin]);
 
-  // Cursor pulse effect
+  // Cursor pulse effect (transitions from gold to violet over 600ms, then stays there)
   useEffect(() => {
-    const timer = setInterval(() => setIsGold((g: boolean) => !g), 600);
-    return () => clearInterval(timer);
+    setIsGold(true);
+    const timer = setTimeout(() => {
+      setIsGold(false);
+    }, 600);
+    return () => clearTimeout(timer);
   }, []);
 
   // Command autocomplete matches
