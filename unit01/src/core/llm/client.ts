@@ -52,14 +52,14 @@ export class OllamaClient {
       if (data.model_info) {
         for (const [key, val] of Object.entries(data.model_info)) {
           if (key.endsWith('.context_length') && typeof val === 'number') {
-            return Math.min(val, 8192); // Cap to 8k to prevent Ollama VRAM OOM crashes
+            return val;
           }
         }
       }
       
-      return 8192; // Default Ollama context window size fallback capped at 8k
+      return 2048; // Default Ollama context window size fallback
     } catch (err) {
-      return 4096; // Fallback default on error
+      return 2048; // Fallback default on error
     }
   }
 
@@ -104,6 +104,7 @@ export class OllamaClient {
         num_ctx: contextLimit,
         temperature: 0.1 // Low temperature for deterministic coding tasks
       },
+      think: true, // Enable reasoning tokens in Ollama
       stream: true
     };
     if (tools && tools.length > 0) {
@@ -129,6 +130,7 @@ export class OllamaClient {
     let input_tokens = 0;
     let output_tokens = 0;
     let tool_calls: any[] | undefined;
+    let isThinkingActive = false;
 
     try {
       const decoder = new TextDecoder();
@@ -148,12 +150,24 @@ export class OllamaClient {
           let chunk: string | undefined;
           try {
             const json = JSON.parse(line) as {
-              message?: { content: string; tool_calls?: any[] };
+              message?: { content: string; thinking?: string; tool_calls?: any[] };
               done?: boolean;
               prompt_eval_count?: number;
               eval_count?: number;
             };
-            if (json.message?.content) {
+            if (json.message?.thinking) {
+              if (!isThinkingActive) {
+                isThinkingActive = true;
+                fullText += '<think>\n';
+                onChunk('<think>\n');
+              }
+              chunk = json.message.thinking;
+            } else if (json.message?.content) {
+              if (isThinkingActive) {
+                isThinkingActive = false;
+                fullText += '\n</think>\n';
+                onChunk('\n</think>\n');
+              }
               chunk = json.message.content;
             }
             if (json.message?.tool_calls && json.message.tool_calls.length > 0) {
@@ -174,6 +188,11 @@ export class OllamaClient {
             onChunk(chunk);
           }
         }
+      }
+
+      if (isThinkingActive) {
+        fullText += '\n</think>\n';
+        onChunk('\n</think>\n');
       }
 
       return {

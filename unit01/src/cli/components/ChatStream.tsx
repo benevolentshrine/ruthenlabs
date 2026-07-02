@@ -10,6 +10,7 @@ interface ChatStreamProps {
   text: string;
   isStreaming: boolean;
   thinkingEnabled: boolean;
+  showThinking: boolean;
 }
 
 // Configure marked with TerminalRenderer
@@ -35,7 +36,12 @@ marked.setOptions({
   })
 });
 
-function renderMarkdownWithThink(text: string, thinkingEnabled: boolean): string {
+interface ParsedMessage {
+  prose: string;
+  thinkContent: string;
+}
+
+function parseMessageContent(text: string): ParsedMessage {
   // Strip after tool tag
   let processable = text;
   const TOOL_TAGS = [
@@ -55,73 +61,85 @@ function renderMarkdownWithThink(text: string, thinkingEnabled: boolean): string
   // Parse think blocks
   const thinkPattern = /<think>([\s\S]*?)(?:<\/think>|$)/g;
   let match;
-  let outputText = '';
+  let remainingText = '';
+  let thinkContent = '';
   let lastIdx = 0;
 
   while ((match = thinkPattern.exec(processable)) !== null) {
-    // Render text before think block
     if (match.index > lastIdx) {
-      const before = processable.substring(lastIdx, match.index);
-      try {
-        outputText += marked.parse(before);
-      } catch {
-        outputText += before;
-      }
+      remainingText += processable.substring(lastIdx, match.index);
     }
-
-    if (thinkingEnabled) {
-      const thinkContent = match[1].trim();
-      if (thinkContent) {
-        outputText += `\n  ${chalk.hex('#475569').bold('🧠 Thinking:')}\n`;
-        const lines = thinkContent.split('\n');
-        outputText += lines.map(line => `  ${chalk.hex('#475569').italic(`│ ${line}`)}`).join('\n') + '\n';
-      }
-    }
-
+    thinkContent += (thinkContent ? '\n' : '') + match[1].trim();
     lastIdx = match.index + match[0].length;
   }
 
   if (lastIdx < processable.length) {
-    const remaining = processable.substring(lastIdx);
-    try {
-      outputText += marked.parse(remaining);
-    } catch {
-      outputText += remaining;
-    }
+    remainingText += processable.substring(lastIdx);
   }
 
-  return outputText;
+  return {
+    prose: remainingText,
+    thinkContent
+  };
 }
 
-export function ChatStream({ text, isStreaming, thinkingEnabled }: ChatStreamProps): React.ReactElement | null {
-  const rendered = useMemo(() => {
-    return renderMarkdownWithThink(text, thinkingEnabled);
-  }, [text, thinkingEnabled]);
+export function ChatStream({ text, isStreaming, thinkingEnabled, showThinking }: ChatStreamProps): React.ReactElement | null {
+  const { prose, thinkContent } = useMemo(() => {
+    return parseMessageContent(text);
+  }, [text]);
 
-  if (!rendered.trim() && !isStreaming) {
+  const renderedProse = useMemo(() => {
+    if (!prose.trim()) return '';
+    try {
+      return marked.parse(prose) as string;
+    } catch {
+      return prose;
+    }
+  }, [prose]);
+
+  if (!(renderedProse as string).trim() && !thinkContent.trim() && !isStreaming) {
     return null;
   }
 
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
-      <Box
-        borderStyle="single"
-        borderLeft={true}
-        borderRight={false}
-        borderTop={false}
-        borderBottom={false}
-        borderColor="#334155"
-        paddingLeft={1}
-      >
-        <Box flexDirection="column">
-          {isStreaming && (
-            <Box marginBottom={1}>
-              <Text color="#4ADE80">● Streaming response...</Text>
+      {isStreaming && (
+        <Box marginBottom={1}>
+          <Text color="#4ADE80">● Streaming response...</Text>
+        </Box>
+      )}
+
+      {/* Model Thought block */}
+      {thinkingEnabled && thinkContent.trim().length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Box flexDirection="row">
+            <Text color="#475569" bold>Thinking: </Text>
+            {showThinking ? (
+              <Text color="#64748B" italic>(Press Ctrl+O to collapse)</Text>
+            ) : (
+              <Text color="#64748B" italic>[Collapsed · Press Ctrl+O to expand]</Text>
+            )}
+          </Box>
+          {showThinking && (
+            <Box
+              marginTop={1}
+              borderStyle="single"
+              borderLeft={true}
+              borderRight={false}
+              borderTop={false}
+              borderBottom={false}
+              borderColor="#475569"
+              paddingLeft={1}
+            >
+              <Text color="#64748B" italic>
+                {thinkContent}
+              </Text>
             </Box>
           )}
-          <Text>{rendered}</Text>
         </Box>
-      </Box>
+      )}
+
+      {(renderedProse as string).trim().length > 0 && <Text>{renderedProse as string}</Text>}
     </Box>
   );
 }

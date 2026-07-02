@@ -7,15 +7,13 @@ interface StatusBarProps {
   branch: string;
 }
 
-export function StatusBar({ model, contextPct, branch }: StatusBarProps) {
+export function StatusBar({ model }: StatusBarProps) {
   if (!model) return null;
   const cwd = process.cwd();
-  const branchText = branch ? `  ·  ${branch}` : '';
-  const contextText = contextPct ? `  ·  ${contextPct}` : '';
 
   return (
     <Box width="100%" justifyContent="space-between">
-      <Text color="#64748B">◈ {model}{branchText}{contextText}</Text>
+      <Text color="#64748B">◈ {model}</Text>
       <Text color="#64748B">{cwd}</Text>
     </Box>
   );

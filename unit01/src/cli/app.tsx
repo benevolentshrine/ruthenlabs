@@ -95,10 +95,16 @@ export function App({ services }: AppProps) {
   const initialized = useRef(false);
   const autoSubmitted = useRef(false);
 
-  // Listen for Escape during model streaming to abort the generation
+  // Show thinking toggle (expanded by default or collapsed)
+  const [showThinking, setShowThinking] = useState(false);
+
+  // Listen for Escape during model streaming to abort the generation, and Ctrl+O to toggle thinking
   useInput((input, key) => {
     if (screen === 'streaming' && key.escape) {
       services.abortStreaming();
+    }
+    if (key.ctrl && input === 'o') {
+      setShowThinking(prev => !prev);
     }
   });
 
@@ -376,6 +382,7 @@ export function App({ services }: AppProps) {
                 text={entry.data.text}
                 isStreaming={false}
                 thinkingEnabled={entry.data.thinkingEnabled}
+                showThinking={showThinking}
               />
             </Box>
           );
@@ -403,14 +410,12 @@ export function App({ services }: AppProps) {
       {/* Streaming AI Response */}
       {screen === 'streaming' && (
         <Box flexDirection="column">
-          <ThinkingSpinner active={spinnerActive} />
-          {!spinnerActive && (
-            <ChatStream
-              text={streamText}
-              isStreaming={isStreaming}
-              thinkingEnabled={services.thinkingEnabled}
-            />
-          )}
+          <ChatStream
+            text={streamText}
+            isStreaming={isStreaming}
+            thinkingEnabled={services.thinkingEnabled}
+            showThinking={showThinking}
+          />
           <ToolProgress active={toolProgressActive} details={toolProgressDetails} />
         </Box>
       )}
