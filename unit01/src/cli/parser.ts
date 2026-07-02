@@ -641,11 +641,17 @@ export function applySearchReplaceBlocks(content: string, blocksStr: string): st
   return updated;
 }
 
-export function listDirectory(dirPath: string, workspaceRoot: string, recursive = false): { directories: any[]; files: any[] } {
+export function listDirectory(dirPath: string, workspaceRoot: string, recursive = false): { directories: any[]; files: any[]; truncated?: boolean } {
   const directories: any[] = [];
   const files: any[] = [];
+  let truncated = false;
+  const LIMIT = 250;
 
   function walk(currentDir: string) {
+    if (files.length >= LIMIT || directories.length >= LIMIT) {
+      truncated = true;
+      return;
+    }
     let entries: fs.Dirent[] = [];
     try {
       entries = fs.readdirSync(currentDir, { withFileTypes: true });
@@ -653,6 +659,10 @@ export function listDirectory(dirPath: string, workspaceRoot: string, recursive 
       return;
     }
     for (const entry of entries) {
+      if (files.length >= LIMIT || directories.length >= LIMIT) {
+        truncated = true;
+        break;
+      }
       const fullPath = path.join(currentDir, entry.name);
       const relPath = path.relative(workspaceRoot, fullPath);
       
@@ -684,7 +694,7 @@ export function listDirectory(dirPath: string, workspaceRoot: string, recursive 
   }
 
   walk(dirPath);
-  return { directories, files };
+  return { directories, files, truncated };
 }
 
 export function parseDiagnostics(raw: string): { passed: boolean; errors: any[]; warnings: any[] } {

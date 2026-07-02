@@ -52,12 +52,12 @@ export class OllamaClient {
       if (data.model_info) {
         for (const [key, val] of Object.entries(data.model_info)) {
           if (key.endsWith('.context_length') && typeof val === 'number') {
-            return val;
+            return Math.min(val, 8192); // Cap to 8k to prevent Ollama VRAM OOM crashes
           }
         }
       }
       
-      return 4096; // Default Ollama context window size fallback
+      return 8192; // Default Ollama context window size fallback capped at 8k
     } catch (err) {
       return 4096; // Fallback default on error
     }

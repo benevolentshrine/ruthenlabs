@@ -438,9 +438,12 @@ async function main() {
   const recentToolCallsFingerprints: string[] = [];
   const MAX_FINGERPRINTS = 10;
   let useNativeTools = false;
+  // Enforce XML tags exclusively as Ollama's native tool parsing is unstable and causes empty/silent failures on first turns
+  /*
   try {
     useNativeTools = await ollama.checkModelToolsCapability(activeModel);
   } catch (e) {}
+  */
 
   const indexer = new DirectiveIndexer(workspaceRoot);
   await indexer.initialize({ silent: true });
@@ -1336,11 +1339,7 @@ Integrated native tools and upgraded loop detection in index.tsx.
         if (chosenIdx !== -1) {
           activeModel = models[chosenIdx].name;
           contextLimit = await ollama.getContextLimit(activeModel);
-          try {
-            useNativeTools = await ollama.checkModelToolsCapability(activeModel);
-          } catch (e) {
-            useNativeTools = false;
-          }
+          useNativeTools = false;
           ui.updateStatus(activeModel, '0', gitBranch);
           ui.printSystemMessage('info', `Switched to active model: ${activeModel} (Native tools: ${useNativeTools ? 'yes' : 'no'})`);
         }

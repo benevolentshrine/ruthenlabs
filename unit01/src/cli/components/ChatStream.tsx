@@ -93,10 +93,14 @@ function renderMarkdownWithThink(text: string, thinkingEnabled: boolean): string
   return outputText;
 }
 
-export function ChatStream({ text, isStreaming, thinkingEnabled }: ChatStreamProps): React.ReactElement {
+export function ChatStream({ text, isStreaming, thinkingEnabled }: ChatStreamProps): React.ReactElement | null {
   const rendered = useMemo(() => {
     return renderMarkdownWithThink(text, thinkingEnabled);
   }, [text, thinkingEnabled]);
+
+  if (!rendered.trim() && !isStreaming) {
+    return null;
+  }
 
   return (
     <Box flexDirection="column" marginTop={1} marginBottom={1}>
